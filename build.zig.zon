@@ -1,0 +1,21 @@
+.{
+    .name = .uidiff,
+    .version = "0.0.1",
+    .dependencies = .{
+        .zigimg = .{
+            .url = "git+https://github.com/zigimg/zigimg?ref=zigimg_zig_0.17.0#f5fe07487dc17ab40e5daa38211e5782a23f4776",
+            .hash = "zigimg-0.1.0-8_eo2r1LGACI-MYWvYRGp6ZRgQFnecakzOrMZkkwbT42",
+        },
+        .libwebp = .{
+            .url = "https://github.com/webmproject/libwebp/archive/refs/tags/v1.6.0.tar.gz",
+            .hash = "N-V-__8AAGkrewARcKiSyLfJKsaW0ZoqHh4hzi4mTGwekxjk",
+        },
+        .stb = .{
+            .url = "https://github.com/nothings/stb/archive/6b5799bae8a1fe3792691ef4b72ae26434c3e799.tar.gz",
+            .hash = "N-V-__8AAMNjVQBtQqFTqLXf4ajZ6COgMe1AG_STJHG4jkdj",
+        },
+    },
+    .minimum_zig_version = "0.17.1",
+    .paths = .{""},
+    .fingerprint = 0x1a3bb05a701c2d69,
+}
