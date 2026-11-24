@@ -1,9 +1,11 @@
 //! Coalesces and orders change boxes from the comparison domain.
 const std = @import("std");
 const values = @import("../value.zig");
+const pixel = @import("pixel.zig");
 const Size = values.Size;
 const Box = values.Box;
 const Region = values.Region;
+const Image = values.Image;
 
 /// A pending region and the number of changed pixels supporting it.
 pub const Candidate = struct { region: Region, pixels: usize };
@@ -216,6 +218,15 @@ pub const padding = values.CssPx.init(4);
 pub const max_regions = 8;
 // Bound the initial list and its quadratic merge work on highly fragmented images.
 const max_pending_regions = 4096;
+const line_height = values.CssPx.init(48);
+const line_gap_factor = 3;
+const stack_gap = values.CssPx.init(20);
+const blank_tolerance = 24;
+const max_sideways_shift = 256;
+const shift_samples = 9;
+const shift_columns = 512;
+const shift_min_pixels = 16;
+const min_move_height = values.CssPx.init(4);
 /// Seeds the flood fill keeps at once (4 bytes each); more are found again by
 /// rescanning their rows, so memory stays fixed however large the mask.
 pub const max_fill_seeds = 64 * 1024;
@@ -223,6 +234,58 @@ pub const max_fill_seeds = 64 * 1024;
 pub fn minPixels(before: Size, after: Size) usize {
     const smallest = @min(before.width * before.height, after.width * after.height);
     return if (smallest <= single_pixel_area) 1 else min_region_pixels;
+}
+
+/// Joins the retained boxes that together describe a single visible edit.
+pub noinline fn mergeLogical(boxes: []Candidate, before: Image, after: Image, scale: values.Scale) usize {
+    var len = boxes.len;
+    var i: usize = 0;
+    while (i < len) {
+        var j = i + 1;
+        while (j < len) {
+            const a = boxes[i].region;
+            const b = boxes[j].region;
+            if (sameLine(a, b, scale.devicePixels(line_height)) or
+                stacked(a, b, before, after, scale.devicePixels(stack_gap)) or
+                shiftedSideways(a, b, before, after))
+            {
+                len = join(boxes, len, i, j);
+                i = 0;
+                j = 1;
+            } else j += 1;
+        }
+        i += 1;
+    }
+    return len;
+}
+
+/// Groups stationary corner changes when the unchanged straight edges connect them.
+pub noinline fn mergeCorners(boxes: []Candidate, image: Image, scale: values.Scale) usize {
+    var len = boxes.len;
+    var i: usize = 0;
+    while (i + 3 < len) : (i += 1) {
+        const first = corner(boxes[i].region, scale.devicePixels(line_height)) orelse continue;
+        if (outlineCorners(boxes[i + 1 .. len], image, first, scale.devicePixels(line_height))) |others| {
+            // The indexes are relative to the suffix and sorted largest first.
+            for (others) |j| len = join(boxes, len, i, i + 1 + j);
+        }
+    }
+    return len;
+}
+
+/// Compacts moves to visible runs outside the reported edits.
+pub fn keepMoves(moves: []values.Move, edits: []const Region, scale: values.Scale, scroll_tolerance: f64) usize {
+    const minimum = scale.devicePixels(min_move_height);
+    const slack = scale.devicePixels(padding);
+    var len: usize = 0;
+    for (moves) |move| {
+        if (@as(f64, @floatFromInt(move.before.height)) < minimum) continue;
+        const shift: f64 = @floatFromInt(@max(move.before.y, move.after.y) - @min(move.before.y, move.after.y));
+        if (insideEdit(move, edits, slack, shift <= scroll_tolerance)) continue;
+        moves[len] = move;
+        len += 1;
+    }
+    return len;
 }
 
 /// Sorts by the before box when present, then assigns kinds, numbers and padding.
@@ -343,6 +406,195 @@ fn discardUnsupported(mask: Mask, minimum: usize) void {
     }
 }
 
+fn insideEdit(move: values.Move, edits: []const Region, slack: f64, short_shift: bool) bool {
+    for (edits) |edit| {
+        const before = edit.before orelse continue;
+        const after = edit.after orelse continue;
+        if (containsMove(before, move.before, move, slack, short_shift) and
+            containsMove(after, move.after, move, slack, short_shift)) return true;
+    }
+    return false;
+}
+
+fn containsMove(box: Box, rows: values.RowRange, move: values.Move, slack: f64, short_shift: bool) bool {
+    const top: f64 = @floatFromInt(rows.y);
+    const bottom: f64 = @floatFromInt(rows.y + rows.height);
+    const left: f64 = @floatFromInt(move.x.count());
+    const right: f64 = @floatFromInt(move.x.count() + move.width.count());
+    if (left >= box.right() or right <= box.x) return false;
+    // Sub-scroll offsets at an edited edge can extend into the next
+    // alignment band. The edit still explains their overlapping rows.
+    if (short_shift) return top < box.bottom() + slack and bottom > box.y - slack;
+    return top >= box.y - slack and bottom <= box.bottom() + slack;
+}
+
+fn join(boxes: []Candidate, len: usize, i: usize, j: usize) usize {
+    boxes[i].region.before = unite(boxes[i].region.before, boxes[j].region.before);
+    boxes[i].region.after = unite(boxes[i].region.after, boxes[j].region.after);
+    std.mem.copyForwards(Candidate, boxes[j .. len - 1], boxes[j + 1 .. len]);
+    return len - 1;
+}
+
+fn corner(region: Region, limit: f64) ?Box {
+    const p = region.before orelse return null;
+    const q = region.after orelse return null;
+    if (!std.meta.eql(p, q) or @max(p.width, p.height) > limit) return null;
+    return p;
+}
+
+fn outlineCorners(boxes: []const Candidate, image: Image, top: Box, limit: f64) ?[3]usize {
+    for (boxes, 0..) |tr, j| {
+        const right = corner(tr.region, limit) orelse continue;
+        if (right.x <= top.right() or !sameRange(top.y, top.bottom(), right.y, right.bottom())) continue;
+        for (boxes, 0..) |bl, k| {
+            const bottom = corner(bl.region, limit) orelse continue;
+            if (bottom.y <= top.bottom() or !sameRange(top.x, top.right(), bottom.x, bottom.right())) continue;
+            for (boxes, 0..) |br, l| {
+                const lower_right = corner(br.region, limit) orelse continue;
+                if (!sameRange(bottom.y, bottom.bottom(), lower_right.y, lower_right.bottom()) or
+                    !sameRange(right.x, right.right(), lower_right.x, lower_right.right())) continue;
+                if (!visibleOutline(image, top, right, bottom)) continue;
+                var order = [3]usize{ j, k, l };
+                std.sort.insertion(usize, &order, {}, std.sort.desc(usize));
+                return order;
+            }
+        }
+    }
+    return null;
+}
+
+fn sameRange(a: f64, b: f64, c: f64, d: f64) bool {
+    return @min(b, d) - @max(a, c) >= 0.75 * @max(b - a, d - c);
+}
+
+fn visibleOutline(image: Image, top: Box, right: Box, bottom: Box) bool {
+    const mid_x: usize = @intFromFloat((top.right() + right.x) / 2);
+    const mid_y: usize = @intFromFloat((top.bottom() + bottom.y) / 2);
+    const top_y: usize = @intFromFloat(top.y);
+    const top_end: usize = @intFromFloat(top.bottom());
+    const bottom_y: usize = @intFromFloat(bottom.y);
+    const bottom_end: usize = @intFromFloat(bottom.bottom());
+    const row = image.row(mid_y);
+    const left_x: usize = @intFromFloat(top.x);
+    const left_end: usize = @intFromFloat(top.right());
+    const right_x: usize = @intFromFloat(right.x);
+    const right_end: usize = @intFromFloat(right.right());
+    const above = image.row(top_y -| 1)[mid_x];
+    const outside = row[left_x -| 1];
+    for (top_y..top_end) |y| {
+        const ink = image.row(y)[mid_x];
+        if ((pixel.same(ink, above) and pixel.same(ink, outside)) or
+            !hasInk(row[left_x..left_end], ink) or !hasInk(row[right_x..right_end], ink)) continue;
+        for (bottom_y..bottom_end) |end| {
+            if (pixel.same(image.row(end)[mid_x], ink)) return true;
+        }
+    }
+    return false;
+}
+
+fn hasInk(row: []const values.Pixel, ink: values.Pixel) bool {
+    for (row) |p| if (pixel.same(p, ink)) return true;
+    return false;
+}
+
+fn sameLine(a: Region, b: Region, max_height: f64) bool {
+    return lineNeighbours(a.before orelse return false, b.before orelse return false, max_height) and
+        lineNeighbours(a.after orelse return false, b.after orelse return false, max_height);
+}
+
+fn lineNeighbours(a: Box, b: Box, max_height: f64) bool {
+    const tallest = @max(a.height, b.height);
+    const overlap = @min(a.bottom(), b.bottom()) - @max(a.y, b.y);
+    const gap = @max(a.x, b.x) - @min(a.right(), b.right());
+    return tallest <= max_height and overlap >= 0.7 * @min(a.height, b.height) and gap <= line_gap_factor * tallest;
+}
+
+fn stacked(a: Region, b: Region, before: Image, after: Image, max_gap: f64) bool {
+    if ((a.before == null) != (b.before == null) or (a.after == null) != (b.after == null)) return false;
+    if (a.before != null and a.after != null) return false;
+    const p = a.before orelse a.after orelse return false;
+    const q = b.before orelse b.after orelse return false;
+    const image = if (a.before != null) before else after;
+    const shared = @min(p.right(), q.right()) - @max(p.x, q.x);
+    if (shared < 0.5 * @min(p.width, q.width)) return false;
+    const upper, const lower = if (p.y <= q.y) .{ p, q } else .{ q, p };
+    const gap = lower.y - upper.bottom();
+    if (gap > max_gap) return false;
+    if (gap <= 0) return true;
+    const left: usize = @intFromFloat(@min(p.x, q.x));
+    const right: usize = @intFromFloat(@max(p.right(), q.right()));
+    // Edge coverage can finish one row beyond the component bounds.
+    const first: usize = @intFromFloat(upper.bottom() + 1);
+    const end: usize = @intFromFloat(@max(upper.bottom() + 1, lower.y - 1));
+    for (first..end) |y| {
+        const row = image.row(y)[left..right];
+        for (row[1..]) |p_ink| {
+            for (0..3) |c| {
+                if (@abs(@as(i16, p_ink[c]) - @as(i16, row[0][c])) > blank_tolerance) return false;
+            }
+        }
+    }
+    return true;
+}
+
+noinline fn shiftedSideways(a: Region, b: Region, before: Image, after: Image) bool {
+    const p = a.before orelse return false;
+    const q = b.before orelse return false;
+    const pa = a.after orelse return false;
+    const qa = b.after orelse return false;
+    if (@abs(p.y - q.y) > 1 or @abs(p.bottom() - q.bottom()) > 1 or p.y != pa.y or q.y != qa.y) return false;
+    const left: usize = @intFromFloat(@min(p.x, q.x));
+    const right: usize = @intFromFloat(@min(@max(p.right(), q.right()), @as(f64, @floatFromInt(@min(before.width, after.width)))));
+    const top: usize = @intFromFloat(@min(p.y, q.y));
+    const height: usize = @intFromFloat(@max(p.bottom(), q.bottom()) - @as(f64, @floatFromInt(top)));
+    if (right <= left + 2 or height == 0 or top + height > @min(before.height, after.height)) return false;
+    const reach: usize = @intFromFloat(@min(max_sideways_shift, @max(p.width, q.width)));
+    const count: usize = @min(shift_samples, height);
+    for (1..reach + 1) |distance| {
+        for ([_]bool{ false, true }) |rightward| {
+            const start = if (rightward) @max(left, distance) else left;
+            const end = if (rightward) right else @min(right, before.width -| distance);
+            if (start >= end) continue;
+            const from = if (rightward) left -| distance else left + distance;
+            const stride: usize = 1 + (end - start - 1) / shift_columns;
+            const middle = shiftEvidence(before.row(top + height / 2), after.row(top + height / 2), start, end, from, stride);
+            if (2 * middle.explained < middle.changed or middle.same == 0) continue;
+            var seen: usize = 0;
+            var same: usize = 0;
+            var changed: usize = 0;
+            var explained: usize = 0;
+            for (0..count) |i| {
+                const y = top + (2 * i + 1) * height / (2 * count);
+                const row = shiftEvidence(before.row(y), after.row(y), start, end, from, stride);
+                seen += 1 + (end - start - 1) / stride;
+                same += row.same;
+                changed += row.changed;
+                explained += row.explained;
+            }
+            if (changed >= shift_min_pixels and 10 * explained >= 9 * changed and 50 * same >= 49 * seen) return true;
+        }
+    }
+    return false;
+}
+
+noinline fn shiftEvidence(old: []const values.Pixel, new: []const values.Pixel, start: usize, end: usize, from: usize, stride: usize) struct { changed: usize, explained: usize, same: usize } {
+    const original = old[start..end];
+    const shifted = old[from..][0..original.len];
+    const current = new[start..end];
+    var same: usize = 0;
+    var changed: usize = 0;
+    var explained: usize = 0;
+    var i: usize = 0;
+    while (i < current.len) : (i += stride) {
+        const match = pixel.same(current[i], shifted[i]);
+        const different = !pixel.same(current[i], original[i]);
+        same += @intFromBool(match);
+        changed += @intFromBool(different);
+        explained += @intFromBool(different and match);
+    }
+    return .{ .changed = changed, .explained = explained, .same = same };
+}
+
 fn lessThan(_: void, a: Region, b: Region) bool {
     // Collected regions always contain a box. Defaults make this total for plain values.
     const empty: Box = .{ .x = 0, .y = 0, .width = 0, .height = 0 };
@@ -434,6 +686,26 @@ test "a serpentine larger than the seed stack is one component" {
 test "an image smaller than the noise minimum keeps single-pixel changes" {
     try std.testing.expectEqual(@as(usize, 1), minPixels(.{ .width = 1, .height = 1 }, .{ .width = 64, .height = 64 }));
     try std.testing.expectEqual(@as(usize, min_region_pixels), minPixels(.{ .width = 33, .height = 33 }, .{ .width = 33, .height = 33 }));
+}
+
+test "one-sided stacks join across a blank seam but keep painted rows separate" {
+    const width = 55;
+    const height = 52;
+    const paper: values.Pixel = @splat(255);
+    const ink: values.Pixel = .{ 80, 90, 140, 255 };
+    var pixels: [width * height]values.Pixel = @splat(paper);
+    for (4..12) |y| @memset(pixels[y * width + 4 ..][0..36], ink);
+    for (29..44) |y| @memset(pixels[y * width + 6 ..][0..36], ink);
+    const image: Image = .{ .width = width, .height = height, .pixels = &pixels };
+    const parts = [_]Candidate{
+        .{ .region = .{ .after = Box.fromPixels(4, 4, 36, 8) }, .pixels = 288 },
+        .{ .region = .{ .after = Box.fromPixels(6, 29, 36, 15) }, .pixels = 540 },
+    };
+    var boxes = parts;
+    try std.testing.expectEqual(@as(usize, 1), mergeLogical(&boxes, image, image, .one));
+    boxes = parts;
+    pixels[20 * width + 20] = ink;
+    try std.testing.expectEqual(@as(usize, 2), mergeLogical(&boxes, image, image, .one));
 }
 
 test {

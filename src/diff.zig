@@ -237,9 +237,12 @@ pub fn compareChecked(allocator: Allocator, before: Image, after: Image, options
         collector.add(if (old) .{ .before = box } else .{ .after = box });
     }
     collector.growGap();
+    if (collector.len >= 4) collector.len = regions.mergeCorners(storage[0..collector.len], before, options.scale);
+    if (collector.len > 1) collector.len = regions.mergeLogical(storage[0..collector.len], before, after, options.scale);
     const out = try allocator.alloc(values.Region, collector.len);
     errdefer allocator.free(out);
     for (out, storage[0..collector.len]) |*region, box| region.* = box.region;
+    if (moves.items.len != 0) moves.shrinkRetainingCapacity(regions.keepMoves(moves.items, out, options.scale, options.scale.devicePixels(scroll_shift)));
     regions.finish(out, before.size(), after.size(), options.scale);
     return .{ .regions = out, .moves = try moves.toOwnedSlice(allocator), .width = width, .height = height };
 }
@@ -265,21 +268,34 @@ fn spanRegions(allocator: Allocator, collector: *Collector, moves: *std.ArrayLis
         if (parts.next()) |first| if (first.span.width != scope.span.width and
             (ambiguous or hasFlatColumn(before, after, first, parts)))
         {
+            if (before.height == after.height and !hasWideColumn(first, parts, local_limit)) {
+                return compareSpan(allocator, collector, scope, null);
+            }
             const empty = collector.*;
             var has_movement = false;
             var part = first;
             while (true) {
                 const local: Scope = .{ .before = before, .after = after, .span = part.span, .bounds = part.span, .frame = part.lane, .kind = .column };
-                const local_bands = try alignSpan(allocator, local, scroll_limit, local_limit, keys, bands, filtered);
+                // A strip as narrow as the replacement gap may be only the
+                // edge of a card. Give it the same positional comparison as
+                // a stationary group unless the whole span explains a move.
+                const local_bands = if (part.span.width <= local_limit)
+                    null
+                else
+                    try alignSpan(allocator, local, scroll_limit, local_limit, keys, bands, filtered);
                 var column_moved = false;
                 if (local_bands) |local_alignment| {
                     const first_move = moves.items.len;
                     try gatherMoves(allocator, moves, local, local_alignment);
+                    var kept = first_move;
                     for (moves.items[first_move..]) |move| {
                         const offset = @max(move.before.y, move.after.y) - @min(move.before.y, move.after.y);
-                        column_moved = column_moved or offset > scroll_limit;
+                        if (offset <= scroll_limit or !columnMotion(local, keys, move, scroll_limit)) continue;
+                        moves.items[kept] = move;
+                        kept += 1;
                     }
-                    if (!column_moved) moves.items.len = first_move;
+                    moves.items.len = kept;
+                    column_moved = kept > first_move;
                 }
                 has_movement = has_movement or column_moved;
                 try compareSpan(allocator, collector, local, if (column_moved) local_bands else null);
@@ -330,6 +346,30 @@ fn hasFlatColumn(before: Image, after: Image, first: columns.Group, trailing: co
         if (columns.sameRows(before, group.span) or columns.sameRows(after, group.span)) return true;
         group = rest.next() orelse return false;
     }
+}
+
+fn hasWideColumn(first: columns.Group, tail: columns.Partition, limit: usize) bool {
+    var group = first;
+    var rest = tail;
+    while (group.span.width <= limit) group = rest.next() orelse return false;
+    return true;
+}
+
+fn columnMotion(scope: Scope, keys: []const u64, move: values.Move, scroll_limit: usize) bool {
+    // A matching edge that remains at its old position gives no evidence
+    // that the column moved. Require several content rows at the new offset.
+    const before = keys[0..scope.before.height];
+    const after = keys[scope.before.height..];
+    const minimum: usize = @max(4, 2 * scroll_limit);
+    var supported: usize = 0;
+    for (0..move.before.height) |i| {
+        const old = move.before.y + i;
+        const new = move.after.y + i;
+        if (before[old] != after[new] or (old < after.len and before[old] == after[old]) or blankBand(scope.before, old, 1, scope.span)) continue;
+        supported += 1;
+        if (supported == minimum) return true;
+    }
+    return false;
 }
 
 fn gatherMoves(allocator: Allocator, moves: *std.ArrayList(values.Move), scope: Scope, bands: []const row_diff.Band) !void {
@@ -583,39 +623,67 @@ fn unpaired(collector: *Collector, scope: Scope, scratch: Scratch, rows: Unpaire
     }
     if (rows.background != null) return;
     const blank = blankBand(source, y, rows.count, scope.bounds);
-    if (blank and rows.side == .before and rows.opposite != null) {
-        const other = scope.after;
-        const opposite = rows.opposite.?;
-        if (opposite >= other.height) return;
-        // Keep space removed between content rows. A trailing margin can
-        // still be visible between its original and displaced positions.
-        const end = y + rows.count;
-        if ((end == source.height or blankBand(source, y, source.height - y, scope.bounds)) and
-            hasEqualRun(source.row(y), other, scope.bounds, y, opposite, rows.count)) return;
-    }
     // An empty band that changes layout spans its column.
     const bounds = if (blank) scope.bounds else scope.span;
+    if (rows.side == .before) if (rows.opposite) |opposite| {
+        // Unchanged columns outside the reported span can contain unrelated
+        // paint. Test the same columns that the fallback would report.
+        if ((blank or (bounds.width != scope.bounds.width and blankBand(source, y, rows.count, bounds))) and
+            unchangedBlank(scope, bounds, y, opposite, rows.count)) return;
+    };
     const box = Box.fromPixels(bounds.left, y, bounds.width, rows.count);
     collector.add(if (rows.side == .before) .{ .before = box } else .{ .after = box });
 }
 
 fn blankBand(source: Image, first: usize, rows: usize, bounds: columns.Span) bool {
-    const head = std.mem.sliceAsBytes(source.row(first)[bounds.left..][0..bounds.width]);
+    const head = rowBytes(source, first, bounds);
     const pixel_bytes = @sizeOf(Pixel);
     if (!std.mem.eql(u8, head[pixel_bytes..], head[0 .. head.len - pixel_bytes])) return false;
     for (first + 1..first + rows) |y| {
-        if (!std.mem.eql(u8, head, std.mem.sliceAsBytes(source.row(y)[bounds.left..][0..bounds.width]))) return false;
+        if (!std.mem.eql(u8, head, rowBytes(source, y, bounds))) return false;
     }
     return true;
 }
 
-fn hasEqualRun(reference: []const Pixel, image: Image, bounds: columns.Span, y: usize, opposite: usize, needed: usize) bool {
-    const expected = std.mem.sliceAsBytes(reference[bounds.left..][0..bounds.width]);
+fn unchangedBlank(scope: Scope, bounds: columns.Span, y: usize, opposite: usize, rows: usize) bool {
+    if (opposite >= scope.after.height) return true;
+    const expected = rowBytes(scope.before, y, bounds);
+    var end = y + rows;
+    while (end < scope.before.height and std.mem.eql(u8, rowBytes(scope.before, end, bounds), expected)) end += 1;
+    if (end == scope.before.height) return hasEqualRun(expected, scope.after, bounds, y, opposite, rows);
+
+    // A fixed lower boundary can absorb growth in the moving content. The
+    // remaining space immediately above that boundary is still on screen.
+    if (end == y + rows and end < scope.after.height and
+        std.mem.eql(u8, rowBytes(scope.before, end, bounds), rowBytes(scope.after, end, bounds)) and
+        hasEqualRun(expected, scope.after, bounds, y, y, rows)) return true;
+
+    var first = y;
+    while (first > 0 and std.mem.eql(u8, rowBytes(scope.before, first - 1, bounds), expected)) first -= 1;
+    // Matching only the unpaired portion could hide space actually removed
+    // between two lines of content. Match the whole interior blank run.
+    const shifted_first = opposite -| (y - first);
+    if (hasEqualRun(expected, scope.after, bounds, first, shifted_first, end - first)) return true;
+    // When content slides under a fixed bar, a shorter blank behind it is
+    // clipped by the viewport. The bar and the first blank row stay put.
+    if (first < 2 or first >= scope.after.height or
+        !std.mem.eql(u8, expected, rowBytes(scope.after, first, bounds))) return false;
+    const bar = rowBytes(scope.before, first - 1, bounds);
+    return blankBand(scope.before, first - 2, 2, bounds) and
+        std.mem.eql(u8, bar, rowBytes(scope.after, first - 1, bounds)) and
+        std.mem.eql(u8, bar, rowBytes(scope.after, first - 2, bounds));
+}
+
+fn rowBytes(image: Image, y: usize, bounds: columns.Span) []const u8 {
+    return std.mem.sliceAsBytes(image.row(y)[bounds.left..][0..bounds.width]);
+}
+
+fn hasEqualRun(expected: []const u8, image: Image, bounds: columns.Span, y: usize, opposite: usize, needed: usize) bool {
     const start = @min(y, opposite);
     const end = @min(image.height, @max(y, opposite) + needed);
     var run: usize = 0;
     for (start..end) |row| {
-        const paint = std.mem.sliceAsBytes(image.row(row)[bounds.left..][0..bounds.width]);
+        const paint = rowBytes(image, row, bounds);
         run = if (std.mem.eql(u8, expected, paint)) run + 1 else 0;
         if (run == needed) return true;
     }
@@ -794,6 +862,136 @@ fn paintCard(canvas: Canvas, x: usize, y: usize, width: usize, height: usize, se
     if (visible >= 17) canvas.line(x + 12, x + 86, y + 8, seed, 40);
 }
 
+fn insideRounded(x: usize, y: usize, width: usize, height: usize, radius: usize) bool {
+    const dx = radius -| @min(x, width - 1 - x);
+    const dy = radius -| @min(y, height - 1 - y);
+    return dx * dx + dy * dy <= radius * radius;
+}
+
+fn strokeRounded(canvas: Canvas, top: usize, radius: usize) void {
+    const left = 220;
+    const width = 540;
+    const height = 200;
+    const stroke = 2;
+    for (0..height) |y| for (0..width) |x| {
+        if (!insideRounded(x, y, width, height, radius)) continue;
+        if (x >= stroke and x < width - stroke and y >= stroke and y < height - stroke and
+            insideRounded(x - stroke, y - stroke, width - 2 * stroke, height - 2 * stroke, radius - stroke)) continue;
+        canvas.row(top + y)[left + x] = .{ 100, 100, 105, 255 };
+    };
+}
+
+test "card corner edits never align their narrow border columns as moves" {
+    const before = try Canvas.init(800, 600);
+    defer before.deinit();
+    const after = try Canvas.init(800, 600);
+    defer after.deinit();
+    @memset(before.pixels, .{ 245, 245, 247, 255 });
+    @memset(after.pixels, .{ 245, 245, 247, 255 });
+    for ([_]usize{ 60, 300 }) |y| {
+        strokeRounded(before, y, 4);
+        strokeRounded(after, y, 16);
+        // A separator can have the same ink as the outline.
+        if (y == 300) {
+            const edge = before.row(y)[480];
+            before.fill(222, y + 99, 536, 2, edge);
+            after.fill(222, y + 99, 536, 2, edge);
+        }
+    }
+    const result = try compareCanvases(before, after, 1);
+    defer result.deinit(test_allocator);
+    try equal(@as(usize, 0), result.moves.len);
+    try equal(@as(usize, 2), result.regions.len);
+    for (result.regions) |edit| {
+        try equal(Kind.changed, edit.kind);
+        try equal(edit.before, edit.after);
+    }
+}
+
+test "one line of text joins its changed runs across word space" {
+    const before = try Canvas.init(120, 100);
+    defer before.deinit();
+    const after = try Canvas.init(120, 100);
+    defer after.deinit();
+    after.fill(12, 35, 14, 16, inkShade(30, 4));
+    after.fill(53, 35, 14, 16, inkShade(30, 4));
+    const result = try compareCanvases(before, after, 1);
+    defer result.deinit(test_allocator);
+    try equal(@as(usize, 1), result.regions.len);
+    try expect(hasRegion(result, .after, 18, 40, .changed));
+    try expect(hasRegion(result, .after, 57, 40, .changed));
+}
+
+test "the exposed edges of a sideways card form one changed box" {
+    const before = try Canvas.init(150, 120);
+    defer before.deinit();
+    const after = try Canvas.init(150, 120);
+    defer after.deinit();
+    before.fill(30, 25, 60, 70, .{ 85, 100, 145, 255 });
+    after.fill(50, 25, 60, 70, .{ 85, 100, 145, 255 });
+    const result = try compareCanvases(before, after, 1);
+    defer result.deinit(test_allocator);
+    try equal(@as(usize, 1), result.regions.len);
+    try expect(hasRegion(result, .before, 36, 50, .changed));
+    try expect(hasRegion(result, .after, 104, 50, .changed));
+}
+
+test "an interior blank run is ignored only if the layout retains its length" {
+    const before = try Canvas.init(64, 80);
+    defer before.deinit();
+    const after = try Canvas.init(64, 80);
+    defer after.deinit();
+    const ink = inkShade(32, 4);
+    before.fill(10, 15, 24, 5, ink);
+    before.fill(10, 32, 30, 5, ink);
+    after.fill(10, 20, 24, 5, ink);
+    after.fill(10, 37, 30, 5, ink);
+    const span: columns.Span = .{ .left = 0, .width = 64 };
+    const scope: Scope = .{ .before = before.view, .after = after.view, .span = span, .bounds = span };
+    try expect(unchangedBlank(scope, span, 20, 25, 8));
+    after.fill(10, 31, 30, 6, ink);
+    try expect(!unchangedBlank(scope, span, 20, 25, 8));
+}
+
+test "blank space above a fixed input bar does not inherit unrelated sidebar paint" {
+    const before = try Canvas.init(144, 180);
+    defer before.deinit();
+    const after = try Canvas.init(144, 180);
+    defer after.deinit();
+    before.fill(28, 60, 90, 10, inkShade(32, 4));
+    after.fill(28, 80, 90, 10, inkShade(32, 4));
+    for ([_]Canvas{ before, after }) |canvas| {
+        canvas.fill(0, 30, 18, 130, inkShade(96, 4));
+        canvas.fill(20, 130, 110, 20, inkShade(190, 4));
+        canvas.line(30, 112, 135, 0, 32);
+    }
+    const scope: Scope = .{ .before = before.view, .after = after.view, .span = .{ .left = 24, .width = 96 }, .bounds = .{ .left = 0, .width = 144 } };
+    var boxes: [2]regions.Candidate = undefined;
+    var collector: Collector = .{ .boxes = &boxes, .gap = 0, .max_gap = 144 };
+    var mask: [96 * 20]regions.Cell = undefined;
+    var seeds: [20]u32 = undefined;
+    unpaired(&collector, scope, .{ .mask = &mask, .seeds = &seeds }, .{ .side = .before, .y = 110, .count = 20, .opposite = 130 });
+    try equal(@as(usize, 0), collector.len);
+}
+
+test "short scrolling clips blank space behind the fixed header" {
+    const before = try Canvas.init(180, 250);
+    defer before.deinit();
+    const after = try Canvas.init(180, 250);
+    defer after.deinit();
+    for (0..5) |i| before.line(10, 165, 44 + i * 30, i, 40);
+    after.copyRows(40, before, 43, 223);
+    for ([_]Canvas{ before, after }) |canvas| {
+        canvas.fill(0, 0, 180, 40, .{ 220, 228, 240, 255 });
+        canvas.fill(0, 220, 180, 30, .{ 235, 225, 220, 255 });
+        canvas.line(12, 150, 226, 20, 40);
+    }
+    const result = try compareCanvases(before, after, 1);
+    defer result.deinit(test_allocator);
+    try equal(@as(usize, 0), result.regions.len);
+    try expect(result.moves.len != 0);
+}
+
 test "a blank sidebar group keeps a new mark stationary beside inserted cards" {
     const before = try Canvas.init(600, 500);
     defer before.deinit();
@@ -897,6 +1095,28 @@ test "an aligned blank tail contributes no phantom move" {
     after.fill(3, 60, 8, 2, inkShade(70, 4));
     try gatherMoves(test_allocator, &moves, scope, &.{band});
     try equal(@as(usize, 1), moves.items.len);
+}
+
+test "replacement regions suppress enclosed and sub-line displacement" {
+    const before = try Canvas.init(120, 100);
+    defer before.deinit();
+    const after = try Canvas.init(120, 100);
+    defer after.deinit();
+    before.fill(10, 20, 50, 34, inkShade(32, 4));
+    after.fill(10, 20, 50, 34, inkShade(72, 4));
+    const result = try compareCanvases(before, after, 1);
+    defer result.deinit(test_allocator);
+    try equal(@as(usize, 1), result.regions.len);
+    var moves = [_]values.Move{
+        .{ .before = .{ .y = 27, .height = 10 }, .after = .{ .y = 34, .height = 10 }, .x = .init(10), .width = .init(50) },
+        .{ .before = .{ .y = 61, .height = 3 }, .after = .{ .y = 70, .height = 3 }, .x = .init(10), .width = .init(50) },
+        .{ .before = .{ .y = 62, .height = 10 }, .after = .{ .y = 73, .height = 10 }, .x = .init(10), .width = .init(50) },
+        .{ .before = .{ .y = 27, .height = 10 }, .after = .{ .y = 34, .height = 10 }, .x = .init(80), .width = .init(40) },
+        .{ .before = .{ .y = 49, .height = 12 }, .after = .{ .y = 50, .height = 12 }, .x = .init(10), .width = .init(50) },
+    };
+    try equal(@as(usize, 2), regions.keepMoves(&moves, result.regions, .one, Scale.one.devicePixels(scroll_shift)));
+    try equal(@as(usize, 62), moves[0].before.y);
+    try equal(@as(usize, 80), moves[1].x.count());
 }
 
 test "growth pairs an edited row head with its displaced body" {
