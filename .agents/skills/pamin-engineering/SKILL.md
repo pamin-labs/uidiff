@@ -42,11 +42,11 @@ Read `core.md` and each reference for a language, platform or concern the diff c
 ## When the reference and the repository disagree
 
 - A repository's `AGENTS.md` says how it meets each rule and what it has not built yet; it never weakens a rule, and a gap it names is no licence to widen: new code follows the rule.
-- A rule that seems wrong for a case is raised with the user and recorded in a decision record, then changed in `pamin-labs/skills`; never work around it in code.
+- A rule that seems wrong for a case is raised with the user and recorded in a decision record, then changed at the skill's source (`pamin-labs/skills`; outside the team, your own fork); never work around it in code.
 
 ## Reviewing a change and opening the PR
 
-Follow `core.md`'s "Working and review" and "Commits and PRs": rebase and build on what landed, run every touched `AGENTS.md`'s gates locally, hold the whole diff, tests included, against every imported reference and touched `AGENTS.md`, apply the extensibility check (would one more of the same thing touch one place?), fix misses in new commits, run the peer-review skill, and put measurements and how they were taken under the PR's verification. The coordination tool's commit skill checks the mechanics.
+Follow `core.md`'s "Working and review" and "Commits and PRs": rebase and build on what landed, run every touched `AGENTS.md`'s gates locally, hold the whole diff, tests included, against every imported reference and touched `AGENTS.md`, apply the extensibility check (would one more of the same thing touch one place?), fix misses in new commits, have it reviewed by a second reader, and put measurements and how they were taken under the PR's verification. In the team's own repositories, the coordination tool's peer-review and commit skills do the review and check the mechanics.
 
 ## Where a question goes
 
@@ -56,4 +56,4 @@ Follow `core.md`'s "Working and review" and "Commits and PRs": rebase and build 
 
 ## Changing these rules
 
-This skill's source is the public `pamin-labs/skills` repository; a repository installs it with the skills CLI and never edits its copy. A change is made there, cites its decision record, and adds no repository-specific fact; those stay in the repository's `AGENTS.md`.
+This skill's source is the public `pamin-labs/skills` repository; a repository installs it with the skills CLI and never edits its copy. A change for the team's repositories is made there (a project outside the team may keep its own fork), cites its decision record, and adds no repository-specific fact; those stay in the repository's `AGENTS.md`.
