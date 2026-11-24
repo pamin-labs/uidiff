@@ -31,7 +31,7 @@ pub fn decode(allocator: Allocator, bytes: []const u8, header: Header, cap: usiz
 /// Frees the caller-owned WebP output buffer.
 pub fn release(allocator: Allocator, pixels: []const Pixel) void {
     // The const view still owns the mutable decoder allocation.
-    allocator.rawFree(std.mem.sliceAsBytes(@constCast(pixels)), .of(Pixel), @returnAddress());
+    values.freeUnfilled(Pixel, allocator, pixels);
 }
 
 /// Decodes RGBA8 pixels of a probed size. Assumes size.pixelCount() is not
@@ -41,9 +41,8 @@ pub fn load(allocator: Allocator, bytes: []const u8, size: Size, cap: usize) Dec
     const output_bytes = count * @sizeOf(Pixel);
     if (output_bytes > cap) return error.ImageTooLarge;
     // WebPDecodeRGBAInto writes every byte on success. Failure releases the block before it escapes.
-    const ptr = allocator.rawAlloc(output_bytes, .of(Pixel), @returnAddress()) orelse return error.OutOfMemory;
-    const out = ptr[0..output_bytes];
-    const pixels = std.mem.bytesAsSlice(Pixel, out);
+    const pixels = try values.allocUnfilled(Pixel, allocator, count);
+    const out = std.mem.sliceAsBytes(pixels);
     errdefer release(allocator, pixels);
     // The stride is at most the pixel cap's row width in bytes, which fits c_int.
     const stride: c_int = @intCast(size.width * @sizeOf(Pixel));

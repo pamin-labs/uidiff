@@ -92,11 +92,10 @@ const CompareBuffers = struct {
     fn prepare(self: *CompareBuffers, allocator: Allocator, area: usize) Allocator.Error!Scratch {
         const seed_rows = @max(1, @min(regions.max_fill_seeds, area));
         if (area > self.mask.len) {
-            comptime std.debug.assert(@sizeOf(regions.Cell) == 1);
             // yiq.mask writes every cell it hands to the grouping pass.
-            const ptr = allocator.rawAlloc(area, .of(regions.Cell), @returnAddress()) orelse return error.OutOfMemory;
+            const fresh = try values.allocUnfilled(regions.Cell, allocator, area);
             self.freeMask(allocator);
-            self.mask = std.mem.bytesAsSlice(regions.Cell, ptr[0..area]);
+            self.mask = fresh;
         }
         try self.seeds.ensureTotalCapacityPrecise(allocator, seed_rows);
         self.seeds.items.len = seed_rows;
@@ -104,7 +103,7 @@ const CompareBuffers = struct {
     }
 
     fn freeMask(self: *CompareBuffers, allocator: Allocator) void {
-        if (self.mask.len != 0) allocator.rawFree(std.mem.sliceAsBytes(self.mask), .of(regions.Cell), @returnAddress());
+        values.freeUnfilled(regions.Cell, allocator, self.mask);
     }
 };
 

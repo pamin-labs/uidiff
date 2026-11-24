@@ -86,7 +86,7 @@ pub const FileInput = struct {
     /// Decodes any supported profile from this handle. The caller owns the pixels.
     pub fn decode(self: FileInput, io: Io, allocator: Allocator, cap: usize) (ReadError || DecodeError)!Decoded {
         const bytes = try readEncoded(io, allocator, self.file, self.length);
-        defer freeEncoded(allocator, bytes);
+        defer values.freeUnfilled(u8, allocator, bytes);
         return decodeCapped(allocator, bytes, cap);
     }
 
@@ -94,7 +94,7 @@ pub const FileInput = struct {
     /// the ordered fallback. The caller owns any returned pixels.
     pub fn stream(self: FileInput, io: Io, allocator: Allocator, cap: usize) (ReadError || DecodeError)!?Decoded {
         const bytes = try readEncoded(io, allocator, self.file, self.length);
-        defer freeEncoded(allocator, bytes);
+        defer values.freeUnfilled(u8, allocator, bytes);
         if (!png.matches(bytes)) return null;
         const probed = try probeFormat(png.probe, allocator, bytes, cap);
         const pixels = (try stb.loadStreaming(allocator, bytes, probed.header, probed.limit)) orelse return null;
@@ -156,7 +156,7 @@ pub fn probeFile(io: Io, allocator: Allocator, path: []const u8, cap: usize) (Re
         if (err != error.InvalidImage or header.len == length) return err;
     }
     const bytes = try readEncoded(io, allocator, file, length);
-    defer freeEncoded(allocator, bytes);
+    defer values.freeUnfilled(u8, allocator, bytes);
     return probeSize(allocator, bytes, cap);
 }
 
@@ -202,17 +202,11 @@ fn encodedLength(io: Io, file: Io.File) ReadError!usize {
 }
 
 fn readEncoded(io: Io, allocator: Allocator, file: Io.File, length: usize) ReadError![]u8 {
-    if (length == 0) return &.{};
     // A successful positional read initializes the entire buffer before it escapes.
-    const ptr = allocator.rawAlloc(length, .of(u8), @returnAddress()) orelse return error.OutOfMemory;
-    const bytes = ptr[0..length];
-    errdefer freeEncoded(allocator, bytes);
+    const bytes = try values.allocUnfilled(u8, allocator, length);
+    errdefer values.freeUnfilled(u8, allocator, bytes);
     try readBytes(io, file, bytes);
     return bytes;
-}
-
-fn freeEncoded(allocator: Allocator, bytes: []u8) void {
-    if (bytes.len != 0) allocator.rawFree(bytes, .of(u8), @returnAddress());
 }
 
 fn readBytes(io: Io, file: Io.File, bytes: []u8) ReadError!void {
