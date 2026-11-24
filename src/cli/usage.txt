@@ -1,0 +1,2 @@
+Usage: uidiff <before> <after> [--scale N] [--json] [--annotate <out.png>]
+       uidiff --help

@@ -2,13 +2,13 @@
     .name = .uidiff,
     .version = "0.0.1",
     .dependencies = .{
-        .zigimg = .{
-            .url = "git+https://github.com/zigimg/zigimg?ref=zigimg_zig_0.17.0#f5fe07487dc17ab40e5daa38211e5782a23f4776",
-            .hash = "zigimg-0.1.0-8_eo2r1LGACI-MYWvYRGp6ZRgQFnecakzOrMZkkwbT42",
-        },
         .libwebp = .{
             .url = "https://github.com/webmproject/libwebp/archive/refs/tags/v1.6.0.tar.gz",
             .hash = "N-V-__8AAGkrewARcKiSyLfJKsaW0ZoqHh4hzi4mTGwekxjk",
+        },
+        .miniz = .{
+            .url = "https://github.com/richgel999/miniz/archive/refs/tags/3.1.2.tar.gz",
+            .hash = "N-V-__8AAJmKFgC5zbelEEqRyvRErl5d8Qu74h8lKzSVc1xF",
         },
         .stb = .{
             .url = "https://github.com/nothings/stb/archive/6b5799bae8a1fe3792691ef4b72ae26434c3e799.tar.gz",
@@ -16,6 +16,18 @@
         },
     },
     .minimum_zig_version = "0.17.1",
-    .paths = .{""},
+    // What a consumer of the package downloads: the library and its build.
+    // build.zig imports the fixture case table, so its two declaration files
+    // ship; the tests, the fixture images and the benchmark do not.
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "tests/fixtures.zig",
+        "tests/fixtures/cases.zig",
+        "LICENSE",
+        "README.md",
+        "THIRD_PARTY_NOTICES",
+    },
     .fingerprint = 0x1a3bb05a701c2d69,
 }

@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "regions": [
+    {
+      "number": 1,
+      "kind": "removed",
+      "before": {
+        "x": 24,
+        "y": 24,
+        "width": 64,
+        "height": 24
+      },
+      "after": null
+    },
+    {
+      "number": 2,
+      "kind": "inserted",
+      "before": null,
+      "after": {
+        "x": 120,
+        "y": 760,
+        "width": 64,
+        "height": 32
+      }
+    }
+  ],
+  "width": 390,
+  "height": 800
+}

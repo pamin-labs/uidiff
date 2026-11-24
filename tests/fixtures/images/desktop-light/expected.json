@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "regions": [
+    {
+      "number": 1,
+      "kind": "inserted",
+      "before": null,
+      "after": {
+        "x": 344,
+        "y": 312,
+        "width": 2192,
+        "height": 112
+      }
+    }
+  ],
+  "width": 2560,
+  "height": 960
+}

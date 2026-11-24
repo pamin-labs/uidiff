@@ -50,6 +50,7 @@ Named build modules, and the only files that may import them. The `export` row n
 | `webp_c` | `src/codec/webp.zig` |
 | `stb_write_c` | `tests/fixtures/encode.zig` |
 | `webp_encode_c` | `tests/fixtures/encode.zig` |
+| `codec_memory` | `src/codec.zig` `src/codec/stb.zig` `src/codec/webp.zig` `tests/fixtures/encode.zig` |
 | `fixtures` | `tests/e2e.zig` `tests/decode.zig` `tests/fuzz/` |
 | `e2e_options` | `tests/e2e.zig` |
 | `fixture_options` | `tests/fixtures/fresh.zig` |
@@ -68,7 +69,7 @@ The RGBA8 PNG path uses miniz's inflater and reconstructs scanlines directly int
 - `bash scripts/fuzz.sh` (every fuzz target: the CLI's argument parser and each file in `tests/fuzz/`)
 - `zig build bench`
 - `zig build size`
-- `python3 src/annotate/generate-font.py --check --skip-offline` (Pillow and FreeType versions are listed in the script)
+- `python3 scripts/generate-font.py --check` (offline, checked against the pinned atlas digest)
 - `zig build -Doptimize=safe -Dtarget=<target>` for each target in `.github/workflows/ci.yml`
 
 `zig build test` fails when the committed fixtures differ from a fresh generation. `zig build fixtures` regenerates them on the host. `zig build fixture-generator -Dtarget=<target>` builds the generator for a target without running it.
