@@ -41,7 +41,7 @@ pub const Raster = struct {
         // Validated crops fit the image; the caller bounds y by crop height.
         // The row is sliced here rather than through Image.row so this
         // measured opt-out covers it in the mask loop.
-        @setRuntimeSafety(false); // Measured in the mask loop; see shipped_mode in build.zig.
+        @setRuntimeSafety(false);
         const start = (self.top + y) * self.image.width + self.left;
         return switch (self.background) {
             .none => self.image.pixels[start..][0..self.width],
@@ -52,13 +52,13 @@ pub const Raster = struct {
 
     inline fn at(self: Raster, x: usize, y: usize) Pixel {
         // x is within the crop; a one-pixel backdrop repeats across that width.
-        @setRuntimeSafety(false); // Measured in the mask loop; see shipped_mode in build.zig.
+        @setRuntimeSafety(false);
         const r = self.row(y);
         return r[if (r.len == 1) 0 else x];
     }
     inline fn sample(self: Raster, x: usize, y: usize) Pixel {
         // Neighbour callers clamp absolute coordinates to the image and
-        // any borrowed background row. See shipped_mode for the size A/B.
+        // any borrowed background row.
         @setRuntimeSafety(false);
         return switch (self.background) {
             .none => self.image.pixels[y * self.image.width + x],
@@ -97,7 +97,7 @@ pub fn mask(a: Raster, b: Raster, top: usize, rows: usize, out: []regions.Cell) 
         while (x + lanes <= a.width) : (x += lanes) {
             // Both validated crops have equal dimensions, the selected rows fit
             // both, out holds rows * width bytes, and x + lanes <= width.
-            @setRuntimeSafety(false); // Measured in the mask loop; see shipped_mode in build.zig.
+            @setRuntimeSafety(false);
             const pa = pixel.load(old[x..][0..lanes]);
             const pb: @Vector(lanes, u32) = if (new.len == 1) @splat(@bitCast(new[0])) else pixel.load(new[x..][0..lanes]);
             const equal = pa == pb;
@@ -316,7 +316,7 @@ fn channel(comptime n: usize, pixels: @Vector(n, u32), comptime index: usize) @V
 
 fn scalarChange(a: Raster, b: Raster, x: usize, y: usize, policy: EdgePolicy) regions.Cell {
     // The mask loop bounds x and y to both rasters and their validated pixel count.
-    @setRuntimeSafety(false); // Measured in the mask loop; see shipped_mode in build.zig.
+    @setRuntimeSafety(false);
     const byte_offset = ((a.top + y) * a.image.width + a.left + x) * @sizeOf(Pixel);
     if (!aboveThreshold(a.at(x, y), b.at(x, y), byte_offset)) return .clear;
     return markChange(a, b, x, y, policy);
@@ -513,7 +513,7 @@ fn lumaDelta(a: Pixel, b: Pixel, index: usize) f64 {
 
 fn siblings(a: Raster, p: Point) bool {
     // The neighbor selected by antialiased is inside both crops; all offsets are clipped.
-    @setRuntimeSafety(false); // Measured in the mask loop; see shipped_mode in build.zig.
+    @setRuntimeSafety(false);
     const color = a.sample(p.x, p.y);
     const x0 = p.x -| 1;
     const y0 = p.y -| 1;

@@ -28,13 +28,11 @@ pub const Region = values.Region;
 /// Selects the source image for a region or annotation.
 pub const Side = values.Side;
 /// Parameters for comparison and file decoding.
-pub const Options = diff.Options;
+pub const Options = files.Options;
 /// An owned set of numbered changes and the combined canvas dimensions.
 pub const Comparison = diff.Comparison;
 /// Input and scratch-space failures from diff.
 pub const CompareError = diff.CompareError;
-/// Compares a pair of borrowed RGBA8 values. The caller owns the result.
-pub const compare = diff.compare;
 /// Device pixels per CSS pixel.
 pub const Scale = values.Scale;
 /// Space added around each reported box, in CSS pixels.
@@ -87,6 +85,11 @@ pub const WriteError = files.WriteError;
 pub const CompareFilesError = files.CompareError;
 /// Decodes two files, compares them and writes the sheet if asked. The caller owns the result.
 pub const compareFiles = files.compareFiles;
+
+/// Compares a pair of borrowed RGBA8 values. The caller owns the result.
+pub fn compare(allocator: std.mem.Allocator, before: Image, after: Image, options: Options) CompareError!Comparison {
+    return diff.compare(allocator, before, after, options.comparison());
+}
 
 test "module roots expose their API" {
     inline for (.{ values, diff, codec, annotate, report, files }) |module| std.testing.refAllDecls(module);

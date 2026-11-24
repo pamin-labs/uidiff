@@ -12,10 +12,6 @@ pub const Pixel = image.Pixel;
 pub const Size = image.Size;
 /// Rectangle in device pixels.
 pub const Box = region.Box;
-/// Fractional bounds in display pixels.
-pub const DisplayBox = region.DisplayBox;
-/// Fractional bounds in sheet pixels.
-pub const SheetBox = region.SheetBox;
 /// Device pixels per CSS pixel.
 pub const Scale = scale.Scale;
 /// CSS-pixel length.

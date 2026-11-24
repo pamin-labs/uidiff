@@ -35,6 +35,14 @@ pub const Collector = struct {
         _ = self.addPixels(region, self.min_pixels);
     }
 
+    /// Adds a box present exclusively on one side of the comparison.
+    pub fn addOn(self: *Collector, side: values.Side, box: Box) void {
+        self.add(switch (side) {
+            .before => .{ .before = box },
+            .after => .{ .after = box },
+        });
+    }
+
     /// Merges nearby evidence, discards noise, and bounds the output count.
     pub fn growGap(self: *Collector) void {
         self.discardSparse();
@@ -218,8 +226,17 @@ pub const padding = values.CssPx.init(4);
 pub const max_regions = 8;
 // Bound the initial list and its quadratic merge work on highly fragmented images.
 const max_pending_regions = 4096;
+/// A complete rectangular outline has a mark at each of its corners.
+pub const outline_corners = 4;
+const corner_overlap = 0.75;
+const line_overlap = 0.7;
+const stack_overlap = 0.5;
+const sideways_explained_percent = 90;
+const sideways_agreement_percent = 98;
+const percent_scale = 100;
 const line_height = values.CssPx.init(48);
 const line_gap_factor = 3;
+const divider_context = 3;
 const stack_gap = values.CssPx.init(20);
 const blank_tolerance = 24;
 const max_sideways_shift = 256;
@@ -245,7 +262,7 @@ pub noinline fn mergeLogical(boxes: []Candidate, before: Image, after: Image, sc
         while (j < len) {
             const a = boxes[i].region;
             const b = boxes[j].region;
-            if (sameLine(a, b, scale.devicePixels(line_height)) or
+            if (sameLine(a, b, before, after, scale.devicePixels(line_height)) or
                 stacked(a, b, before, after, scale.devicePixels(stack_gap)) or
                 shiftedSideways(a, b, before, after))
             {
@@ -263,7 +280,7 @@ pub noinline fn mergeLogical(boxes: []Candidate, before: Image, after: Image, sc
 pub noinline fn mergeCorners(boxes: []Candidate, image: Image, scale: values.Scale) usize {
     var len = boxes.len;
     var i: usize = 0;
-    while (i + 3 < len) : (i += 1) {
+    while (i + outline_corners <= len) : (i += 1) {
         const first = corner(boxes[i].region, scale.devicePixels(line_height)) orelse continue;
         if (outlineCorners(boxes[i + 1 .. len], image, first, scale.devicePixels(line_height))) |others| {
             // The indexes are relative to the suffix and sorted largest first.
@@ -280,7 +297,7 @@ pub fn keepMoves(moves: []values.Move, edits: []const Region, scale: values.Scal
     var len: usize = 0;
     for (moves) |move| {
         if (@as(f64, @floatFromInt(move.before.height)) < minimum) continue;
-        const shift: f64 = @floatFromInt(@max(move.before.y, move.after.y) - @min(move.before.y, move.after.y));
+        const shift: f64 = @floatFromInt(move.shift());
         if (insideEdit(move, edits, slack, shift <= scroll_tolerance)) continue;
         moves[len] = move;
         len += 1;
@@ -424,7 +441,10 @@ fn containsMove(box: Box, rows: values.RowRange, move: values.Move, slack: f64, 
     if (left >= box.right() or right <= box.x) return false;
     // Sub-scroll offsets at an edited edge can extend into the next
     // alignment band. The edit still explains their overlapping rows.
-    if (short_shift) return top < box.bottom() + slack and bottom > box.y - slack;
+    if (short_shift) {
+        const overlap = @min(bottom, box.bottom() + slack) - @max(top, box.y - slack);
+        return 2 * overlap > bottom - top;
+    }
     return top >= box.y - slack and bottom <= box.bottom() + slack;
 }
 
@@ -464,10 +484,11 @@ fn outlineCorners(boxes: []const Candidate, image: Image, top: Box, limit: f64) 
 }
 
 fn sameRange(a: f64, b: f64, c: f64, d: f64) bool {
-    return @min(b, d) - @max(a, c) >= 0.75 * @max(b - a, d - c);
+    return @min(b, d) - @max(a, c) >= corner_overlap * @max(b - a, d - c);
 }
 
 fn visibleOutline(image: Image, top: Box, right: Box, bottom: Box) bool {
+    // Collector boxes use whole non-negative coordinates within their image.
     const mid_x: usize = @intFromFloat((top.right() + right.x) / 2);
     const mid_y: usize = @intFromFloat((top.bottom() + bottom.y) / 2);
     const top_y: usize = @intFromFloat(top.y);
@@ -497,16 +518,48 @@ fn hasInk(row: []const values.Pixel, ink: values.Pixel) bool {
     return false;
 }
 
-fn sameLine(a: Region, b: Region, max_height: f64) bool {
-    return lineNeighbours(a.before orelse return false, b.before orelse return false, max_height) and
-        lineNeighbours(a.after orelse return false, b.after orelse return false, max_height);
+fn sameLine(a: Region, b: Region, before: Image, after: Image, max_height: f64) bool {
+    const p = a.before orelse return false;
+    const q = b.before orelse return false;
+    const r = a.after orelse return false;
+    const s = b.after orelse return false;
+    if (!lineNeighbours(p, q, max_height) or !lineNeighbours(r, s, max_height)) return false;
+    return !betweenDividers(before, after, p, q, r, s);
+}
+
+fn betweenDividers(before: Image, after: Image, p: Box, q: Box, r: Box, s: Box) bool {
+    const start = @max(@min(p.right(), q.right()), @min(r.right(), s.right()));
+    const end = @min(@max(p.x, q.x), @max(r.x, s.x));
+    if (start >= end) return false;
+    // Boxes come from the collector and are within each validated image.
+    const left: usize = @max(1, @as(usize, @intFromFloat(start)));
+    const right: usize = @intFromFloat(end);
+    if (left >= right) return false;
+    const top: usize = @intFromFloat(@min(p.y, q.y, r.y, s.y));
+    const bottom: usize = @intFromFloat(@max(p.bottom(), q.bottom(), r.bottom(), s.bottom()));
+    const height = @min(before.height, after.height);
+    if (top < divider_context or bottom + divider_context >= height) return false;
+    const samples = [_]usize{ top - divider_context, (top + bottom) / 2, bottom + divider_context };
+    for (left..right) |x| {
+        const row = before.row(samples[0]);
+        const edge_left = row[x - 1];
+        const edge_right = row[x];
+        if (pixel.same(edge_left, edge_right)) continue;
+        for (samples) |y| {
+            const a = before.row(y);
+            const z = after.row(y);
+            if (!pixel.same(a[x - 1], edge_left) or !pixel.same(z[x - 1], edge_left) or
+                !pixel.same(a[x], edge_right) or !pixel.same(z[x], edge_right)) break;
+        } else return true;
+    }
+    return false;
 }
 
 fn lineNeighbours(a: Box, b: Box, max_height: f64) bool {
     const tallest = @max(a.height, b.height);
     const overlap = @min(a.bottom(), b.bottom()) - @max(a.y, b.y);
     const gap = @max(a.x, b.x) - @min(a.right(), b.right());
-    return tallest <= max_height and overlap >= 0.7 * @min(a.height, b.height) and gap <= line_gap_factor * tallest;
+    return tallest <= max_height and overlap >= line_overlap * @min(a.height, b.height) and gap <= line_gap_factor * tallest;
 }
 
 fn stacked(a: Region, b: Region, before: Image, after: Image, max_gap: f64) bool {
@@ -516,11 +569,12 @@ fn stacked(a: Region, b: Region, before: Image, after: Image, max_gap: f64) bool
     const q = b.before orelse b.after orelse return false;
     const image = if (a.before != null) before else after;
     const shared = @min(p.right(), q.right()) - @max(p.x, q.x);
-    if (shared < 0.5 * @min(p.width, q.width)) return false;
+    if (shared < stack_overlap * @min(p.width, q.width)) return false;
     const upper, const lower = if (p.y <= q.y) .{ p, q } else .{ q, p };
     const gap = lower.y - upper.bottom();
     if (gap > max_gap) return false;
     if (gap <= 0) return true;
+    // The collector has already bounded these whole pixel boxes to their image.
     const left: usize = @intFromFloat(@min(p.x, q.x));
     const right: usize = @intFromFloat(@max(p.right(), q.right()));
     // Edge coverage can finish one row beyond the component bounds.
@@ -543,6 +597,7 @@ noinline fn shiftedSideways(a: Region, b: Region, before: Image, after: Image) b
     const pa = a.after orelse return false;
     const qa = b.after orelse return false;
     if (@abs(p.y - q.y) > 1 or @abs(p.bottom() - q.bottom()) > 1 or p.y != pa.y or q.y != qa.y) return false;
+    // The collector has already bounded these whole pixel boxes to their image.
     const left: usize = @intFromFloat(@min(p.x, q.x));
     const right: usize = @intFromFloat(@min(@max(p.right(), q.right()), @as(f64, @floatFromInt(@min(before.width, after.width)))));
     const top: usize = @intFromFloat(@min(p.y, q.y));
@@ -571,7 +626,7 @@ noinline fn shiftedSideways(a: Region, b: Region, before: Image, after: Image) b
                 changed += row.changed;
                 explained += row.explained;
             }
-            if (changed >= shift_min_pixels and 10 * explained >= 9 * changed and 50 * same >= 49 * seen) return true;
+            if (changed >= shift_min_pixels and percent_scale * explained >= sideways_explained_percent * changed and percent_scale * same >= sideways_agreement_percent * seen) return true;
         }
     }
     return false;

@@ -1,14 +1,49 @@
 //! Rectangles and region values shared by comparison, drawing, and transport.
 const std = @import("std");
 
-const PixelSpace = enum { device, display, sheet };
+const PixelSpace = enum { device, sheet };
 
 /// A rectangle in source device pixels.
-pub const Box = PixelBox(.device);
-/// A rectangle in display pixels after fitting an image's requested height.
-pub const DisplayBox = PixelBox(.display);
-/// A rectangle in the compositor's sheet coordinates.
-pub const SheetBox = PixelBox(.sheet);
+pub const Box = struct {
+    /// Left edge.
+    x: f64,
+    /// Top edge.
+    y: f64,
+    /// Width.
+    width: f64,
+    /// Height.
+    height: f64,
+
+    const Self = @This();
+
+    /// Builds a rectangle from integer pixel coordinates.
+    pub fn fromPixels(x: usize, y: usize, width: usize, height: usize) Self {
+        return .{ .x = @floatFromInt(x), .y = @floatFromInt(y), .width = @floatFromInt(width), .height = @floatFromInt(height) };
+    }
+
+    /// Returns the exclusive right edge.
+    pub fn right(self: Self) f64 {
+        return self.x + self.width;
+    }
+
+    /// Returns the exclusive bottom edge.
+    pub fn bottom(self: Self) f64 {
+        return self.y + self.height;
+    }
+
+    /// Returns the intersection area in square pixels.
+    pub fn overlap(self: Self, other: Self) f64 {
+        return @max(0, @min(self.right(), other.right()) - @max(self.x, other.x)) *
+            @max(0, @min(self.bottom(), other.bottom()) - @max(self.y, other.y));
+    }
+
+    /// Returns the squared gap between two rectangles.
+    pub fn distanceSquared(self: Self, other: Self) f64 {
+        const dx = @max(0, other.x - self.right(), self.x - other.right());
+        const dy = @max(0, other.y - self.bottom(), self.y - other.bottom());
+        return dx * dx + dy * dy;
+    }
+};
 
 /// Which side contains the difference. Non-exhaustive, so a later release
 /// may add a kind (a moved block, say) without breaking callers; a switch
@@ -39,7 +74,17 @@ pub const DevicePx = enum(usize) {
 };
 
 /// A block aligned at different vertical positions, within the given columns.
-pub const Move = struct { before: RowRange, after: RowRange, x: DevicePx, width: DevicePx };
+pub const Move = struct {
+    before: RowRange,
+    after: RowRange,
+    x: DevicePx,
+    width: DevicePx,
+
+    /// Returns the absolute vertical displacement in source pixels.
+    pub fn shift(self: Move) usize {
+        return @max(self.before.y, self.after.y) - @min(self.before.y, self.after.y);
+    }
+};
 
 /// A numbered difference, with one box per affected side.
 pub const Region = struct {
@@ -60,55 +105,8 @@ pub const Region = struct {
     }
 };
 
-fn PixelBox(comptime space: PixelSpace) type {
+fn PixelRows(comptime _: PixelSpace) type {
     return struct {
-        const Self = @This();
-        /// The coordinate system used by every field.
-        pub const coordinate_space = space;
-
-        /// Left edge.
-        x: f64,
-        /// Top edge.
-        y: f64,
-        /// Width.
-        width: f64,
-        /// Height.
-        height: f64,
-
-        /// Builds a rectangle from integer pixel coordinates.
-        pub fn fromPixels(x: usize, y: usize, width: usize, height: usize) Self {
-            return .{ .x = @floatFromInt(x), .y = @floatFromInt(y), .width = @floatFromInt(width), .height = @floatFromInt(height) };
-        }
-
-        /// Returns the exclusive right edge.
-        pub fn right(self: Self) f64 {
-            return self.x + self.width;
-        }
-
-        /// Returns the exclusive bottom edge.
-        pub fn bottom(self: Self) f64 {
-            return self.y + self.height;
-        }
-
-        /// Returns the intersection area in square pixels.
-        pub fn overlap(self: Self, other: Self) f64 {
-            return @max(0, @min(self.right(), other.right()) - @max(self.x, other.x)) *
-                @max(0, @min(self.bottom(), other.bottom()) - @max(self.y, other.y));
-        }
-
-        /// Returns the squared gap between two rectangles.
-        pub fn distanceSquared(self: Self, other: Self) f64 {
-            const dx = @max(0, other.x - self.right(), self.x - other.right());
-            const dy = @max(0, other.y - self.bottom(), self.y - other.bottom());
-            return dx * dx + dy * dy;
-        }
-    };
-}
-
-fn PixelRows(comptime space: PixelSpace) type {
-    return struct {
-        /// Coordinate system used for the start and row count.
-        pub const coordinate_space = space;
         y: usize,
         height: usize,
     };

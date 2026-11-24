@@ -54,6 +54,11 @@ pub const Image = struct {
     pub fn row(self: Image, y: usize) []const Pixel {
         return self.pixels[y * self.width ..][0..self.width];
     }
+
+    /// Borrows bytes of a row segment within a validated image.
+    pub fn rowBytes(self: Image, y: usize, left: usize, width: usize) []const u8 {
+        return std.mem.sliceAsBytes(self.row(y)[left..][0..width]);
+    }
 };
 
 /// Bounds a 4K-wide capture to 32,768 rows and keeps individual RGBA8 buffers at most 512 MiB.

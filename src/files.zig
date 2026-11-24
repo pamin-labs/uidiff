@@ -8,6 +8,22 @@ const annotate = @import("annotate.zig");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
+/// Configures the comparison and limits each file decode.
+pub const Options = struct {
+    scale: values.Scale = .one,
+    max_decode_bytes: usize = values.max_decode_bytes,
+
+    /// Returns the settings used by the pixel comparison.
+    pub fn comparison(self: Options) diff.Options {
+        return .{ .scale = self.scale };
+    }
+
+    /// Checks the comparison settings before opening the inputs.
+    pub fn check(self: Options) error{InvalidScale}!diff.Checked {
+        return self.comparison().check();
+    }
+};
+
 /// The files one comparison reads and writes. Slices borrow the caller's.
 pub const Paths = struct {
     before: []const u8,
@@ -79,7 +95,7 @@ const write_buffer_bytes = 64 * 1024;
 /// Checks the options, decodes both files, compares them, and writes the
 /// sheet when paths.annotate is set. On failure, diagnostics names the file
 /// concerned, or null when no file is. The caller owns the comparison.
-pub fn compareFiles(io: Io, allocator: Allocator, paths: Paths, options: diff.Options, diagnostics: *Diagnostics) CompareError!diff.Comparison {
+pub fn compareFiles(io: Io, allocator: Allocator, paths: Paths, options: Options, diagnostics: *Diagnostics) CompareError!diff.Comparison {
     diagnostics.path = null;
     const checked = try options.check();
     if (paths.annotate) |path| try preflightSheet(io, allocator, paths, path, options.max_decode_bytes, diagnostics);

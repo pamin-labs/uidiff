@@ -1,6 +1,7 @@
 //! Row hashes and linear-space Myers alignment for scrolling and resizing.
 const std = @import("std");
 const values = @import("../value.zig");
+const pixel_ops = @import("pixel.zig");
 const columns = @import("columns.zig");
 const Image = values.Image;
 const Allocator = std.mem.Allocator;
@@ -33,10 +34,42 @@ const Match = struct {
         return @as(isize, @intCast(self.after)) - @as(isize, @intCast(self.before));
     }
 };
+const Anchors = struct {
+    rows: []const Match,
+    footer: usize,
+    first_offset: isize,
+    background: [2]?u64,
+};
+
+const PixelSamples = struct {
+    appearance: usize = 0,
+    positional: usize = 0,
+    shifted: usize = 0,
+};
+
+const PixelBand = struct { before: usize, after: usize, count: usize, shift: usize };
+
 const Keys = []const u64;
 const Coordinate = struct { x: u32 = 0, y: u32 = 0 };
 const Diagonal = struct { x: u32 = missing, middle: Coordinate = .{} };
 const SearchResult = struct { edits: usize, middle: Coordinate };
+/// Reuses the frontier, row matches, and frequency map across column alignments.
+pub const Workspace = struct {
+    raw: std.ArrayList(Match) = .empty,
+    content: std.ArrayList(Match) = .empty,
+    frontier: std.ArrayList(Diagonal) = .empty,
+    frequencies: std.AutoHashMapUnmanaged(u64, usize) = .empty,
+
+    /// Releases all retained alignment buffers.
+    pub fn deinit(self: *Workspace, allocator: Allocator) void {
+        self.raw.deinit(allocator);
+        self.content.deinit(allocator);
+        self.frontier.deinit(allocator);
+        self.frequencies.deinit(allocator);
+        self.* = .{};
+    }
+};
+
 const Problem = struct {
     a: Keys,
     b: Keys,
@@ -101,6 +134,13 @@ const Problem = struct {
 };
 
 /// A brief change in displacement that can be compared as a row replacement.
+const colour_sample_columns = 96;
+const silhouette_sample_columns = 64;
+const sample_rows = 64;
+const min_sample_support = 16;
+const min_silhouette_band = 32;
+const min_mixed_anchor = 4;
+const min_panel_evidence = 4;
 const max_replacement_rows = 64;
 const max_panel_shift = 512;
 const max_panel_candidates = 8;
@@ -136,7 +176,7 @@ pub const max_edits = 8192;
 /// Hashes each row of the column span. Asserts output.len equals the image
 /// height and left + width is at most its width.
 pub fn keys(source: Image, left: usize, width: usize, output: []u64) void {
-    for (output, 0..) |*key, y| key.* = std.hash.Wyhash.hash(0, std.mem.sliceAsBytes(source.row(y)[left..][0..width]));
+    for (output, 0..) |*key, y| key.* = std.hash.Wyhash.hash(0, source.rowBytes(y, left, width));
 }
 
 /// Matches a compact insertion when the rest of the column shifts exactly.
@@ -151,9 +191,8 @@ pub fn compactInsertion(before: Keys, after: Keys, limit: usize, bands: []Band) 
 }
 
 /// Aligns rows into caller-owned bands, or returns null for positional comparison.
-pub fn matchBands(allocator: Allocator, before: Keys, after: Keys, limits: Limits, bands: []Band, filtered: []u64) Allocator.Error!?[]Band {
+pub fn matchBands(allocator: Allocator, before: Keys, after: Keys, limits: Limits, bands: []Band, filtered: []u64, scratch: *Workspace) Allocator.Error!?[]Band {
     const limit = limits.scroll;
-    const replacement_limit = @min(max_replacement_rows, limits.replacement);
     const main = Problem.init(before, after);
     if (@min(main.a.len, main.b.len) == 0) return null;
     const viewport = before.len == after.len;
@@ -180,14 +219,15 @@ pub fn matchBands(allocator: Allocator, before: Keys, after: Keys, limits: Limit
         if (clippedInsertion(main, limit, bands)) |aligned| return aligned;
     }
     const overlap = @min(before.len, after.len);
-    const raw = try allocator.alloc(Match, overlap);
-    defer allocator.free(raw);
+    try scratch.raw.ensureTotalCapacityPrecise(allocator, overlap);
+    scratch.raw.items.len = overlap;
+    const raw = scratch.raw.items;
     // Both key slices come from validated image heights, which fit u32.
     const budget: usize = @min(max_edits, @max(before.len, after.len));
-    var counts: std.AutoHashMapUnmanaged(u64, usize) = .empty;
-    defer counts.deinit(allocator);
+    const counts = &scratch.frequencies;
+    counts.clearRetainingCapacity();
     try counts.ensureTotalCapacity(allocator, @intCast(@max(before.len, after.len)));
-    const old_background = background(&counts, before);
+    const old_background = background(counts, before);
     var shared: usize = 0;
     for (after) |row| {
         const count = counts.getPtr(row) orelse continue;
@@ -197,11 +237,12 @@ pub fn matchBands(allocator: Allocator, before: Keys, after: Keys, limits: Limit
     }
     if (before.len + after.len - 2 * shared > budget) return null;
     counts.clearRetainingCapacity();
-    const new_background = background(&counts, after);
+    const new_background = background(counts, after);
 
     const frontier_budget: usize = @min(max_edits, before.len + after.len);
-    const frontier = try allocator.alloc(Diagonal, 2 * frontier_budget + 3);
-    defer allocator.free(frontier);
+    try scratch.frontier.ensureTotalCapacityPrecise(allocator, 2 * frontier_budget + 3);
+    scratch.frontier.items.len = 2 * frontier_budget + 3;
+    const frontier = scratch.frontier.items;
     const distance = main.distance(budget, frontier) orelse return null;
     // A local edit's two-sided cost competes with a motion path plus the
     // penalty for leaving the alignment and returning to it.
@@ -219,8 +260,9 @@ pub fn matchBands(allocator: Allocator, before: Keys, after: Keys, limits: Limit
         }
     }
     const equal = main.matches(distance, frontier, raw) orelse return null;
-    const content = try allocator.alloc(Match, equal.len);
-    defer allocator.free(content);
+    try scratch.content.ensureTotalCapacityPrecise(allocator, equal.len);
+    scratch.content.items.len = equal.len;
+    const content = scratch.content.items;
 
     var content_rows: usize = 0;
     const interior = equal.len != 0 and (equal[equal.len - 1].before != equal.len - 1 or equal[equal.len - 1].after != equal.len - 1);
@@ -291,6 +333,54 @@ pub fn matchBands(allocator: Allocator, before: Keys, after: Keys, limits: Limit
             footer = kept;
         }
     }
+    return assembleBands(before, after, limits, .{
+        .rows = content[0..count],
+        .footer = footer,
+        .first_offset = first_offset,
+        .background = .{ old_background, new_background },
+    }, frontier, raw, bands);
+}
+
+/// Places a one-sided element at the best boundary among equivalent row matches.
+pub fn refineElements(before: Keys, after: Keys, limits: Limits, bands: []Band) void {
+    const images = limits.images orelse return;
+    if (bands.len < 2) return;
+    recoverGrowingEdits(limits, bands);
+    refineMixedPaths(limits, bands);
+    for (bands[0 .. bands.len - 1], bands[1..]) |*band, next| {
+        if (band.mode != .regular or @min(band.removed, band.added) != 0) continue;
+        const inserted = band.added != 0;
+        const count = @max(band.removed, band.added);
+        if (count <= 2 * limits.scroll or @min(next.removed, next.added) < count / 2) continue;
+        if (next.before != band.before + band.removed or next.after != band.after + band.added) continue;
+        const short = if (inserted) before else after;
+        const long = if (inserted) after else before;
+        const image = images[@intFromBool(inserted)];
+        const original = if (inserted) band.after else band.before;
+        const aligned = if (inserted) band.before else band.after;
+        var distance: usize = 0;
+        const max_distance = @min(aligned, original, count, max_panel_shift);
+        while (distance < max_distance) : (distance += 1) {
+            const key = short[aligned - distance - 1];
+            const y = original - distance - 1;
+            if (key != long[y] or key != long[y + count]) break;
+        }
+        const best = compactElement(image, original - distance, original, count, limits);
+        band.before -= original - best;
+        band.after -= original - best;
+        band.mode = .element;
+    }
+}
+
+fn assembleBands(before: Keys, after: Keys, limits: Limits, anchors: Anchors, frontier: []Diagonal, raw: []Match, bands: []Band) []Band {
+    const content = anchors.rows;
+    const footer = anchors.footer;
+    const first_offset = anchors.first_offset;
+    const old_background, const new_background = anchors.background;
+    const count = content.len;
+    const viewport = before.len == after.len;
+    const limit = limits.scroll;
+    const replacement_limit = @min(max_replacement_rows, limits.replacement);
     var len: usize = 0;
     var old_y: usize = 0;
     var new_y: usize = 0;
@@ -373,37 +463,6 @@ pub fn matchBands(allocator: Allocator, before: Keys, after: Keys, limits: Limit
     return bands[0..len];
 }
 
-/// Places a one-sided element at the best boundary among equivalent row matches.
-pub fn refineElements(before: Keys, after: Keys, limits: Limits, bands: []Band) void {
-    const images = limits.images orelse return;
-    if (bands.len < 2) return;
-    recoverGrowingEdits(limits, bands);
-    refineMixedPaths(limits, bands);
-    for (bands[0 .. bands.len - 1], bands[1..]) |*band, next| {
-        if (band.mode != .regular or @min(band.removed, band.added) != 0) continue;
-        const inserted = band.added != 0;
-        const count = @max(band.removed, band.added);
-        if (count <= 2 * limits.scroll or @min(next.removed, next.added) < count / 2) continue;
-        if (next.before != band.before + band.removed or next.after != band.after + band.added) continue;
-        const short = if (inserted) before else after;
-        const long = if (inserted) after else before;
-        const image = images[@intFromBool(inserted)];
-        const original = if (inserted) band.after else band.before;
-        const aligned = if (inserted) band.before else band.after;
-        var distance: usize = 0;
-        const max_distance = @min(aligned, original, count, max_panel_shift);
-        while (distance < max_distance) : (distance += 1) {
-            const key = short[aligned - distance - 1];
-            const y = original - distance - 1;
-            if (key != long[y] or key != long[y + count]) break;
-        }
-        const best = compactElement(image, original - distance, original, count, limits);
-        band.before -= original - best;
-        band.after -= original - best;
-        band.mode = .element;
-    }
-}
-
 // Growth fixes the net offset. A locally edited head of the moved list can
 // be paired against the new row instead, because it lost its exact row hashes.
 fn recoverGrowingEdits(limits: Limits, bands: []Band) void {
@@ -424,22 +483,14 @@ fn recoverGrowingEdits(limits: Limits, bands: []Band) void {
 }
 
 fn prefersGrowthOffset(images: [2]Image, limits: Limits, band: Band, growth: usize) bool {
-    var positional: usize = 0;
-    var shifted: usize = 0;
-    const column_step = @max(1, limits.width / 96);
-    const row_step = @max(1, band.removed / 64);
-    var row: usize = 0;
-    while (row < band.removed) : (row += row_step) {
-        const old = images[0].row(band.before + row);
-        const same = images[1].row(band.after + row);
-        const moved = images[1].row(band.after + growth + row);
-        var x = limits.left;
-        while (x < limits.left + limits.width) : (x += column_step) {
-            positional += @intFromBool(!std.meta.eql(old[x], same[x]));
-            shifted += @intFromBool(!std.meta.eql(old[x], moved[x]));
-        }
-    }
-    return positional >= 16 and 4 * shifted <= 3 * positional;
+    const totals = sampleBand(.colour, images[0], images[1], limits, .{
+        .before = band.before,
+        .after = band.after,
+        .count = band.removed,
+        .shift = growth,
+    }, &.{});
+    return totals.positional >= min_sample_support and
+        paint_density_denominator * totals.shifted <= paint_density_numerator * totals.positional;
 }
 
 fn hasDisplacedContent(anchors: []const Match, before: Keys, after: Keys) bool {
@@ -499,9 +550,9 @@ fn refineMixedPaths(limits: Limits, bands: []Band) void {
         const first = bands[i];
         const second = bands[i + 1];
         const next = bands[i + 2];
-        if (first.mode != .regular or second.mode != .regular or @min(first.removed, first.added) < 4) continue;
+        if (first.mode != .regular or second.mode != .regular or @min(first.removed, first.added) < min_mixed_anchor) continue;
         if (second.before != next.before -| second.removed or second.after != next.after -| second.added) continue;
-        if (@min(next.removed, next.added) < 4) continue;
+        if (@min(next.removed, next.added) < min_mixed_anchor) continue;
         const gap: Band = .{
             .before = first.before,
             .after = first.after,
@@ -530,7 +581,7 @@ fn shapeKeepsOffset(limits: Limits, gap: Band) bool {
     if (@min(gap.before, gap.after) == 0) return false;
     const count = @min(gap.removed, gap.added);
     const shift = @max(gap.removed, gap.added) - count;
-    if (shift <= limits.scroll or count < 32) return false;
+    if (shift <= limits.scroll or count < min_silhouette_band) return false;
     const inserted = gap.added > gap.removed;
     const short = images[@intFromBool(!inserted)];
     const long = images[@intFromBool(inserted)];
@@ -540,27 +591,39 @@ fn shapeKeepsOffset(limits: Limits, gap: Band) bool {
     const opposite = long.row(long_y - 1)[limits.left..][0..limits.width];
     if (!std.mem.eql(u8, std.mem.sliceAsBytes(backdrop), std.mem.sliceAsBytes(opposite))) return false;
 
-    const x_step = @max(1, limits.width / 64);
-    const y_step = @max(1, count / 64);
-    var positional: usize = 0;
-    var displaced: usize = 0;
-    var foreground: usize = 0;
+    const totals = sampleBand(.silhouette, short, long, limits, .{
+        .before = short_y,
+        .after = long_y,
+        .count = count,
+        .shift = shift,
+    }, backdrop);
+    return totals.appearance >= min_sample_support and totals.positional >= min_sample_support and totals.shifted == 0;
+}
+
+fn sampleBand(comptime mode: enum { colour, silhouette }, before: Image, after: Image, limits: Limits, band: PixelBand, backdrop: []const values.Pixel) PixelSamples {
+    const columns_target = if (mode == .colour) colour_sample_columns else silhouette_sample_columns;
+    const x_step = @max(1, limits.width / columns_target);
+    const y_step = @max(1, band.count / sample_rows);
+    var totals: PixelSamples = .{};
     var y: usize = 0;
-    while (y < count) : (y += y_step) {
-        const old = short.row(short_y + y)[limits.left..][0..limits.width];
-        const same = long.row(long_y + y)[limits.left..][0..limits.width];
-        const moved = long.row(long_y + shift + y)[limits.left..][0..limits.width];
+    while (y < band.count) : (y += y_step) {
+        const old = before.row(band.before + y)[limits.left..][0..limits.width];
+        const same = after.row(band.after + y)[limits.left..][0..limits.width];
+        const moved = after.row(band.after + band.shift + y)[limits.left..][0..limits.width];
         var x: usize = 0;
         while (x < limits.width) : (x += x_step) {
-            const ink = !std.meta.eql(old[x], backdrop[x]);
-            const same_ink = !std.meta.eql(same[x], backdrop[x]);
-            const moved_ink = !std.meta.eql(moved[x], backdrop[x]);
-            foreground += @intFromBool(ink);
-            positional += @intFromBool(ink != same_ink);
-            displaced += @intFromBool(ink != moved_ink);
+            if (mode == .colour) {
+                totals.positional += @intFromBool(!pixel_ops.same(old[x], same[x]));
+                totals.shifted += @intFromBool(!pixel_ops.same(old[x], moved[x]));
+            } else {
+                const ink = !pixel_ops.same(old[x], backdrop[x]);
+                totals.appearance += @intFromBool(ink);
+                totals.positional += @intFromBool(ink != !pixel_ops.same(same[x], backdrop[x]));
+                totals.shifted += @intFromBool(ink != !pixel_ops.same(moved[x], backdrop[x]));
+            }
         }
     }
-    return foreground >= 16 and positional >= 16 and displaced == 0;
+    return totals;
 }
 
 fn positionalPaintBands(before: Keys, after: Keys, first: usize, limits: Limits, bands: []Band) ?[]Band {
@@ -641,11 +704,11 @@ fn localEditCost(before: Keys, after: Keys, first: usize, limits: Limits) ?struc
 }
 
 fn flatPaint(image: Image, first: usize, end: usize, left: usize, width: usize) bool {
-    const first_row = std.mem.sliceAsBytes(image.row(first)[left..][0..width]);
+    const first_row = image.rowBytes(first, left, width);
     const pixel_bytes = @sizeOf(values.Pixel);
     if (!std.mem.eql(u8, first_row[pixel_bytes..], first_row[0 .. first_row.len - pixel_bytes])) return false;
     for (first + 1..end) |y| {
-        if (!std.mem.eql(u8, std.mem.sliceAsBytes(image.row(y)[left..][0..width]), first_row)) return false;
+        if (!std.mem.eql(u8, image.rowBytes(y, left, width), first_row)) return false;
     }
     return true;
 }
@@ -786,9 +849,9 @@ fn panelInsertion(before: Keys, after: Keys, first: usize, limits: Limits, bands
         var moved_rows: usize = 0;
         for (before[first..][0..length], before[start..edge]) |old, stationary| {
             moved_rows += @intFromBool(old != stationary);
-            if (moved_rows >= 4) break;
+            if (moved_rows >= min_panel_evidence) break;
         }
-        if (moved_rows < 4) continue;
+        if (moved_rows < min_panel_evidence) continue;
         bands[0] = .{ .before = 0, .after = 0, .removed = first, .added = first, .mode = .hash_match };
         bands[1] = .{ .before = first, .after = first, .removed = 0, .added = shift };
         bands[2] = .{ .before = first, .after = start, .removed = length, .added = length, .mode = .hash_match };
@@ -987,7 +1050,9 @@ test "a gap can replace every row without losing surrounding anchors" {
         @memcpy(after[0..2], before[0..2]);
         @memcpy(after[2..][0..new_rows.len], new_rows);
         @memcpy(after[2 + new_rows.len .. size], before[3..]);
-        const result = try matchBands(std.testing.allocator, &before, after[0..size], .{ .scroll = 2, .replacement = 48 }, &bands, &filtered);
+        var scratch: Workspace = .{};
+        defer scratch.deinit(std.testing.allocator);
+        const result = try matchBands(std.testing.allocator, &before, after[0..size], .{ .scroll = 2, .replacement = 48 }, &bands, &filtered, &scratch);
         if (new_rows.len == 1) {
             try std.testing.expect(result == null); // Equal-height positional replacement.
             continue;
@@ -1050,7 +1115,9 @@ test "a two-row alias does not hide a thirty-row scroll through periodic content
     const after = page[scroll..];
     var storage: [2 * height + 1]Band = undefined;
     var filtered: [2 * height]u64 = undefined;
-    const bands = (try matchBands(std.testing.allocator, before, after, .{ .scroll = 2, .replacement = 48 }, &storage, &filtered)) orelse return error.NoAlignment;
+    var scratch: Workspace = .{};
+    defer scratch.deinit(std.testing.allocator);
+    const bands = (try matchBands(std.testing.allocator, before, after, .{ .scroll = 2, .replacement = 48 }, &storage, &filtered, &scratch)) orelse return error.NoAlignment;
     for (bands) |band| {
         if (band.before == 46 and band.after == 16 and @min(band.removed, band.added) > 0) break;
     } else return error.AnchorMisaligned;

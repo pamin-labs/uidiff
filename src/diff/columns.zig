@@ -84,9 +84,9 @@ pub fn partition(before: Image, after: Image, bounds: Span, stationary: []bool) 
 
 /// Reports whether the span has the same horizontal paint on every row.
 pub fn sameRows(image: Image, bounds: Span) bool {
-    const first = std.mem.sliceAsBytes(image.row(0)[bounds.left..][0..bounds.width]);
+    const first = image.rowBytes(0, bounds.left, bounds.width);
     for (1..image.height) |y| {
-        const row = std.mem.sliceAsBytes(image.row(y)[bounds.left..][0..bounds.width]);
+        const row = image.rowBytes(y, bounds.left, bounds.width);
         if (!std.mem.eql(u8, first, row)) return false;
     }
     return true;
