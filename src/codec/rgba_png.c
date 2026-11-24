@@ -5,8 +5,12 @@
 #include <string.h>
 #include "zlib-ng.h"
 
-/* Inflated bytes handed to the row reconstruction per call. */
+/* A larger output span amortizes dictionary updates on Apple silicon. */
+#if defined(__APPLE__) && defined(__aarch64__)
+#define INFLATE_CHUNK (64 * 1024)
+#else
 #define INFLATE_CHUNK (32 * 1024)
+#endif
 
 void *uidiff_stbi_malloc(size_t size);
 void uidiff_stbi_free(void *block);

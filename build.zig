@@ -17,6 +17,7 @@ const Decoders = struct {
 /// shipped binary, or inside the Zig module, in its mode with UBSan, for
 /// tests and fuzzing (without coverage feedback; see fuzz_coverage_flags).
 const CodecBuild = enum { shipped, checked };
+const X86Simd = enum { baseline, without_ssse3, without_sse4, without_avx2, without_pclmul };
 
 // The shipped Zig binary retains runtime safety checks. The C decoders
 // run with UBSan in the checked test build and in fuzzing.
@@ -118,6 +119,8 @@ const webp_encoder = [_][]const u8{
 pub fn build(b: *Build) void {
     const target = b.standardTargetOptions(.{});
     const override = b.option(Optimize, "optimize", "Choose the CLI, benchmark and test optimization mode");
+    const x86_simd = b.option(X86Simd, "x86-simd", "Exclude a zlib-ng dispatch level for x86-64 benchmarks") orelse .baseline;
+    if (x86_simd != .baseline and target.result.cpu.arch != .x86_64) @panic("-Dx86-simd requires an x86_64 target");
     const release: ?Optimize = switch (b.graph.release_mode) {
         .off => null,
         .any => shipped_mode,
@@ -129,7 +132,7 @@ pub fn build(b: *Build) void {
     const test_mode = override orelse release orelse .debug;
     const decoders = addDecoders(b, target);
     const uidiff = b.addModule("uidiff", libraryOptions(b, target, optimize, decoders));
-    linkCodecs(b, uidiff, target, .shipped);
+    linkCodecs(b, uidiff, target, .shipped, x86_simd);
 
     const cli = b.addExecutable(.{
         .name = cli_name,
@@ -150,7 +153,7 @@ pub fn build(b: *Build) void {
     addSizeCheck(b, install_cli);
     const generator = fixtureGenerator(b, target, decoders);
     const host_generator = if (target.query.isNative()) generator else fixtureGenerator(b, b.graph.host, addDecoders(b, b.graph.host));
-    addTests(b, target, test_mode, decoders, install_cli, host_generator);
+    addTests(b, target, test_mode, decoders, install_cli, host_generator, x86_simd);
     addThreadedTest(b, target, decoders);
     addBenchmark(b, target, optimize, uidiff);
     const fuzz_count = b.addWriteFiles().add("fuzz-target-count.txt", b.fmt("{d}\n", .{fuzz_targets.len}));
@@ -176,20 +179,20 @@ fn libraryOptions(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, d
     };
 }
 
-fn addCheckedLibrary(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoders: Decoders) *Build.Module {
+fn addCheckedLibrary(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoders: Decoders, x86_simd: X86Simd) *Build.Module {
     const module = b.createModule(libraryOptions(b, target, optimize, decoders));
-    linkCodecs(b, module, target, .checked);
+    linkCodecs(b, module, target, .checked, x86_simd);
     return module;
 }
 
-fn linkCodecs(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, mode: CodecBuild) void {
+fn linkCodecs(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, mode: CodecBuild, x86_simd: X86Simd) void {
     switch (mode) {
-        .checked => addDecoderSources(b, module, target, .checked),
+        .checked => addDecoderSources(b, module, target, .checked, x86_simd),
         .shipped => {
             // Keep unwind metadata in checked builds where codec failures
             // are diagnosed. The shipped C archive uses error returns.
             const codecs = b.createModule(.{ .target = target, .optimize = codec_mode, .link_libc = true, .unwind_tables = .none });
-            addDecoderSources(b, codecs, target, .shipped);
+            addDecoderSources(b, codecs, target, .shipped, x86_simd);
             module.linkLibrary(b.addLibrary(.{ .name = "uidiff-codecs", .root_module = codecs }));
         },
     }
@@ -197,15 +200,15 @@ fn linkCodecs(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, mo
 
 /// Adds the PNG, JPEG and WebP decoders' C sources, bounded by the limits
 /// that src/value/image.zig owns.
-fn addDecoderSources(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, mode: CodecBuild) void {
+fn addDecoderSources(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, mode: CodecBuild, x86_simd: X86Simd) void {
     // Keep the screenshot path throughput-oriented and compact the other
     // codecs in the shipped binary. Checked builds keep their normal mode.
     const legacy_flags: []const []const u8 = if (mode == .shipped) &.{"-Os"} else &.{};
-    addStbDecoder(b, module, target, legacy_flags);
+    addStbDecoder(b, module, target, legacy_flags, x86_simd);
     const webp = b.dependency("libwebp", .{});
     module.addIncludePath(webp.path(""));
     // The binding requests RGBA only.
-    const webp_flags = webpFlags(b, if (mode == .shipped) &.{ "-DWEBP_REDUCE_CSP", "-Os" } else &.{"-DWEBP_REDUCE_CSP"});
+    const webp_flags = webpFlags(b, if (mode == .shipped) &.{ "-DWEBP_REDUCE_CSP", "-Oz" } else &.{"-DWEBP_REDUCE_CSP"});
     module.addCSourceFiles(.{ .root = webp.path(""), .files = &(webp_common ++ webp_decoder), .flags = webp_flags });
     addWebpAllocator(b, module, webp, webp_flags);
     switch (target.result.cpu.arch) {
@@ -226,8 +229,8 @@ fn addDecoderSources(b: *Build, module: *Build.Module, target: Build.ResolvedTar
     }
 }
 
-fn addStbDecoder(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, legacy_flags: []const []const u8) void {
-    addZlibNg(b, module, target);
+fn addStbDecoder(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, legacy_flags: []const []const u8, x86_simd: X86Simd) void {
+    addZlibNg(b, module, target, x86_simd);
     module.addIncludePath(b.dependency("stb", .{}).path(""));
     module.addIncludePath(b.path("src/codec"));
     const inflate_flags = [_][]const u8{"-DZLIBNG_NATIVE_API"} ++ codec_section_flags ++ fuzz_coverage_flags;
@@ -325,7 +328,7 @@ fn zlibPngCrc(target: Build.ResolvedTarget) bool {
 }
 
 /// Builds the zlib stream and PNG checksum routines. Only x86 uses runtime dispatch.
-fn addZlibNg(b: *Build, module: *Build.Module, target: Build.ResolvedTarget) void {
+fn addZlibNg(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, x86_simd: X86Simd) void {
     const zlib = b.dependency("zlib_ng", .{});
     const headers = zlibHeaders(b, target).getDirectory();
     module.addIncludePath(headers);
@@ -339,11 +342,9 @@ fn addZlibNg(b: *Build, module: *Build.Module, target: Build.ResolvedTarget) voi
         "adler32.c",
         "deflate_medium.c",
         "inflate.c",
-        "inftrees.c",
         "insert_string.c",
         "insert_string_roll.c",
         "trees.c",
-        "zutil.c",
     };
     const scalar = [_][]const u8{
         "arch/generic/adler32_c.c",     "arch/generic/adler32_fold_c.c", "arch/generic/chunkset_c.c",     "arch/generic/compare256_c.c",
@@ -369,33 +370,45 @@ fn addZlibNg(b: *Build, module: *Build.Module, target: Build.ResolvedTarget) voi
             });
         },
         .x86_64 => {
-            common.appendSlice(b.allocator, &.{ "-DX86_FEATURES", "-DX86_SSE2", "-DX86_SSSE3", "-DX86_SSE41", "-DX86_SSE42", "-DX86_AVX2", "-DX86_PCLMULQDQ_CRC", "-DHAVE_CPUID_GNU", "-DX86_HAVE_XSAVE_INTRIN" }) catch @panic("OOM");
+            // Higher zlib-ng levels call lower kernels as fallbacks. Removing
+            // their prerequisite also removes the dependent dispatch levels.
+            const ssse3 = x86_simd != .without_ssse3;
+            const sse4 = ssse3 and x86_simd != .without_sse4;
+            const avx2 = sse4 and x86_simd != .without_avx2;
+            const pclmul = sse4 and x86_simd != .without_pclmul;
+            common.appendSlice(b.allocator, &.{ "-DX86_FEATURES", "-DX86_SSE2", "-DHAVE_CPUID_GNU", "-DX86_HAVE_XSAVE_INTRIN" }) catch @panic("OOM");
+            if (ssse3) common.append(b.allocator, "-DX86_SSSE3") catch @panic("OOM");
+            if (sse4) common.appendSlice(b.allocator, &.{ "-DX86_SSE41", "-DX86_SSE42" }) catch @panic("OOM");
+            if (avx2) common.append(b.allocator, "-DX86_AVX2") catch @panic("OOM");
+            if (pclmul) common.append(b.allocator, "-DX86_PCLMULQDQ_CRC") catch @panic("OOM");
             const base = common.items;
             module.addCSourceFile(.{ .file = zlibDispatch(b, zlib), .flags = base });
             module.addCSourceFiles(.{ .root = zlib.path(""), .files = &(stream ++ scalar ++ .{ "crc32.c", "crc32_braid_comb.c", "cpu_features.c", "arch/x86/chunkset_sse2.c", "arch/x86/chorba_sse2.c", "arch/x86/compare256_sse2.c", "arch/x86/slide_hash_sse2.c" }), .flags = base });
             // Zig pins each object's CPU features, so -m flags cannot raise
             // them per file; each dispatch level is its own object instead.
             const levels = .{
-                .{ "x86_features", std.Target.x86.featureSet(&.{.xsave}), &[_][]const u8{"arch/x86/x86_features.c"} },
-                .{ "ssse3", std.Target.x86.featureSet(&.{.ssse3}), &[_][]const u8{ "arch/x86/adler32_ssse3.c", "arch/x86/chunkset_ssse3.c" } },
-                .{ "sse41", std.Target.x86.featureSet(&.{.sse4_1}), &[_][]const u8{"arch/x86/chorba_sse41.c"} },
-                .{ "sse42", std.Target.x86.featureSet(&.{.sse4_2}), &[_][]const u8{"arch/x86/adler32_sse42.c"} },
-                .{ "pclmul", std.Target.x86.featureSet(&.{ .sse4_2, .pclmul }), &[_][]const u8{"arch/x86/crc32_pclmulqdq.c"} },
-                .{ "avx2", std.Target.x86.featureSet(&.{ .avx2, .bmi2 }), &[_][]const u8{ "arch/x86/slide_hash_avx2.c", "arch/x86/chunkset_avx2.c", "arch/x86/compare256_avx2.c", "arch/x86/adler32_avx2.c" } },
+                .{ "x86_features", true, std.Target.x86.featureSet(&.{.xsave}), &[_][]const u8{"arch/x86/x86_features.c"} },
+                .{ "ssse3", ssse3, std.Target.x86.featureSet(&.{.ssse3}), &[_][]const u8{ "arch/x86/adler32_ssse3.c", "arch/x86/chunkset_ssse3.c" } },
+                .{ "sse41", sse4, std.Target.x86.featureSet(&.{.sse4_1}), &[_][]const u8{"arch/x86/chorba_sse41.c"} },
+                .{ "sse42", sse4, std.Target.x86.featureSet(&.{.sse4_2}), &[_][]const u8{"arch/x86/adler32_sse42.c"} },
+                .{ "pclmul", pclmul, std.Target.x86.featureSet(&.{ .sse4_2, .pclmul }), &[_][]const u8{"arch/x86/crc32_pclmulqdq.c"} },
+                .{ "avx2", avx2, std.Target.x86.featureSet(&.{ .avx2, .bmi2 }), &[_][]const u8{ "arch/x86/slide_hash_avx2.c", "arch/x86/chunkset_avx2.c", "arch/x86/compare256_avx2.c", "arch/x86/adler32_avx2.c" } },
             };
             inline for (levels) |level| {
-                var query = target.query;
-                query.cpu_features_add.addFeatureSet(level[1]);
-                const part = b.createModule(.{
-                    .target = b.resolveTargetQuery(query),
-                    .optimize = module.optimize,
-                    .link_libc = true,
-                    .unwind_tables = module.unwind_tables,
-                });
-                part.addIncludePath(headers);
-                part.addIncludePath(zlib.path(""));
-                part.addCSourceFiles(.{ .root = zlib.path(""), .files = level[2], .flags = base });
-                module.linkLibrary(b.addLibrary(.{ .name = "zlib-ng-" ++ level[0], .root_module = part }));
+                if (level[1]) {
+                    var query = target.query;
+                    query.cpu_features_add.addFeatureSet(level[2]);
+                    const part = b.createModule(.{
+                        .target = b.resolveTargetQuery(query),
+                        .optimize = module.optimize,
+                        .link_libc = true,
+                        .unwind_tables = module.unwind_tables,
+                    });
+                    part.addIncludePath(headers);
+                    part.addIncludePath(zlib.path(""));
+                    part.addCSourceFiles(.{ .root = zlib.path(""), .files = level[3], .flags = base });
+                    module.linkLibrary(b.addLibrary(.{ .name = "zlib-ng-" ++ level[0], .root_module = part }));
+                }
             }
         },
         else => {
@@ -403,6 +416,12 @@ fn addZlibNg(b: *Build, module: *Build.Module, target: Build.ResolvedTarget) voi
             module.addCSourceFiles(.{ .root = zlib.path(""), .files = &(stream ++ scalar), .flags = common.items });
         },
     }
+    // These support routines sit outside the inflate and deflate loops.
+    const support_flags = if (arch == .aarch64 and os == .macos and module.optimize == .fast)
+        std.mem.concat(b.allocator, []const u8, &.{ common.items, &.{"-Oz"} }) catch @panic("OOM")
+    else
+        common.items;
+    module.addCSourceFiles(.{ .root = zlib.path(""), .files = &.{ "inftrees.c", "zutil.c" }, .flags = support_flags });
     module.addCSourceFile(.{ .file = zlibDeflate(b, zlib), .flags = common.items });
 }
 
@@ -448,8 +467,8 @@ fn addSizeCheck(b: *Build, install_cli: *Build.Step.InstallArtifact) void {
     b.step("size", "Check the CLI binary against its size budget").dependOn(&run.step);
 }
 
-fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoders: Decoders, install_cli: *Build.Step.InstallArtifact, host_generator: *Build.Step.Compile) void {
-    const uidiff = addCheckedLibrary(b, target, optimize, decoders);
+fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoders: Decoders, install_cli: *Build.Step.InstallArtifact, host_generator: *Build.Step.Compile, x86_simd: X86Simd) void {
+    const uidiff = addCheckedLibrary(b, target, optimize, decoders, x86_simd);
     const cases = b.createModule(.{ .root_source_file = b.path("tests/fixtures.zig"), .target = target, .optimize = optimize });
     _ = addE2e(b, target, optimize, uidiff, cases, install_cli);
     const filter = b.option([]const u8, "test-filter", "Run only the library's unit tests that match");
@@ -467,7 +486,7 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
         // for this pixel-heavy workload while retaining decoder UBSan.
         const styled = std.mem.eql(u8, source, styled_sheet_fuzz_source);
         const mode = if (styled) Optimize.safe else optimize;
-        const tested = if (styled and optimize != .safe) addCheckedLibrary(b, target, .safe, decoders) else uidiff;
+        const tested = if (styled and optimize != .safe) addCheckedLibrary(b, target, .safe, decoders, x86_simd) else uidiff;
         step.dependOn(&b.addRunArtifact(b.addTest(.{
             .root_module = b.createModule(.{
                 .root_source_file = b.path(source),
@@ -502,7 +521,7 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
 }
 
 fn addThreadedTest(b: *Build, target: Build.ResolvedTarget, decoders: Decoders) void {
-    const module = addCheckedLibrary(b, target, .debug, decoders);
+    const module = addCheckedLibrary(b, target, .debug, decoders, .baseline);
     module.sanitize_thread = true;
     const tests = b.addTest(.{ .root_module = module, .filters = &.{"overlapped PNG decodes"} });
     const run = b.addRunArtifact(tests);
@@ -579,7 +598,7 @@ fn fixtureGenerator(b: *Build, target: Build.ResolvedTarget, decoders: Decoders)
     const webp_encode = b.addTranslateC(.{ .root_source_file = webp.path("src/webp/encode.h"), .target = target, .optimize = optimize });
     const library = b.createModule(libraryOptions(b, target, optimize, decoders));
     const codecs = b.createModule(.{ .target = target, .optimize = codec_mode, .link_libc = true });
-    addStbDecoder(b, codecs, target, &.{});
+    addStbDecoder(b, codecs, target, &.{}, .baseline);
     codecs.addIncludePath(webp.path(""));
     const config = b.addWriteFiles();
     _ = config.add("src/webp/config.h", "/* Use the same scalar encoder on every host. */\n");
