@@ -2,6 +2,22 @@
 const std = @import("std");
 const uidiff = @import("uidiff");
 
+const Flag = enum {
+    scale,
+    json,
+    annotate,
+    help,
+
+    fn spelling(comptime self: Flag) [:0]const u8 {
+        return "--" ++ @tagName(self);
+    }
+
+    fn fromArgument(arg: []const u8) ?Flag {
+        if (!std.mem.startsWith(u8, arg, "--")) return null;
+        return std.meta.stringToEnum(Flag, arg[2..]);
+    }
+};
+
 /// What the command prints on standard output.
 pub const Output = enum { count, json };
 
@@ -20,11 +36,11 @@ pub const usage = @embedFile("usage.txt");
 
 const max_fuzz_args = 8;
 const max_fuzz_arg_bytes = 8;
-const fuzz_words = [_][:0]const u8{ "--json", "--scale", "--annotate", "2", "1.5", "0x10", "1_0", "out.png" };
+const fuzz_words = [_][:0]const u8{ Flag.json.spelling(), Flag.scale.spelling(), Flag.annotate.spelling(), "2", "1.5", "0x10", "1_0", "out.png" };
 
 /// Reports whether the command is asking for help.
 pub fn wantsHelp(args: []const [:0]const u8) bool {
-    return args.len == 2 and std.mem.eql(u8, args[1], "--help");
+    return args.len == 2 and Flag.fromArgument(args[1]) == .help;
 }
 
 /// Parses paths and flags from process arguments.
@@ -34,17 +50,17 @@ pub fn parse(args: []const [:0]const u8) ParseError!Command {
     var scale_given = false;
     var i: usize = 3;
     while (i < args.len) : (i += 1) {
-        const flag = args[i];
-        if (parsed.output == .count and std.mem.eql(u8, flag, "--json")) {
+        const flag = Flag.fromArgument(args[i]) orelse return error.InvalidArguments;
+        if (parsed.output == .count and flag == .json) {
             parsed.output = .json;
             continue;
         }
         if (i + 1 == args.len) return error.InvalidArguments;
-        if (!scale_given and std.mem.eql(u8, flag, "--scale")) {
+        if (!scale_given and flag == .scale) {
             i += 1;
             parsed.options.scale = uidiff.Scale.parse(args[i]) orelse return error.InvalidArguments;
             scale_given = true;
-        } else if (parsed.paths.annotate == null and std.mem.eql(u8, flag, "--annotate")) {
+        } else if (parsed.paths.annotate == null and flag == .annotate) {
             i += 1;
             if (args[i].len == 0 or std.mem.startsWith(u8, args[i], "--")) return error.InvalidArguments;
             parsed.paths.annotate = args[i];
@@ -72,6 +88,14 @@ fn fuzzParse(_: void, smith: *std.testing.Smith) !void {
     try std.testing.expectEqualStrings(args[1], command.paths.before);
     try std.testing.expectEqualStrings(args[2], command.paths.after);
     try std.testing.expect(std.math.isFinite(command.options.scale.factor) and command.options.scale.factor >= 0);
+}
+
+test "usage agrees with every flag spelling" {
+    const expected = comptime std.fmt.comptimePrint(
+        "Usage: uidiff <before> <after> [{s} N] [{s}] [{s} <out.png>]\n       uidiff {s}\n",
+        .{ Flag.scale.spelling(), Flag.json.spelling(), Flag.annotate.spelling(), Flag.help.spelling() },
+    );
+    try std.testing.expectEqualStrings(expected, usage);
 }
 
 test "argument order preserves scale and rejects repeated flags" {

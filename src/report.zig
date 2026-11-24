@@ -3,10 +3,10 @@ const std = @import("std");
 const values = @import("value.zig");
 
 /// Version-one coordinates in device pixels.
-pub const Box = Wire(f64).WireBox;
+pub const Box = Wire(f64).Bounds;
 
 /// Version-one region. An absent side is serialized as null.
-pub const Region = Wire(f64).WireRegion;
+pub const Region = Wire(f64).Change;
 
 /// Version-one row start and length in source device pixels.
 pub const RowRange = struct { y: usize, height: usize };
@@ -29,7 +29,7 @@ pub const Move = struct {
 };
 
 /// Versioned response envelope with the combined canvas dimensions.
-pub const Report = Wire(f64).WireReport;
+pub const Report = Wire(f64).Envelope;
 
 /// Allocation or writer failures while serializing the response.
 pub const WriteError = std.mem.Allocator.Error || std.Io.Writer.Error;
@@ -53,11 +53,11 @@ pub fn writeWholePixels(allocator: std.mem.Allocator, output: *std.Io.Writer, re
 fn Wire(comptime Coordinate: type) type {
     return struct {
         const CoordinateError = if (Coordinate == f64) error{} else error{InvalidRegionBox};
-        const WireBox = struct { x: Coordinate, y: Coordinate, width: Coordinate, height: Coordinate };
-        const WireRegion = struct { number: usize, kind: values.Kind, before: ?WireBox, after: ?WireBox };
-        const WireReport = struct { version: u32, regions: []const WireRegion, width: usize, height: usize, moves: []const Move = &.{} };
+        const Bounds = struct { x: Coordinate, y: Coordinate, width: Coordinate, height: Coordinate };
+        const Change = struct { number: usize, kind: values.Kind, before: ?Bounds, after: ?Bounds };
+        const Envelope = struct { version: u32, regions: []const Change, width: usize, height: usize, moves: []const Move = &.{} };
 
-        fn convert(box: ?values.Box) CoordinateError!?WireBox {
+        fn convert(box: ?values.Box) CoordinateError!?Bounds {
             const b = box orelse return null;
             return .{ .x = try coordinate(b.x), .y = try coordinate(b.y), .width = try coordinate(b.width), .height = try coordinate(b.height) };
         }
@@ -72,7 +72,7 @@ fn Wire(comptime Coordinate: type) type {
 
 fn writeWith(comptime Coordinate: type, allocator: std.mem.Allocator, output: *std.Io.Writer, regions: []const values.Region, canvas: values.Size, moves: []const values.Move) (WriteError || Wire(Coordinate).CoordinateError)!void {
     const Format = Wire(Coordinate);
-    const wire = try allocator.alloc(Format.WireRegion, regions.len);
+    const wire = try allocator.alloc(Format.Change, regions.len);
     defer allocator.free(wire);
     for (wire, regions) |*out, region| {
         out.* = .{ .number = region.number, .kind = region.kind, .before = try Format.convert(region.before), .after = try Format.convert(region.after) };
@@ -80,7 +80,7 @@ fn writeWith(comptime Coordinate: type, allocator: std.mem.Allocator, output: *s
     const wire_moves = try allocator.alloc(Move, moves.len);
     defer allocator.free(wire_moves);
     for (wire_moves, moves) |*out, move| out.* = Move.convert(move);
-    const report: Format.WireReport = .{ .version = version, .regions = wire, .width = canvas.width, .height = canvas.height, .moves = wire_moves };
+    const report: Format.Envelope = .{ .version = version, .regions = wire, .width = canvas.width, .height = canvas.height, .moves = wire_moves };
     try std.json.Stringify.value(report, .{}, output);
     try output.writeByte('\n');
 }

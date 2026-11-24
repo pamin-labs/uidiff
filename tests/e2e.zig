@@ -10,6 +10,8 @@ const report = uidiff.report;
 const budget = std.Io.Limit.limited(4096);
 const scale = std.fmt.comptimePrint("{d}", .{fixtures.scale});
 
+const single_region_output = "1 region\n";
+
 fn run(cwd: std.process.Child.Cwd, comptime argc: usize, args: [argc][]const u8) !std.process.RunResult {
     const exe = try std.Io.Dir.cwd().realPathFileAlloc(testing.io, options.executable, allocator);
     defer allocator.free(exe);
@@ -66,7 +68,7 @@ test "the count output names one region in the singular" {
     const result = try run(.inherit, 4, .{ spec.path(.before, .png), spec.path(.after, .png), "--scale", scale });
     defer free(result);
     try status(result, 1);
-    try testing.expectEqualStrings("1 region\n", result.stdout);
+    try testing.expectEqualStrings(single_region_output, result.stdout);
 }
 
 test "an annotated sheet is written atomically beside a normal report" {
@@ -81,7 +83,7 @@ test "an annotated sheet is written atomically beside a normal report" {
         const result = try run(.{ .dir = tmp.dir }, 6, .{ before, after, "--scale", scale, "--annotate", "sheet.png" });
         defer free(result);
         try status(result, 1);
-        try testing.expectEqualStrings("1 region\n", result.stdout);
+        try testing.expectEqualStrings(single_region_output, result.stdout);
     }
     const bytes = try tmp.dir.readFileAlloc(testing.io, "sheet.png", allocator, .limited(uidiff.max_encoded_bytes));
     defer allocator.free(bytes);
