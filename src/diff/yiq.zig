@@ -70,6 +70,7 @@ pub const Raster = struct {
 
 const Point = struct { x: usize, y: usize };
 const EdgePolicy = enum { normal, stationary };
+const LaneBits = @Int(.unsigned, lanes);
 
 const threshold = 0.01;
 const max_delta = 35215 * threshold * threshold;
@@ -117,17 +118,10 @@ pub fn mask(a: Raster, b: Raster, top: usize, rows: usize, out: []regions.Cell) 
                     found = true;
                     continue;
                 }
-                inline for (0..lanes) |i| {
-                    const cell = if (candidates[i]) markChange(a, b, x + i, y, policy) else regions.Cell.clear;
-                    output[x + i] = cell;
-                    found = found or cell != .clear;
-                }
+                if (writeChangedLanes(a, b, x, y, policy, .above_threshold, laneBits(candidates), output[x..][0..lanes])) found = true;
             } else {
-                inline for (0..lanes) |i| {
-                    const cell = if (!equal[i]) scalarChange(a, b, x + i, y, policy) else regions.Cell.clear;
-                    output[x + i] = cell;
-                    found = found or cell != .clear;
-                }
+                const different = @select(bool, equal, @as(@Vector(lanes, bool), @splat(false)), @as(@Vector(lanes, bool), @splat(true)));
+                if (writeChangedLanes(a, b, x, y, policy, .needs_threshold, laneBits(different), output[x..][0..lanes])) found = true;
             }
         }
         while (x < a.width) : (x += 1) {
@@ -164,6 +158,29 @@ pub inline fn aboveThreshold(a: Pixel, b: Pixel, byte_offset: usize) bool {
     if (same(a, b)) return false;
     const d = delta(a, b, byte_offset);
     return yiq(f64, d[0], d[1], d[2]) > max_delta;
+}
+
+fn laneBits(mask_: @Vector(lanes, bool)) LaneBits {
+    const bits: LaneBits = @bitCast(mask_);
+    return if (@import("builtin").target.cpu.arch.endian() == .little) bits else @bitReverse(bits);
+}
+
+noinline fn writeChangedLanes(a: Raster, b: Raster, x: usize, y: usize, policy: EdgePolicy, decision: enum { above_threshold, needs_threshold }, bits: LaneBits, output: *[lanes]regions.Cell) bool {
+    @branchHint(.cold);
+    output.* = @splat(.clear);
+    var remaining = bits;
+    var changed = false;
+    while (remaining != 0) {
+        const lane = @ctz(remaining);
+        remaining &= remaining - 1;
+        const cell = if (decision == .above_threshold)
+            markChange(a, b, x + lane, y, policy)
+        else
+            scalarChange(a, b, x + lane, y, policy);
+        output[lane] = cell;
+        changed = changed or cell != .clear;
+    }
+    return changed;
 }
 
 fn recolouredStroke(old: []const Pixel, new: []const Pixel, x: usize) ?[2]usize {
