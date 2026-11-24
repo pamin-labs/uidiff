@@ -28,6 +28,8 @@ const png_compression_level = 4;
 /// with -Dtarget to measure a specific binary.
 const max_cli_bytes = 1_200_000;
 const cli_name = "uidiff";
+// The library unit test binary also fuzzes the streaming PNG decoder.
+const library_fuzz_targets = 1;
 const styled_sheet_fuzz_source = "tests/fuzz/sheet.zig";
 /// Each fuzz target is its own test binary, so `zig build test --fuzz` runs every one.
 const fuzz_targets = [_][]const u8{ "src/cli.zig", "tests/fuzz/decode.zig", "tests/fuzz/compare.zig", styled_sheet_fuzz_source };
@@ -156,7 +158,7 @@ pub fn build(b: *Build) void {
     addTests(b, target, test_mode, decoders, install_cli, host_generator, x86_simd);
     addThreadedTest(b, target, decoders);
     addBenchmark(b, target, optimize, uidiff);
-    const fuzz_count = b.addWriteFiles().add("fuzz-target-count.txt", b.fmt("{d}\n", .{fuzz_targets.len}));
+    const fuzz_count = b.addWriteFiles().add("fuzz-target-count.txt", b.fmt("{d}\n", .{fuzz_targets.len + library_fuzz_targets}));
     const fuzz_count_install = b.addInstallFile(fuzz_count, "fuzz-target-count.txt");
     b.step("fuzz-target-count", "Write the number of fuzz targets including the CLI").dependOn(&fuzz_count_install.step);
     const fixture_build = b.step("fixture-generator", "Build the fixture generator for the selected target");

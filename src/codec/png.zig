@@ -318,6 +318,94 @@ fn encodeOnce(allocator: Allocator, image: Image) !void {
     };
 }
 
+fn writeTestPng(allocator: Allocator, out: *Writer, size: values.Size, color: u8, filtered_rows: []const u8) EncodeError!void {
+    try out.writeAll(png_format.signature);
+    var header: [png_format.header_data_bytes]u8 = @splat(0);
+    std.mem.writeInt(u32, header[0..4], @intCast(size.width), .big);
+    std.mem.writeInt(u32, header[4..8], @intCast(size.height), .big);
+    header[8] = bit_depth;
+    header[9] = color;
+    try chunk(out, png_format.header_type, &header);
+    var staging: [chunk_bytes]u8 = undefined;
+    var backing = allocator;
+    var deflater: Deflater = undefined;
+    try deflater.init(&backing, out, &staging);
+    defer deflater.deinit();
+    try deflater.write(filtered_rows);
+    try deflater.finish();
+    try chunk(out, "IEND", "");
+}
+
+fn checkTestFilters(comptime channels: usize, color: u8, filters: []const u8) !void {
+    const allocator = std.testing.allocator;
+    const width = 7;
+    const row_bytes = width * channels;
+    const size: values.Size = .{ .width = width, .height = filters.len };
+    var pixels: [3 * width]values.Pixel = undefined;
+    for (pixels[0 .. width * filters.len], 0..) |*pixel, i| {
+        pixel.* = .{ @intCast(7 + 11 * i), @intCast(101 - 3 * i), @intCast(2 + i * 7), if (channels == 3) 255 else @intCast(254 - 5 * i) };
+    }
+    var raw: [3 * row_bytes]u8 = undefined;
+    for (pixels[0 .. width * filters.len], 0..) |pixel, i| @memcpy(raw[i * channels ..][0..channels], pixel[0..channels]);
+    const average_filter = 3;
+    var filtered: [3 * (1 + row_bytes)]u8 = undefined;
+    for (filters, 0..) |filter_byte, y| {
+        const row = filtered[y * (1 + row_bytes) ..][0 .. 1 + row_bytes];
+        row[0] = filter_byte;
+        for (row[1..], 0..) |*out, x| {
+            const at = y * row_bytes + x;
+            const left = if (x >= channels) raw[at - channels] else 0;
+            const above = if (y > 0) raw[at - row_bytes] else 0;
+            const predicted: u8 = if (filter_byte == average_filter) @intCast(@divFloor(@as(u16, left) + above, 2)) else 0;
+            out.* = raw[at] -% predicted;
+        }
+    }
+
+    var output: Writer.Allocating = .init(allocator);
+    defer output.deinit();
+    try writeTestPng(allocator, &output.writer, size, color, filtered[0 .. filters.len * (1 + row_bytes)]);
+    const header = try probe(allocator, output.written(), values.max_decode_bytes);
+    for (filters) |filter_byte| if (filter_byte > paeth_filter) {
+        try std.testing.expectEqual(@as(?[*]values.Pixel, null), try stb.loadStreaming(allocator, output.written(), header, values.max_decode_bytes));
+        try std.testing.expectError(error.InvalidImage, stb.load(allocator, output.written(), header, values.max_decode_bytes));
+        return;
+    };
+    const found = try stb.load(allocator, output.written(), header, values.max_decode_bytes);
+    defer stb.free(found);
+    const legacy = try stb.loadLegacy(allocator, output.written(), header, values.max_decode_bytes);
+    defer stb.release(allocator, legacy);
+    try std.testing.expectEqualSlices(values.Pixel, pixels[0 .. width * filters.len], legacy);
+    try std.testing.expectEqualSlices(values.Pixel, legacy, found[0..legacy.len]);
+}
+
+fn fuzzStreamingRows(_: void, smith: *std.testing.Smith) !void {
+    const allocator = std.testing.allocator;
+    const width = smith.valueRangeAtMost(u8, 1, 12);
+    const height = smith.valueRangeAtMost(u8, 1, 8);
+    const size: values.Size = .{ .width = width, .height = height };
+    const color: u8 = if (smith.value(bool)) rgb_color else rgba_color;
+    const channels: usize = if (color == rgb_color) 3 else 4;
+    var rows: [8 * (1 + 12 * 4)]u8 = undefined;
+    const valid = rows[0 .. size.height * (1 + size.width * channels)];
+    const length = if (smith.value(bool)) smith.slice(valid) else complete: {
+        for (0..size.height) |y| {
+            const at = y * (1 + size.width * channels);
+            valid[at] = smith.valueRangeAtMost(u8, 0, 5);
+            for (valid[at + 1 ..][0 .. size.width * channels]) |*value| value.* = smith.value(u8);
+        }
+        break :complete valid.len;
+    };
+    var output: Writer.Allocating = .init(allocator);
+    defer output.deinit();
+    try writeTestPng(allocator, &output.writer, size, color, valid[0..length]);
+    const header: stb.Header = .{ .size = size, .sample_bytes = 1 };
+    const found = try stb.loadStreaming(allocator, output.written(), header, values.max_decode_bytes) orelse return;
+    defer stb.free(found);
+    const legacy = try stb.loadLegacy(allocator, output.written(), header, values.max_decode_bytes);
+    defer stb.release(allocator, legacy);
+    try std.testing.expectEqualSlices(values.Pixel, legacy, found[0..legacy.len]);
+}
+
 test "an encoded image starts with the PNG signature and ends with IEND" {
     const pixels = [_]values.Pixel{ .{ 1, 2, 3, 255 }, .{ 4, 5, 6, 128 } };
     var out: Writer.Allocating = .init(std.testing.allocator);
@@ -348,48 +436,15 @@ test "encoding releases each allocation on failure" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, encodeOnce, .{Image{ .width = 4, .height = 4, .pixels = &pixels }});
 }
 
-test "streaming PNG unfilters Average with and without a previous row" {
-    const allocator = std.testing.allocator;
-    const width = 7;
-    const height = 2;
-    var pixels: [width * height]values.Pixel = undefined;
-    for (&pixels, 0..) |*pixel, i| {
-        pixel.* = .{ @intCast(7 + 17 * i), @intCast(101 - 3 * i), @intCast(2 + i * i), @intCast(254 - 5 * i) };
-    }
-    var output: Writer.Allocating = .init(allocator);
-    defer output.deinit();
-    try output.writer.writeAll(png_format.signature);
-    var header: [png_format.header_data_bytes]u8 = @splat(0);
-    std.mem.writeInt(u32, header[0..4], width, .big);
-    std.mem.writeInt(u32, header[4..8], height, .big);
-    header[8] = bit_depth;
-    header[9] = rgba_color;
-    try chunk(&output.writer, png_format.header_type, &header);
-    var staging: [chunk_bytes]u8 = undefined;
-    var backing = allocator;
-    var deflater: Deflater = undefined;
-    try deflater.init(&backing, &output.writer, &staging);
-    defer deflater.deinit();
-    const pixels_bytes = std.mem.sliceAsBytes(&pixels);
-    const row_bytes = width * @sizeOf(values.Pixel);
-    const average_filter: u8 = 3;
-    for (0..height) |y| {
-        var residual: [row_bytes]u8 = undefined;
-        for (&residual, 0..) |*out, x| {
-            const at = y * row_bytes + x;
-            const left = if (x >= @sizeOf(values.Pixel)) pixels_bytes[at - @sizeOf(values.Pixel)] else 0;
-            const above = if (y > 0) pixels_bytes[at - row_bytes] else 0;
-            out.* = pixels_bytes[at] -% @as(u8, @intCast(@divFloor(@as(u16, left) + above, 2)));
-        }
-        try deflater.write(&.{average_filter});
-        try deflater.write(&residual);
-    }
-    try deflater.finish();
-    try chunk(&output.writer, "IEND", "");
-    const probed = try probe(allocator, output.written(), values.max_decode_bytes);
-    const found = (try stb.loadStreaming(allocator, output.written(), probed, values.max_decode_bytes)) orelse return error.TestUnexpectedResult;
-    defer stb.free(found);
-    try std.testing.expectEqualSlices(values.Pixel, &pixels, found[0..pixels.len]);
+test "PNG filters preserve RGB8 and RGBA8 across streaming and fallback" {
+    try checkTestFilters(3, rgb_color, &.{ 3, 3, 0 });
+    try checkTestFilters(4, rgba_color, &.{ 3, 3, 0 });
+    try checkTestFilters(3, rgb_color, &.{ 3, 0, 5 });
+    try checkTestFilters(4, rgba_color, &.{ 3, 0, 5 });
+}
+
+test "fuzz streaming PNG reconstruction" {
+    try std.testing.fuzz({}, fuzzStreamingRows, .{});
 }
 
 test {
