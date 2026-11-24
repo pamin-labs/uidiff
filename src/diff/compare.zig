@@ -642,17 +642,6 @@ fn hasEqualRun(expected: []const u8, image: Image, bounds: columns.Span, y: usiz
     return false;
 }
 
-fn hasRegion(result: Comparison, side: values.Side, x: usize, y: usize, kind: ?Kind) bool {
-    const px: f64 = @floatFromInt(x);
-    const py: f64 = @floatFromInt(y);
-    for (result.regions) |region| {
-        if (kind != null and kind != region.kind) continue;
-        const box = (if (side == .before) region.before else region.after) orelse continue;
-        if (box.x <= px and box.right() > px and box.y <= py and box.bottom() > py) return true;
-    }
-    return false;
-}
-
 fn expectEditAt(before: sample.Canvas, after: sample.Canvas, x: usize, y: usize, max_box_width: usize) !void {
     const result = try compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
@@ -699,14 +688,6 @@ fn checkTallInsertion(height: usize, inserted: usize, viewport: enum { fixed, gr
     try std.testing.expectEqual(Box.fromPixels(0, at - region_padding, 1, inserted + 2 * region_padding), result.regions[0].after.?);
 }
 
-fn testBox(x: usize, y: usize, w: usize, h: usize) Box {
-    return Box.fromPixels(x, y, w, h);
-}
-
-fn padded(x: usize, y: usize, w: usize, h: usize) Box {
-    return testBox(x - region_padding, y - region_padding, w + 2 * region_padding, h + 2 * region_padding);
-}
-
 fn compareCanvases(before: sample.Canvas, after: sample.Canvas, scale: f64) !Comparison {
     return compare(std.testing.allocator, before.view, after.view, .{ .scale = .{ .factor = scale } });
 }
@@ -714,17 +695,7 @@ fn compareCanvases(before: sample.Canvas, after: sample.Canvas, scale: f64) !Com
 fn check(before: sample.Canvas, after: sample.Canvas, scale: f64, expected: []const Region) !void {
     const actual = try compareCanvases(before, after, scale);
     defer actual.deinit(std.testing.allocator);
-    try checkRegions(actual, expected);
-}
-
-fn checkRegions(actual: Comparison, expected: []const Region) !void {
-    try std.testing.expectEqual(expected.len, actual.regions.len);
-    for (actual.regions, expected, 1..) |got, want, number| {
-        try std.testing.expectEqual(want.before, got.before);
-        try std.testing.expectEqual(want.after, got.after);
-        try std.testing.expectEqual(number, got.number);
-        try std.testing.expectEqual(if (want.before == null) Kind.inserted else if (want.after == null) Kind.removed else Kind.changed, got.kind);
-    }
+    try sample.checkRegions(actual.regions, expected);
 }
 
 fn checkInsertion(before: sample.Canvas, after: sample.Canvas, expected: Box) !void {
@@ -775,8 +746,8 @@ test "one line of text joins its changed runs across word space" {
     const result = try compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 1), result.regions.len);
-    try std.testing.expect(hasRegion(result, .after, 18, 40, .changed));
-    try std.testing.expect(hasRegion(result, .after, 57, 40, .changed));
+    try std.testing.expect(sample.hasRegion(result.regions, .after, 18, 40, .changed));
+    try std.testing.expect(sample.hasRegion(result.regions, .after, 57, 40, .changed));
 }
 
 test "the exposed edges of a sideways card form one changed box" {
@@ -789,8 +760,8 @@ test "the exposed edges of a sideways card form one changed box" {
     const result = try compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 1), result.regions.len);
-    try std.testing.expect(hasRegion(result, .before, 36, 50, .changed));
-    try std.testing.expect(hasRegion(result, .after, 104, 50, .changed));
+    try std.testing.expect(sample.hasRegion(result.regions, .before, 36, 50, .changed));
+    try std.testing.expect(sample.hasRegion(result.regions, .after, 104, 50, .changed));
 }
 
 test "an interior blank run is ignored only if the layout retains its length" {
@@ -906,9 +877,9 @@ test "a blank sidebar group keeps a new mark stationary beside inserted cards" {
         const result = try compareCanvases(before, after, 1);
         defer result.deinit(std.testing.allocator);
         try std.testing.expectEqual(@as(usize, 2), result.regions.len);
-        try std.testing.expect(hasRegion(result, .before, mark_x + 4, mark_y + 6, .changed));
-        try std.testing.expect(hasRegion(result, .after, mark_x + 4, mark_y + 6, .changed));
-        try std.testing.expect(hasRegion(result, .after, 560, 150, .inserted));
+        try std.testing.expect(sample.hasRegion(result.regions, .before, mark_x + 4, mark_y + 6, .changed));
+        try std.testing.expect(sample.hasRegion(result.regions, .after, mark_x + 4, mark_y + 6, .changed));
+        try std.testing.expect(sample.hasRegion(result.regions, .after, 560, 150, .inserted));
         try std.testing.expectEqual(@as(usize, 1), result.moves.len);
         try std.testing.expectEqual(@as(usize, 40), result.moves[0].after.y - result.moves[0].before.y);
         try std.testing.expect(result.moves[0].x.count() >= 180);
@@ -940,7 +911,7 @@ test "the closing rule of an inset list hides cards pushed past its edge" {
     const result = try compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 1), result.regions.len);
-    try std.testing.expect(hasRegion(result, .after, 385, 137, .inserted));
+    try std.testing.expect(sample.hasRegion(result.regions, .after, 385, 137, .inserted));
     try std.testing.expectEqual(@as(usize, 1), result.moves.len);
     try std.testing.expectEqual(@as(usize, 30), result.moves[0].after.y - result.moves[0].before.y);
 }
@@ -1072,7 +1043,7 @@ test "one changed block has one padded box" {
     const after = try sample.Canvas.square();
     defer after.deinit();
     after.block(10, 12);
-    const b = padded(10, 12, sample.block_size, sample.block_size);
+    const b = sample.paddedBox(10, 12, sample.block_size, sample.block_size);
     try check(before, after, 1, &.{.{ .before = b, .after = b }});
 }
 
@@ -1083,8 +1054,8 @@ test "two distant blocks are numbered top to bottom" {
     defer after.deinit();
     after.block(40, 40);
     after.block(10, 10);
-    const first = padded(10, 10, sample.block_size, sample.block_size);
-    const second = padded(40, 40, sample.block_size, sample.block_size);
+    const first = sample.paddedBox(10, 10, sample.block_size, sample.block_size);
+    const second = sample.paddedBox(40, 40, sample.block_size, sample.block_size);
     try check(before, after, 1, &.{ .{ .before = first, .after = first }, .{ .before = second, .after = second } });
 }
 
@@ -1095,7 +1066,7 @@ test "nearby blocks merge across the allowed gap" {
     defer after.deinit();
     after.block(10, 10);
     after.block(10 + sample.block_size + test_gap, 10);
-    const b = padded(10, 10, 2 * sample.block_size + test_gap, sample.block_size);
+    const b = sample.paddedBox(10, 10, 2 * sample.block_size + test_gap, sample.block_size);
     try check(before, after, 1, &.{.{ .before = b, .after = b }});
 }
 
@@ -1189,18 +1160,18 @@ test "thin aliased diagonals, dotted lines and crosses survive grouping" {
         const box = switch (mark) {
             .diagonal => diagonal: {
                 for (50..90) |p| after.row(p)[p] = .{ 0, 0, 0, 255 };
-                break :diagonal padded(50, 50, 40, 40);
+                break :diagonal sample.paddedBox(50, 50, 40, 40);
             },
             .dots => dots: {
                 for (0..40) |p| after.row(100)[50 + 2 * p] = .{ 0, 0, 0, 255 };
-                break :dots padded(50, 100, 79, 1);
+                break :dots sample.paddedBox(50, 100, 79, 1);
             },
             .cross => cross: {
                 for (0..7) |p| {
                     after.row(120 + p)[120 + p] = .{ 220, 0, 0, 255 };
                     after.row(120 + p)[126 - p] = .{ 220, 0, 0, 255 };
                 }
-                break :cross padded(120, 120, 7, 7);
+                break :cross sample.paddedBox(120, 120, 7, 7);
             },
         };
         try check(before, after, 1, &.{.{ .before = box, .after = box }});
@@ -1224,7 +1195,7 @@ test "weak edge recolours need cardinal support before sample.diagonal grouping"
 
     before.fill(36, 16, 4, 1, sample.inkShade(120, 4));
     after.fill(36, 16, 4, 1, sample.inkShade(128, 4));
-    const box = padded(36, 16, 4, 1);
+    const box = sample.paddedBox(36, 16, 4, 1);
     try check(before, after, 1, &.{.{ .before = box, .after = box }});
 }
 
@@ -1281,7 +1252,7 @@ test "recolouring diags, dots, stems and crosses preserves thin aliased marks" {
             const result = try compareCanvases(before, after, 1);
             defer result.deinit(std.testing.allocator);
             try std.testing.expectEqual(@as(usize, 1), result.regions.len);
-            try std.testing.expect(hasRegion(result, .after, 50, 50, .changed));
+            try std.testing.expect(sample.hasRegion(result.regions, .after, 50, 50, .changed));
             if (mark == .red) break;
         }
     }
@@ -1323,7 +1294,7 @@ test "taller after images mark added rows and reversal marks removed rows" {
     defer before.deinit();
     const after = try sample.Canvas.init(20, 30);
     defer after.deinit();
-    try checkInsertion(before, after, testBox(0, 20 - region_padding, 20, 10 + region_padding));
+    try checkInsertion(before, after, Box.fromPixels(0, 20 - region_padding, 20, 10 + region_padding));
 }
 
 test "added columns and changed overlap survive different strides" {
@@ -1332,8 +1303,8 @@ test "added columns and changed overlap survive different strides" {
     const after = try sample.Canvas.init(50, 40);
     defer after.deinit();
     after.block(10, 10);
-    const mark = padded(10, 10, sample.block_size, sample.block_size);
-    try check(before, after, 1, &.{ .{ .after = testBox(40 - region_padding, 0, 10 + region_padding, 40) }, .{ .before = mark, .after = mark } });
+    const mark = sample.paddedBox(10, 10, sample.block_size, sample.block_size);
+    try check(before, after, 1, &.{ .{ .after = Box.fromPixels(40 - region_padding, 0, 10 + region_padding, 40) }, .{ .before = mark, .after = mark } });
 }
 
 test "size changes survive the noise minimum and padding clips at canvas edges" {
@@ -1341,13 +1312,13 @@ test "size changes survive the noise minimum and padding clips at canvas edges" 
     defer tiny.deinit();
     const tall = try sample.Canvas.init(1, 2);
     defer tall.deinit();
-    try check(tiny, tall, 1, &.{.{ .after = testBox(0, 0, 1, 2) }});
+    try check(tiny, tall, 1, &.{.{ .after = Box.fromPixels(0, 0, 1, 2) }});
     const before = try sample.Canvas.square();
     defer before.deinit();
     const after = try sample.Canvas.square();
     defer after.deinit();
     after.block(0, 0);
-    const mark = testBox(0, 0, sample.block_size + region_padding, sample.block_size + region_padding);
+    const mark = Box.fromPixels(0, 0, sample.block_size + region_padding, sample.block_size + region_padding);
     try check(before, after, 1, &.{.{ .before = mark, .after = mark }});
 }
 
@@ -1360,7 +1331,7 @@ test "middle insertions box only new content with and without image growth" {
         const after = try before.insert(24, p[1], p[0]);
         defer after.deinit();
         after.red(15, 24, 20, p[1], 0);
-        try checkInsertion(before, after, padded(15, 24, 20, p[1]));
+        try checkInsertion(before, after, sample.paddedBox(15, 24, 20, p[1]));
     }
 }
 
@@ -1380,11 +1351,11 @@ test "viewport insertion ignores clipped content and its reversal reports reveal
         after.copyRows(68 + scroll, before, 60, 112 - scroll);
         after.red(58, 10, 10, scroll, 0);
         after.red(34, 60 + scroll, 20, 8, 0);
-        const inserted = padded(34, 60 + scroll, 20, 8);
+        const inserted = sample.paddedBox(34, 60 + scroll, 20, 8);
         try check(before, after, 1, &.{.{ .after = inserted }});
         try check(after, before, 1, &.{
             .{ .before = inserted },
-            .{ .after = testBox(8, 108 - scroll, 22, 12 + scroll) },
+            .{ .after = Box.fromPixels(8, 108 - scroll, 22, 12 + scroll) },
         });
     }
 }
@@ -1409,9 +1380,9 @@ test "insertion above a fixed footer preserves a narrow edit inside the footer" 
     after.fill(660, 1496, 88, 88, sample.inkShade(24, 4));
     const result = try compareCanvases(before, after, 2);
     defer result.deinit(std.testing.allocator);
-    const button = testBox(652, 1488, 104, 104);
-    try checkRegions(result, &.{
-        .{ .after = testBox(249, 468, 282, 34) },
+    const button = Box.fromPixels(652, 1488, 104, 104);
+    try sample.checkRegions(result.regions, &.{
+        .{ .after = Box.fromPixels(249, 468, 282, 34) },
         .{ .before = button, .after = button },
     });
     try std.testing.expectEqual(@as(usize, 1), result.moves.len);
@@ -1419,7 +1390,7 @@ test "insertion above a fixed footer preserves a narrow edit inside the footer" 
     try std.testing.expectEqual(@as(usize, 70), move.after.y - move.before.y);
     try std.testing.expectEqual(@as(usize, 1487), move.after.y + move.after.height);
     try check(after, before, 2, &.{
-        .{ .before = testBox(249, 468, 282, 34) },
+        .{ .before = Box.fromPixels(249, 468, 282, 34) },
         .{ .before = button, .after = button },
     });
 }
@@ -1452,8 +1423,8 @@ test "a fixed footer hides clipped cards with either palette" {
         defer result.deinit(std.testing.allocator);
         try std.testing.expectEqual(@as(usize, 1), result.regions.len);
         try std.testing.expectEqual(Kind.inserted, result.regions[0].kind);
-        try std.testing.expect(hasRegion(result, .after, 82, 135, .inserted));
-        try std.testing.expect(hasRegion(result, .after, 82, 169, .inserted));
+        try std.testing.expect(sample.hasRegion(result.regions, .after, 82, 135, .inserted));
+        try std.testing.expect(sample.hasRegion(result.regions, .after, 82, 169, .inserted));
     }
 }
 
@@ -1476,7 +1447,7 @@ test "repeated row tops align at the inserted row and keep its columns together"
 
     const result = try compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
-    try checkRegions(result, &.{.{ .after = padded(8, 58, 228, 34) }});
+    try sample.checkRegions(result.regions, &.{.{ .after = sample.paddedBox(8, 58, 228, 34) }});
     try std.testing.expectEqual(@as(usize, 1), result.moves.len);
     try std.testing.expectEqual(@as(usize, 48), result.moves[0].after.y - result.moves[0].before.y);
 }
@@ -1501,7 +1472,7 @@ test "exact panel shifts outrank repeated stationary paint" {
     const result = try compareCanvases(before, after, 2);
     defer result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 1), result.regions.len);
-    try std.testing.expect(hasRegion(result, .after, 150, 112, .inserted));
+    try std.testing.expect(sample.hasRegion(result.regions, .after, 150, 112, .inserted));
     try std.testing.expectEqual(@as(usize, 1), result.moves.len);
     try std.testing.expectEqual(@as(usize, 26), result.moves[0].after.y - result.moves[0].before.y);
     try std.testing.expect(result.moves[0].width.count() < before.view.width);
@@ -1561,8 +1532,8 @@ test "subpixel glyph coverage changes preserve borders and pale recolours" {
     const result = try compareCanvases(before, after, 2);
     defer result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 2), result.regions.len);
-    try std.testing.expect(hasRegion(result, .after, 8, 44, .changed));
-    try std.testing.expect(hasRegion(result, .after, 56, 47, .changed));
+    try std.testing.expect(sample.hasRegion(result.regions, .after, 8, 44, .changed));
+    try std.testing.expect(sample.hasRegion(result.regions, .after, 56, 47, .changed));
 }
 
 test "stationary backdrop above a footer does not extend a mixed edit" {
@@ -1586,8 +1557,8 @@ test "stationary backdrop above a footer does not extend a mixed edit" {
 
     const result = try compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
-    try std.testing.expect(hasRegion(result, .after, 140, 110, .inserted));
-    try std.testing.expect(!hasRegion(result, .after, 100, 325, null));
+    try std.testing.expect(sample.hasRegion(result.regions, .after, 140, 110, .inserted));
+    try std.testing.expect(!sample.hasRegion(result.regions, .after, 100, 325, null));
     for (result.regions) |region| if (region.after) |box| {
         try std.testing.expect(box.bottom() <= 320 + region_padding);
     };
@@ -1599,7 +1570,7 @@ test "an inserted row against repeated background is one-sided" {
     const after = try sample.Canvas.init(64, 65);
     defer after.deinit();
     after.red(0, 24, 20, 1, 0);
-    try check(before, after, 1, &.{.{ .after = testBox(0, 24 - region_padding, 20 + region_padding, 1 + 2 * region_padding) }});
+    try check(before, after, 1, &.{.{ .after = Box.fromPixels(0, 24 - region_padding, 20 + region_padding, 1 + 2 * region_padding) }});
 }
 
 test "two-pixel vertical shift boxes the edited word and any revealed content" {
@@ -1613,12 +1584,12 @@ test "two-pixel vertical shift boxes the edited word and any revealed content" {
     before.red(30, 60, 11, 4, 0);
     after.copyRows(2, before, 0, 62);
     after.red(32, 22, 3, 4, 0);
-    const old = padded(32, 20, 3, 4);
-    const new = padded(32, 22, 3, 4);
+    const old = sample.paddedBox(32, 20, 3, 4);
+    const new = sample.paddedBox(32, 22, 3, 4);
     try check(before, after, 1, &.{.{ .before = old, .after = new }});
     try check(after, before, 1, &.{
         .{ .before = new, .after = old },
-        .{ .after = testBox(26, 58, 19, 6) },
+        .{ .after = Box.fromPixels(26, 58, 19, 6) },
     });
 }
 
@@ -1631,7 +1602,7 @@ test "blank rows change layout with and without image growth" {
     for ([_]usize{ 0, 12 }) |growth| {
         const after = try before.insert(48, 12, growth);
         defer after.deinit();
-        try checkInsertion(before, after, testBox(0, 48 - region_padding, 80, 12 + 2 * region_padding));
+        try checkInsertion(before, after, Box.fromPixels(0, 48 - region_padding, 80, 12 + 2 * region_padding));
     }
 }
 
@@ -1644,7 +1615,7 @@ test "solid eight-row band between distinct backgrounds gets a full-width box" {
     const after = try before.insert(40, 8, 8);
     defer after.deinit();
     after.red(0, 40, 80, 8, 130);
-    try check(before, after, 1, &.{.{ .after = testBox(0, 40 - region_padding, 80, 8 + 2 * region_padding) }});
+    try check(before, after, 1, &.{.{ .after = Box.fromPixels(0, 40 - region_padding, 80, 8 + 2 * region_padding) }});
 }
 
 test "small CSS dividers above and below stationary headers count as scroll" {
@@ -1716,7 +1687,7 @@ test "unrelated tall shots beyond the budget compare by position" {
     }
     const result = try compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
-    const marker = padded(55, 100, 10, 8);
+    const marker = sample.paddedBox(55, 100, 10, 8);
     for (result.regions) |region| {
         if (std.meta.eql(@as(?Box, marker), region.before) and std.meta.eql(@as(?Box, marker), region.after)) break;
     } else return error.MissingMarker;
@@ -1731,7 +1702,7 @@ test "wider viewport aligns rows and shows only the added strip" {
     before.red(18, 30, 22, 6, 0);
     before.red(14, 62, 10, 5, 0);
     for (0..88) |y| @memcpy(after.row(y + 2)[0..70], before.row(y));
-    try checkInsertion(before, after, testBox(70 - region_padding, 0, 10 + region_padding, 90));
+    try checkInsertion(before, after, Box.fromPixels(70 - region_padding, 0, 10 + region_padding, 90));
 }
 
 test "deleting viewport rows boxes the removed and revealed content" {
@@ -1746,8 +1717,8 @@ test "deleting viewport rows boxes the removed and revealed content" {
     after.copyRows(44, before, 52, 120);
     after.red(8, 112, 17, 8, 0);
     try check(before, after, 1, &.{
-        .{ .before = padded(14, 44, 25, 8) },
-        .{ .after = testBox(4, 108, 25, 12) },
+        .{ .before = sample.paddedBox(14, 44, 25, 8) },
+        .{ .after = Box.fromPixels(4, 108, 25, 12) },
     });
 }
 
@@ -1763,8 +1734,8 @@ test "an insertion stays separate from a nearby recolour" {
     after.red(24, 34, 4, 4, 0);
     after.red(23, 46, 10, 6, 0);
     try check(before, after, 1, &.{
-        .{ .before = padded(24, 34, 4, 4), .after = padded(24, 34, 4, 4) },
-        .{ .after = padded(23, 46, 10, 6) },
+        .{ .before = sample.paddedBox(24, 34, 4, 4), .after = sample.paddedBox(24, 34, 4, 4) },
+        .{ .after = sample.paddedBox(23, 46, 10, 6) },
     });
 }
 
@@ -1781,12 +1752,12 @@ test "a banner added or removed at the top of a fixed viewport is boxed" {
     after.copyRows(banner, before, 0, 120 - banner);
     after.fill(0, 0, 80, banner, .{ 130, 130, 130, 255 });
     after.red(10, 12, 30, 6, 0);
-    const banner_box = padded(10, 12, 30, 6);
+    const banner_box = sample.paddedBox(10, 12, 30, 6);
     try check(before, after, 1, &.{.{ .after = banner_box }});
     try check(after, before, 1, &.{
         .{ .before = banner_box },
-        .{ .after = padded(20, 80, 36, 1) },
-        .{ .after = padded(8, 104, 30, 8) },
+        .{ .after = sample.paddedBox(20, 80, 36, 1) },
+        .{ .after = sample.paddedBox(8, 104, 30, 8) },
     });
 }
 
@@ -1795,7 +1766,7 @@ test "a whole-image change smaller than the noise minimum is reported" {
     const black: Image = .{ .width = 1, .height = 1, .pixels = &.{.{ 0, 0, 0, 255 }} };
     const result = try compare(std.testing.allocator, white, black, .{});
     defer result.deinit(std.testing.allocator);
-    try checkRegions(result, &.{.{ .before = testBox(0, 0, 1, 1), .after = testBox(0, 0, 1, 1) }});
+    try sample.checkRegions(result.regions, &.{.{ .before = Box.fromPixels(0, 0, 1, 1), .after = Box.fromPixels(0, 0, 1, 1) }});
 }
 
 test "a tall image against its reverse stops at the edit budget" {
@@ -1817,7 +1788,7 @@ test "fractional device scale is applied to box padding" {
     const after = try sample.Canvas.square();
     defer after.deinit();
     after.block(20, 24);
-    const expected = testBox(9, 13, 24, 24);
+    const expected = Box.fromPixels(9, 13, 24, 24);
     try check(before, after, 2.625, &.{.{ .before = expected, .after = expected }});
 }
 
@@ -1908,7 +1879,7 @@ test "a growing main column aligns beside a static sidebar" {
     after.copyColumns(before, 96, width, 0, 40, 0);
     after.copyColumns(before, 96, width, 40, height, 40 + inserted);
     after.fill(100, 44, 200, 50, .{ 200, 220, 240, 255 });
-    try check(before, after, 1, &.{.{ .after = padded(100, 44, 200, 50) }});
+    try check(before, after, 1, &.{.{ .after = sample.paddedBox(100, 44, 200, 50) }});
 }
 
 test "growing and shrinking columns keep their insertion and independent edits" {
@@ -1942,15 +1913,15 @@ test "growing and shrinking columns keep their insertion and independent edits" 
         after.fill(edit.x, edit.y, edit.width, edit.height, sample.inkShade(edit.tone, 4));
         const result = try compareCanvases(before, after, 1);
         defer result.deinit(std.testing.allocator);
-        try std.testing.expect(hasRegion(result, .after, 120, 50, .inserted));
-        try std.testing.expect(hasRegion(result, .after, edit.x + edit.width / 2, edit.y + edit.height / 2, edit.kind));
+        try std.testing.expect(sample.hasRegion(result.regions, .after, 120, 50, .inserted));
+        try std.testing.expect(sample.hasRegion(result.regions, .after, edit.x + edit.width / 2, edit.y + edit.height / 2, edit.kind));
         if (edit.y != 20) try std.testing.expectEqual(@as(usize, 2), result.regions.len);
         if (edit.x == 200) {
             const reverse = try compareCanvases(after, before, 1);
             defer reverse.deinit(std.testing.allocator);
             try std.testing.expectEqual(@as(usize, 2), reverse.regions.len);
-            try std.testing.expect(hasRegion(reverse, .before, 120, 50, .removed));
-            try std.testing.expect(hasRegion(reverse, .before, 201, 302, .changed));
+            try std.testing.expect(sample.hasRegion(reverse.regions, .before, 120, 50, .removed));
+            try std.testing.expect(sample.hasRegion(reverse.regions, .before, 201, 302, .changed));
         }
     }
 }
@@ -1981,11 +1952,11 @@ test "edited moved lines still report narrow changes when matching nearby stroke
                 const result = try compareCanvases(before, after, 1);
                 defer result.deinit(std.testing.allocator);
                 const banner_kind: ?Kind = if (size[0] == 3 and size[1] == 6) .inserted else null;
-                try std.testing.expect(hasRegion(result, .after, 30, 50, banner_kind));
+                try std.testing.expect(sample.hasRegion(result.regions, .after, 30, 50, banner_kind));
                 var seen = false;
                 for (y..y + size[1]) |row| {
                     for (150..150 + size[0]) |x| {
-                        if (!std.meta.eql(base.row(row)[x], tone) and hasRegion(result, .after, x, row, null)) seen = true;
+                        if (!std.meta.eql(base.row(row)[x], tone) and sample.hasRegion(result.regions, .after, x, row, null)) seen = true;
                     }
                 }
                 try std.testing.expect(seen);
@@ -1996,7 +1967,7 @@ test "edited moved lines still report narrow changes when matching nearby stroke
                     if (region.before) |box| try std.testing.expect(box.width <= @as(f64, @floatFromInt(size[0] + 60)));
                     if (region.after) |box| try std.testing.expect(box.width <= @as(f64, @floatFromInt(size[0] + 60)));
                 }
-                if (y == 374 and size[0] == 3 and size[1] == 6) try std.testing.expect(hasRegion(result, .after, 151, y + 2, .changed));
+                if (y == 374 and size[0] == 3 and size[1] == 6) try std.testing.expect(sample.hasRegion(result.regions, .after, 151, y + 2, .changed));
                 after.copyColumns(base, 150, 150 + size[0], y, y + size[1], y);
             }
         }
@@ -2008,7 +1979,7 @@ test "edited moved lines still report narrow changes when matching nearby stroke
     const edit = try compareCanvases(before, after, 1);
     defer edit.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 2), edit.regions.len);
-    try std.testing.expect(hasRegion(edit, .after, 30, 112, .changed));
+    try std.testing.expect(sample.hasRegion(edit.regions, .after, 30, 112, .changed));
 }
 
 test "both moving columns preserve a two-sided edit in each" {
@@ -2030,8 +2001,8 @@ test "both moving columns preserve a two-sided edit in each" {
     const result = try compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 4), result.regions.len);
-    try std.testing.expect(hasRegion(result, .after, 29, 304, .changed));
-    try std.testing.expect(hasRegion(result, .after, 201, 252, .changed));
+    try std.testing.expect(sample.hasRegion(result.regions, .after, 29, 304, .changed));
+    try std.testing.expect(sample.hasRegion(result.regions, .after, 201, 252, .changed));
 }
 
 test "thickened or recoloured underlines on moved text stay local" {
@@ -2052,8 +2023,8 @@ test "thickened or recoloured underlines on moved text stay local" {
             continue;
         }
         try std.testing.expectEqual(@as(usize, 2), result.regions.len);
-        try std.testing.expect(hasRegion(result, .after, 40, y, .changed));
-        try std.testing.expect(hasRegion(result, .after, 159, y, .changed));
+        try std.testing.expect(sample.hasRegion(result.regions, .after, 40, y, .changed));
+        try std.testing.expect(sample.hasRegion(result.regions, .after, 159, y, .changed));
         for (result.regions) |region| {
             if (region.before) |box| try std.testing.expect(box.width <= 120 + 2 * region_padding);
         }
@@ -2107,7 +2078,7 @@ test "a light stem edit stays visible beside touching dark text" {
                 const result = try compareCanvases(before, after, 1);
                 defer result.deinit(std.testing.allocator);
                 try std.testing.expectEqual(@as(usize, 1), result.regions.len);
-                try std.testing.expect(hasRegion(result, .after, 110, 22, .inserted));
+                try std.testing.expect(sample.hasRegion(result.regions, .after, 110, 22, .inserted));
                 continue;
             },
             .widened, .unmoved => after.fill(105, y, 1, 9, sample.inkShade(190, 4)),
@@ -2149,11 +2120,11 @@ test "sparse marks and real extensions survive independent column alignment" {
         after.fill(m[0], m[1], m[2], m[3], sample.inkShade(tone, 4));
         const result = try compareCanvases(before, after, 1);
         defer result.deinit(std.testing.allocator);
-        try std.testing.expect(hasRegion(result, .after, 120, 50, .inserted));
-        try std.testing.expectEqual(m[2] * m[3] >= min_region_pixels, hasRegion(result, .after, m[0], m[1], .inserted));
+        try std.testing.expect(sample.hasRegion(result.regions, .after, 120, 50, .inserted));
+        try std.testing.expectEqual(m[2] * m[3] >= min_region_pixels, sample.hasRegion(result.regions, .after, m[0], m[1], .inserted));
         const reverse = try compareCanvases(after, before, 1);
         defer reverse.deinit(std.testing.allocator);
-        try std.testing.expectEqual(m[2] * m[3] >= min_region_pixels, hasRegion(reverse, .before, m[0], m[1], .removed));
+        try std.testing.expectEqual(m[2] * m[3] >= min_region_pixels, sample.hasRegion(reverse.regions, .before, m[0], m[1], .removed));
         after.fill(m[0], m[1], m[2], m[3], @splat(255));
     }
 }
@@ -2178,12 +2149,12 @@ test "independently aligned columns retain clipped text and different strides" {
         after.fill(x, y, if (width == 300) 6 else 3, 6, sample.inkShade(30, 4));
         const result = try compareCanvases(before, after, 1);
         defer result.deinit(std.testing.allocator);
-        try std.testing.expect(hasRegion(result, .after, 120, 50, .inserted));
-        try std.testing.expect(hasRegion(result, .after, x + 2, y + 2, null));
+        try std.testing.expect(sample.hasRegion(result.regions, .after, 120, 50, .inserted));
+        try std.testing.expect(sample.hasRegion(result.regions, .after, x + 2, y + 2, null));
         if (width == 320) {
             try std.testing.expectEqual(@as(usize, 3), result.regions.len);
-            try std.testing.expect(hasRegion(result, .after, 30, 440, .inserted));
-            try std.testing.expect(hasRegion(result, .after, x + 2, y + 2, .changed));
+            try std.testing.expect(sample.hasRegion(result.regions, .after, 30, 440, .inserted));
+            try std.testing.expect(sample.hasRegion(result.regions, .after, x + 2, y + 2, .changed));
             for (result.regions) |region| {
                 if (region.kind != .changed) continue;
                 try std.testing.expect(region.after.?.width <= 3 + 2 * region_padding);
@@ -2204,8 +2175,8 @@ test "swapped and repeated lines remain visible between shifted anchors" {
         if (swap) after.copyRows(246, before, 202, 211);
         const result = try compareCanvases(before, after, 1);
         defer result.deinit(std.testing.allocator);
-        try std.testing.expect(hasRegion(result, .after, 120, 236, null));
-        if (swap) try std.testing.expect(hasRegion(result, .after, 120, 250, null));
+        try std.testing.expect(sample.hasRegion(result.regions, .after, 120, 236, null));
+        if (swap) try std.testing.expect(sample.hasRegion(result.regions, .after, 120, 250, null));
     }
 }
 
@@ -2226,7 +2197,7 @@ test "repeated table rows keep recoloured or deleted cells after a shift" {
             after.fill(120, 248, 40, 6, color);
             const result = try compareCanvases(before, after, 1);
             defer result.deinit(std.testing.allocator);
-            try std.testing.expect(hasRegion(result, .after, 140, 250, .changed));
+            try std.testing.expect(sample.hasRegion(result.regions, .after, 140, 250, .changed));
             if (growth == 0) {
                 try std.testing.expectEqual(@as(usize, 0), result.moves.len);
                 try std.testing.expectEqual(@as(usize, 2), result.regions.len);
@@ -2250,7 +2221,7 @@ test "anchor boundaries and translucent edits remain visible on moved rows" {
         after.fill(60, y, 3, 3, sample.inkShade(30, 4));
         const result = try compareCanvases(before, after, 1);
         defer result.deinit(std.testing.allocator);
-        try std.testing.expect(hasRegion(result, .after, 61, y + 1, null));
+        try std.testing.expect(sample.hasRegion(result.regions, .after, 61, y + 1, null));
     }
 
     const transparent = try sample.Canvas.init(200, 300);
@@ -2264,7 +2235,7 @@ test "anchor boundaries and translucent edits remain visible on moved rows" {
     after.fill(100, 200, 4, 4, .{ 255, 0, 0, 120 });
     const result = try compareCanvases(transparent, after, 1);
     defer result.deinit(std.testing.allocator);
-    try std.testing.expect(hasRegion(result, .after, 101, 201, null));
+    try std.testing.expect(sample.hasRegion(result.regions, .after, 101, 201, null));
 }
 
 test "fixed footers with internal edits clip shifted content" {
@@ -2288,13 +2259,13 @@ test "fixed footers with internal edits clip shifted content" {
             const result = try compareCanvases(before, after, 1);
             defer result.deinit(std.testing.allocator);
             try std.testing.expectEqual(@as(usize, if (edit == null) 1 else 2), result.regions.len);
-            try std.testing.expect(hasRegion(result, .after, 50, y + 10, .inserted));
+            try std.testing.expect(sample.hasRegion(result.regions, .after, 50, y + 10, .inserted));
             try std.testing.expectEqual(@as(usize, 1), result.moves.len);
             const move = result.moves[0];
             try std.testing.expectEqual(@as(usize, 30), move.after.y - move.before.y);
             try std.testing.expectEqual(@as(usize, 350), move.after.y + move.after.height);
             if (edit) |row| {
-                const expected = testBox(26, row - 4, 18, 18);
+                const expected = Box.fromPixels(26, row - 4, 18, 18);
                 try std.testing.expectEqual(expected, result.regions[1].before.?);
                 try std.testing.expectEqual(expected, result.regions[1].after.?);
                 after.fill(30, row, 10, 10, .{ 60, 60, 60, 255 });
@@ -2305,12 +2276,12 @@ test "fixed footers with internal edits clip shifted content" {
         defer header_edit.deinit(std.testing.allocator);
         try std.testing.expectEqual(@as(usize, 2), header_edit.regions.len);
         try std.testing.expectEqual(@as(usize, 1), header_edit.moves.len);
-        try std.testing.expect(hasRegion(header_edit, .after, 8, 12, .changed));
+        try std.testing.expect(sample.hasRegion(header_edit.regions, .after, 8, 12, .changed));
         after.fill(5, 10, 10, 10, .{ 40, 40, 70, 255 });
         const reverse = try compareCanvases(after, before, 1);
         defer reverse.deinit(std.testing.allocator);
         try std.testing.expectEqual(@as(usize, 2), reverse.regions.len);
-        try std.testing.expect(hasRegion(reverse, .before, 50, y + 10, .removed));
+        try std.testing.expect(sample.hasRegion(reverse.regions, .before, 50, y + 10, .removed));
         try std.testing.expectEqual(@as(usize, 1), reverse.moves.len);
         try std.testing.expectEqual(@as(usize, 30), reverse.moves[0].before.y - reverse.moves[0].after.y);
     }
@@ -2342,10 +2313,10 @@ test "one or two displacements in a fixed thread get distinct move ranges" {
         try std.testing.expectEqual(@as(usize, 2), found.moves.len);
         try std.testing.expectEqual(@as(usize, 20), found.moves[0].after.y - found.moves[0].before.y);
         if (remove) {
-            try std.testing.expect(hasRegion(found, .before, 50, 255, .removed));
+            try std.testing.expect(sample.hasRegion(found.regions, .before, 50, 255, .removed));
             try std.testing.expectEqual(@as(usize, 22), found.moves[1].before.y - found.moves[1].after.y);
         } else {
-            try std.testing.expect(hasRegion(found, .after, 50, 260, .inserted));
+            try std.testing.expect(sample.hasRegion(found.regions, .after, 50, 260, .inserted));
             try std.testing.expectEqual(@as(usize, 40), found.moves[1].after.y - found.moves[1].before.y);
         }
     }
@@ -2463,7 +2434,7 @@ test "an inset item after a deletion is not a footer" {
     for ([_]bool{ false, true }) |reverse| {
         const result = try compareCanvases(if (reverse) after else before, if (reverse) before else after, 1);
         defer result.deinit(std.testing.allocator);
-        try std.testing.expect(hasRegion(result, if (reverse) .after else .before, 32, deletion + 6, if (reverse) .inserted else .removed));
+        try std.testing.expect(sample.hasRegion(result.regions, if (reverse) .after else .before, 32, deletion + 6, if (reverse) .inserted else .removed));
     }
 }
 
@@ -2482,7 +2453,7 @@ test "an exact periodic repeat chooses the stationary reading" {
     const result = try compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 0), result.moves.len);
-    try std.testing.expect(hasRegion(result, .after, 29, 178, .changed));
+    try std.testing.expect(sample.hasRegion(result.regions, .after, 29, 178, .changed));
     for (result.regions) |region| {
         try std.testing.expectEqual(Kind.changed, region.kind);
         try std.testing.expectEqual(region.before, region.after);
@@ -2544,8 +2515,8 @@ test "exchanging separated cards preserves the removed card height" {
     const result = try compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 2), result.regions.len);
-    try std.testing.expect(hasRegion(result, .after, 60, new_y + 15, .inserted));
-    try std.testing.expect(hasRegion(result, .before, 60, old_y + 15, .removed));
+    try std.testing.expect(sample.hasRegion(result.regions, .after, 60, new_y + 15, .inserted));
+    try std.testing.expect(sample.hasRegion(result.regions, .before, 60, old_y + 15, .removed));
     for (result.regions) |r| if (r.kind == .removed) {
         try std.testing.expectEqual(@as(f64, 38), r.before.?.height);
     };
@@ -2654,14 +2625,14 @@ test "fixed chrome stays stationary across heights and button edits" {
             const inserted = try compareCanvases(before, after, 1);
             defer inserted.deinit(std.testing.allocator);
             try std.testing.expectEqual(@as(usize, 1), inserted.regions.len);
-            try std.testing.expect(hasRegion(inserted, .after, 100, y + 3, if (at == 2) .inserted else null));
+            try std.testing.expect(sample.hasRegion(inserted.regions, .after, 100, y + 3, if (at == 2) .inserted else null));
             if (at == 2 and footer_height == 50) {
                 after.fill(20, footer + 10, 61, button_h, .{ 235, 225, 220, 255 });
                 after.fill(120, footer + 10, 61, button_h, .{ 50, 50, 200, 255 });
                 const moved = try compareCanvases(before, after, 1);
                 defer moved.deinit(std.testing.allocator);
-                try std.testing.expect(hasRegion(moved, .after, 130, footer + 15, .changed));
-                try std.testing.expect(hasRegion(moved, .before, 25, footer + 15, .changed));
+                try std.testing.expect(sample.hasRegion(moved.regions, .after, 130, footer + 15, .changed));
+                try std.testing.expect(sample.hasRegion(moved.regions, .before, 25, footer + 15, .changed));
             }
         }
     }
@@ -2682,7 +2653,7 @@ test "many spaced edits still obey the region cap on a dark page" {
     defer found.deinit(std.testing.allocator);
     try std.testing.expect(found.regions.len <= max_regions);
     try std.testing.expectEqual(@as(usize, 0), found.moves.len);
-    for (0..42) |i| try std.testing.expect(hasRegion(found, .after, 65 + i % 6 * 190, 65 + i / 6 * 250, .changed));
+    for (0..42) |i| try std.testing.expect(sample.hasRegion(found.regions, .after, 65 + i % 6 * 190, 65 + i / 6 * 250, .changed));
 }
 
 test "a compact outline joins edits to its label and value without spanning cards" {
@@ -2706,8 +2677,8 @@ test "a compact outline joins edits to its label and value without spanning card
     defer result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 2), result.regions.len);
     for ([_]usize{ 52, 286 }) |left| {
-        try std.testing.expect(hasRegion(result, .after, left, 46, .changed));
-        try std.testing.expect(hasRegion(result, .after, left, 90, .changed));
+        try std.testing.expect(sample.hasRegion(result.regions, .after, left, 46, .changed));
+        try std.testing.expect(sample.hasRegion(result.regions, .after, left, 90, .changed));
     }
     const label = Box.fromPixels(52, 44, 56, 12);
     const value = Box.fromPixels(52, 70, 82, 22);

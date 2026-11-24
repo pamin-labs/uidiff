@@ -225,6 +225,35 @@ pub fn strokeRounded(canvas: Canvas, top: usize, radius: usize) void {
     };
 }
 
+/// Checks that a reported region of the requested kind covers a test point.
+pub fn hasRegion(found: []const values.Region, side: values.Side, x: usize, y: usize, kind: ?values.Kind) bool {
+    const px: f64 = @floatFromInt(x);
+    const py: f64 = @floatFromInt(y);
+    for (found) |region| {
+        if (kind != null and kind != region.kind) continue;
+        const box = (if (side == .before) region.before else region.after) orelse continue;
+        if (box.x <= px and box.right() > px and box.y <= py and box.bottom() > py) return true;
+    }
+    return false;
+}
+
+/// Adds the normal report padding to an expected test box.
+pub fn paddedBox(x: usize, y: usize, w: usize, h: usize) values.Box {
+    const region_padding = regions.padding.count();
+    return values.Box.fromPixels(x - region_padding, y - region_padding, w + 2 * region_padding, h + 2 * region_padding);
+}
+
+/// Checks region geometry, kind and report numbering in order.
+pub fn checkRegions(actual: []const values.Region, expected: []const values.Region) !void {
+    try std.testing.expectEqual(expected.len, actual.len);
+    for (actual, expected, 1..) |got, want, number| {
+        try std.testing.expectEqual(want.before, got.before);
+        try std.testing.expectEqual(want.after, got.after);
+        try std.testing.expectEqual(number, got.number);
+        try std.testing.expectEqual(if (want.before == null) values.Kind.inserted else if (want.after == null) values.Kind.removed else values.Kind.changed, got.kind);
+    }
+}
+
 fn insideRounded(x: usize, y: usize, width: usize, height: usize, radius: usize) bool {
     const dx = radius -| @min(x, width - 1 - x);
     const dy = radius -| @min(y, height - 1 - y);
