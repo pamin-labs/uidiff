@@ -217,14 +217,26 @@ fn addDecoderSources(b: *Build, module: *Build.Module, target: Build.ResolvedTar
             .files = &.{ "alpha_processing_neon.c", "dec_neon.c", "filters_neon.c", "lossless_neon.c", "rescaler_neon.c", "upsampling_neon.c", "yuv_neon.c" },
             .flags = webp_flags,
         }),
-        .x86, .x86_64 => module.addCSourceFiles(.{
-            .root = webp.path("src/dsp"),
-            .files = &.{
-                "alpha_processing_sse2.c",  "dec_sse2.c",  "filters_sse2.c",   "lossless_sse2.c",    "rescaler_sse2.c", "upsampling_sse2.c", "yuv_sse2.c",
-                "alpha_processing_sse41.c", "dec_sse41.c", "lossless_sse41.c", "upsampling_sse41.c", "yuv_sse41.c",     "lossless_avx2.c",
-            },
-            .flags = webp_flags,
-        }),
+        .x86, .x86_64 => {
+            const dsp = webp.path("src/dsp");
+            const features = target.result.cpu.features;
+            module.addCSourceFiles(.{
+                .root = dsp,
+                .files = &.{ "alpha_processing_sse2.c", "dec_sse2.c", "filters_sse2.c", "lossless_sse2.c", "rescaler_sse2.c", "upsampling_sse2.c", "yuv_sse2.c" },
+                .flags = webp_flags,
+            });
+            // Upstream's CPU header omits these kernels unless the object
+            // itself targets their ISA. Otherwise these files are stubs.
+            if (std.Target.x86.featureSetHas(features, .sse4_1)) module.addCSourceFiles(.{
+                .root = dsp,
+                .files = &.{ "alpha_processing_sse41.c", "dec_sse41.c", "lossless_sse41.c", "upsampling_sse41.c", "yuv_sse41.c" },
+                .flags = webp_flags,
+            });
+            if (std.Target.x86.featureSetHas(features, .avx2)) module.addCSourceFile(.{
+                .file = webp.path("src/dsp/lossless_avx2.c"),
+                .flags = webp_flags,
+            });
+        },
         else => {},
     }
 }
