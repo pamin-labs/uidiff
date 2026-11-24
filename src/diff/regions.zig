@@ -2,6 +2,7 @@
 const std = @import("std");
 const values = @import("../value.zig");
 const pixel = @import("pixel.zig");
+const column_bounds = @import("columns.zig");
 const Size = values.Size;
 const Box = values.Box;
 const Region = values.Region;
@@ -136,6 +137,34 @@ pub const Mask = struct {
 /// row on each side that shows it.
 pub const Placement = struct { left: usize, before_y: ?usize, after_y: ?usize };
 
+const Scrim = struct {
+    transmission: f32,
+    base: @Vector(3, f32),
+
+    fn predict(self: Scrim, before: values.Pixel) @Vector(3, f32) {
+        return tone(before) * @as(@Vector(3, f32), @splat(self.transmission)) + self.base;
+    }
+
+    fn residual(self: Scrim, before: values.Pixel, after: values.Pixel) f32 {
+        return @reduce(.Max, @abs(tone(after) - self.predict(before)));
+    }
+
+    noinline fn matches(self: Scrim, before: values.Pixel, after: values.Pixel) bool {
+        return before[3] == 255 and after[3] == 255 and self.residual(before, after) <= scrim_rounding;
+    }
+
+    noinline fn shadow(self: Scrim, before: values.Pixel, after: values.Pixel) bool {
+        if (before[3] != 255 or after[3] != 255) return false;
+        const predicted = self.predict(before);
+        const actual = tone(after);
+        const total = @reduce(.Add, predicted);
+        if (total <= 0) return false;
+        const transmission = @reduce(.Add, actual) / total;
+        return transmission >= scrim_min_shadow_transmission and transmission < 1 and
+            @reduce(.Max, @abs(actual - predicted * @as(@Vector(3, f32), @splat(transmission)))) <= scrim_rounding;
+    }
+};
+
 /// Rows of a mask, inclusive.
 const RowRange = struct { first: usize, last: usize };
 
@@ -238,6 +267,28 @@ const line_height = values.CssPx.init(48);
 const line_gap_factor = 3;
 const divider_context = 3;
 const stack_gap = values.CssPx.init(20);
+// Only compact cards can connect vertically separated marks. A wide panel
+// or a tall list can contain multiple unrelated rows.
+const compact_card_height = values.CssPx.init(128);
+const compact_card_width = values.CssPx.init(360);
+// Bound outline work across merge restarts.
+const max_card_probes = max_regions * max_regions;
+const card_corner_reach = values.CssPx.init(20);
+// Samples around the viewport imply a shared backdrop only when there is
+// enough contrast to distinguish a scrim from a replacement solid colour.
+const min_scrim_extent = 24;
+const scrim_sample_pitch = 4;
+const scrim_fit_pitch = 8;
+const scrim_fit_margin_divisor = 4;
+const panel_center_inset_divisor = 16;
+const scrim_min_contrast = 8;
+const scrim_max_transmission = 0.90;
+const scrim_min_transmission = 0.12;
+const scrim_rounding = 2.0;
+const scrim_shadow_radius = values.CssPx.init(24);
+const max_scrim_shadow_radius = 72;
+const scrim_min_shadow_transmission = 0.82;
+const scrim_window_contrast = 12.0;
 const blank_tolerance = 24;
 const max_sideways_shift = 256;
 const shift_samples = 9;
@@ -254,22 +305,34 @@ pub fn minPixels(before: Size, after: Size) usize {
 }
 
 /// Joins the retained boxes that together describe a single visible edit.
-pub noinline fn mergeLogical(boxes: []Candidate, before: Image, after: Image, scale: values.Scale) usize {
+pub noinline fn mergeLogical(boxes: []Candidate, before: Image, after: Image, scale: values.Scale, moves: []const values.Move) usize {
     var len = boxes.len;
+    var card_probes: usize = if (moves.len == 0) max_card_probes else 0;
     var i: usize = 0;
     while (i < len) {
         var j = i + 1;
         while (j < len) {
             const a = boxes[i].region;
             const b = boxes[j].region;
-            if (sameLine(a, b, before, after, scale.devicePixels(line_height)) or
+            const related = sameLine(a, b, before, after, scale.devicePixels(line_height)) or
                 stacked(a, b, before, after, scale.devicePixels(stack_gap)) or
-                shiftedSideways(a, b, before, after))
-            {
-                len = join(boxes, len, i, j);
-                i = 0;
-                j = 1;
-            } else j += 1;
+                shiftedSideways(a, b, before, after);
+            const card = if (related or card_probes == 0) null else card: {
+                card_probes -= 1;
+                break :card commonCard(a, b, before, after, scale);
+            };
+            if (!related and card == null) {
+                j += 1;
+                continue;
+            }
+            len = join(boxes, len, i, j);
+            if (card) |box| {
+                boxes[i].region.before = box;
+                boxes[i].region.after = box;
+                len = removeCardParts(boxes[0..len], i, box);
+            }
+            i = 0;
+            j = 1;
         }
         i += 1;
     }
@@ -303,6 +366,16 @@ pub fn keepMoves(moves: []values.Move, edits: []const Region, scale: values.Scal
         len += 1;
     }
     return len;
+}
+
+/// Assigns the affected side when a translucent backdrop and a new opaque
+/// panel explain a full-viewport change.
+pub fn classifyOverlay(region: *Region, before: Image, after: Image, scale: values.Scale) void {
+    if (before.width != after.width or before.height != after.height) return;
+    const viewport = Box.fromPixels(0, 0, before.width, before.height);
+    if (!std.meta.eql(region.before orelse return, viewport) or !std.meta.eql(region.after orelse return, viewport)) return;
+    const radius: usize = @intFromFloat(@min(scale.devicePixels(scrim_shadow_radius), max_scrim_shadow_radius));
+    if (overlaid(before, after, radius)) region.before = null else if (overlaid(after, before, radius)) region.after = null;
 }
 
 /// Sorts by the before box when present, then assigns kinds, numbers and padding.
@@ -448,6 +521,112 @@ fn containsMove(box: Box, rows: values.RowRange, move: values.Move, slack: f64, 
     return top >= box.y - slack and bottom <= box.bottom() + slack;
 }
 
+fn overlaid(before: Image, after: Image, radius: usize) bool {
+    const scrim = fitScrim(before, after) orelse return false;
+    const panel = panelBounds(before, after, scrim) orelse return false;
+    const last_y = before.height - 1;
+    const last_x = before.width - 1;
+    var y: usize = 0;
+    while (true) : (y = @min(y + scrim_sample_pitch, last_y)) {
+        const a = before.row(y);
+        const b = after.row(y);
+        const in_panel_rows = y >= panel.top and y < panel.bottom;
+        var x: usize = 0;
+        while (true) : (x = @min(x + scrim_sample_pitch, last_x)) {
+            const inside = in_panel_rows and x >= panel.left and x < panel.right;
+            if (!inside and !scrim.matches(a[x], b[x])) {
+                // A drop shadow attenuates the same dimmed content.
+                if (y < panel.top -| radius or y >= panel.bottom + radius or
+                    x < panel.left -| radius or x >= panel.right + radius or !scrim.shadow(a[x], b[x])) return false;
+            }
+            if (x == last_x) break;
+        }
+        if (y == last_y) break;
+    }
+    return true;
+}
+
+fn panelBounds(before: Image, after: Image, scrim: Scrim) ?struct { left: usize, right: usize, top: usize, bottom: usize } {
+    const y = before.height / 2;
+    const center = before.width / 2;
+    const a = before.row(y);
+    const b = after.row(y);
+    const panel = b[center];
+    const inset = before.width / panel_center_inset_divisor;
+    const center_samples = [_]usize{ center - inset, center, center + inset };
+    for (center_samples) |x| {
+        if (!pixel.same(panel, b[x]) or scrim.residual(a[x], b[x]) < scrim_window_contrast) return null;
+    }
+    const origin = y * before.width + center;
+    const stride: isize = @intCast(before.width);
+    const right_extent = before.width - center - 1;
+    const lower_extent = before.height - y - 1;
+    const left = panelReach(before, after, scrim, origin, center, -1);
+    const right = panelReach(before, after, scrim, origin, right_extent, 1);
+    const top = panelReach(before, after, scrim, origin, y, -stride);
+    const bottom = panelReach(before, after, scrim, origin, lower_extent, stride);
+    if (left == center or right == right_extent or top == y or bottom == lower_extent) return null;
+    return .{ .left = center - left, .right = center + right + 1, .top = y - top, .bottom = y + bottom + 1 };
+}
+
+// Takes a validated ray from a pixel to its row or column boundary.
+noinline fn panelReach(before: Image, after: Image, scrim: Scrim, origin: usize, extent: usize, step: isize) usize {
+    var pos: isize = @intCast(origin);
+    for (0..extent) |distance| {
+        pos += step;
+        const index: usize = @intCast(pos);
+        if (scrim.matches(before.pixels[index], after.pixels[index])) return distance;
+    }
+    return extent;
+}
+
+noinline fn fitScrim(before: Image, after: Image) ?Scrim {
+    if (before.width < min_scrim_extent or before.height < min_scrim_extent) return null;
+    // Sample through the outer page bands so low-contrast viewport chrome
+    // cannot determine the transmission for high-contrast content.
+    const Channels = @Vector(4, u8);
+    var brightest: Channels = @splat(0);
+    var darkest: Channels = @splat(255);
+    var bright_overlay: Channels = undefined;
+    var dark_overlay: Channels = undefined;
+    const margin = before.height / scrim_fit_margin_divisor;
+    var y: usize = 0;
+    while (y < before.height) : (y += scrim_fit_pitch) {
+        if (y >= margin and y < before.height - margin) continue;
+        const source = before.row(y);
+        const dimmed = after.row(y);
+        var x: usize = 0;
+        while (x < before.width) : (x += scrim_fit_pitch) {
+            const a: Channels = source[x];
+            const b: Channels = dimmed[x];
+            if (a[3] != 255 or b[3] != 255) return null;
+            bright_overlay = @select(u8, a >= brightest, b, bright_overlay);
+            dark_overlay = @select(u8, a <= darkest, b, dark_overlay);
+            brightest = @max(a, brightest);
+            darkest = @min(a, darkest);
+        }
+    }
+    const contrast = brightest - darkest;
+    const range = @reduce(.Max, contrast);
+    const signal: usize = if (range == contrast[0]) 0 else if (range == contrast[1]) 1 else 2;
+    const highs: [4]u8 = bright_overlay;
+    const lows: [4]u8 = dark_overlay;
+    const peaks: [4]u8 = brightest;
+    if (range < scrim_min_contrast or highs[signal] <= lows[signal] or highs[signal] >= peaks[signal]) return null;
+    const transmission = @as(f32, @floatFromInt(highs[signal] - lows[signal])) / @as(f32, @floatFromInt(range));
+    if (transmission < scrim_min_transmission or transmission > scrim_max_transmission) return null;
+    const a = before.pixels[0];
+    const b = after.pixels[0];
+    const base = tone(b) - tone(a) * @as(@Vector(3, f32), @splat(transmission));
+    if (@reduce(.Min, base) < -scrim_rounding or
+        @reduce(.Max, base) > 255 * (1 - transmission) + scrim_rounding) return null;
+    return .{ .transmission = transmission, .base = base };
+}
+
+fn tone(p: values.Pixel) @Vector(3, f32) {
+    return @floatFromInt(@as(@Vector(3, u8), p[0..3].*));
+}
+
 fn join(boxes: []Candidate, len: usize, i: usize, j: usize) usize {
     boxes[i].region.before = unite(boxes[i].region.before, boxes[j].region.before);
     boxes[i].region.after = unite(boxes[i].region.after, boxes[j].region.after);
@@ -560,6 +739,45 @@ fn lineNeighbours(a: Box, b: Box, max_height: f64) bool {
     const overlap = @min(a.bottom(), b.bottom()) - @max(a.y, b.y);
     const gap = @max(a.x, b.x) - @min(a.right(), b.right());
     return tallest <= max_height and overlap >= line_overlap * @min(a.height, b.height) and gap <= line_gap_factor * tallest;
+}
+
+noinline fn commonCard(a: Region, b: Region, before: Image, after: Image, scale: values.Scale) ?Box {
+    const p = a.before orelse return null;
+    const q = b.before orelse return null;
+    const r = a.after orelse return null;
+    const s = b.after orelse return null;
+    if (!std.meta.eql(p, r) or !std.meta.eql(q, s)) return null;
+    const overlap = @min(p.right(), q.right()) - @max(p.x, q.x);
+    const gap = @max(p.y, q.y) - @min(p.bottom(), q.bottom());
+    if (overlap <= 0 or gap < 0 or gap > scale.devicePixels(stack_gap)) return null;
+    const ink = unite(p, q).?;
+    const max_height = scale.devicePixels(compact_card_height);
+    const max_width = scale.devicePixels(compact_card_width);
+    if (ink.height >= max_height or ink.width >= max_width) return null;
+    const span: column_bounds.Span = .{ .left = @intFromFloat(ink.x), .width = @intFromFloat(ink.width) };
+    const y: usize = @intFromFloat(ink.y);
+    const search = column_bounds.CardSearch.compact(span, max_height, scale.devicePixels(card_corner_reach));
+    const old_card = column_bounds.enclosingCard(before, span, .{ .left = 0, .width = before.width }, y, search) orelse return null;
+    if (old_card.top + old_card.height < @as(usize, @intFromFloat(ink.bottom())) or
+        @as(f64, @floatFromInt(old_card.columns.width)) > max_width) return null;
+    const new_card = column_bounds.enclosingCard(after, span, .{ .left = 0, .width = after.width }, y, search) orelse return null;
+    if (!std.meta.eql(old_card, new_card)) return null;
+    return Box.fromPixels(old_card.columns.left, old_card.top, old_card.columns.width, old_card.height);
+}
+
+fn removeCardParts(boxes: []Candidate, card: usize, cover: Box) usize {
+    var len: usize = 0;
+    for (boxes, 0..) |part, index| {
+        if (index != card) {
+            if (part.region.before) |old| if (part.region.after) |new| {
+                const same_position = std.meta.eql(old, new);
+                if (same_position and cover.overlap(old) == old.width * old.height) continue;
+            };
+        }
+        boxes[len] = part;
+        len += 1;
+    }
+    return len;
 }
 
 fn stacked(a: Region, b: Region, before: Image, after: Image, max_gap: f64) bool {
@@ -757,10 +975,10 @@ test "one-sided stacks join across a blank seam but keep painted rows separate" 
         .{ .region = .{ .after = Box.fromPixels(6, 29, 36, 15) }, .pixels = 540 },
     };
     var boxes = parts;
-    try std.testing.expectEqual(@as(usize, 1), mergeLogical(&boxes, image, image, .one));
+    try std.testing.expectEqual(@as(usize, 1), mergeLogical(&boxes, image, image, .one, &.{}));
     boxes = parts;
     pixels[20 * width + 20] = ink;
-    try std.testing.expectEqual(@as(usize, 2), mergeLogical(&boxes, image, image, .one));
+    try std.testing.expectEqual(@as(usize, 2), mergeLogical(&boxes, image, image, .one, &.{}));
 }
 
 test {

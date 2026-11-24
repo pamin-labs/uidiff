@@ -156,12 +156,17 @@ const paint_cluster_rows = 2 * narrow_paint_rows;
 // A small re-pairing can be caused by repeated rows inside one stroke.
 const min_detour_rows = 8;
 const detour_scroll_multiplier = 2;
+// A short viewport scroll can move through several rows of blank top padding.
+const leading_scroll_multiplier = 4;
 // Require three quarters changed rows for one continuous overpaint.
 const paint_density_numerator = 3;
 const paint_density_denominator = 4;
 // Separate local edits need an exact stationary run between their rows.
 const paint_anchor_rows = 8;
 const narrow_paint_width_divisor = 2;
+// Repeated badges can match another row without moving its surrounding layout.
+const repeated_badge_width_divisor = 4;
+const repeated_badge_height_divisor = 2;
 
 // An inset paint stripe that returns to the body within this many rows
 // can be an item after a deletion, even close to the bottom of the image.
@@ -384,6 +389,7 @@ fn assembleBands(before: Keys, after: Keys, limits: Limits, anchors: Anchors, fr
     var len: usize = 0;
     var old_y: usize = 0;
     var new_y: usize = 0;
+    var clipped_scroll: usize = 0;
     var i: usize = 0;
     while (i <= count) : (i += 1) {
         if (i != 0 and i + 1 < count and (old_y != new_y or viewport) and
@@ -407,10 +413,15 @@ fn assembleBands(before: Keys, after: Keys, limits: Limits, anchors: Anchors, fr
         const shift = @max(removed, added) - paired;
         const under_header = i == 1 and first_offset == 0 and shift <= limit and
             (paired < shift or !std.mem.eql(u64, before[old_y..][0..shift], after[new_y..][0..shift]));
+        const blank_leading = viewport and i == 1 and first_offset == 0 and old_y == new_y and
+            removed > added and shift <= leading_scroll_multiplier * limit and
+            old_y < before.len / footer_zone_divisor and scrollPersists(content[0..footer], i) and
+            fixedHeaderPadding(limits, old_y, m.before);
+        if (blank_leading) clipped_scroll = shift;
         // A leading scroll remains in the displacement until the viewport
         // ends. A later insertion can add to that displacement.
-        const leading = viewport and (i == 0 and shift <= limit or under_header) and
-            scrollPersists(content[0..footer], i);
+        const leading = blank_leading or (viewport and (i == 0 and shift <= limit or under_header) and
+            scrollPersists(content[0..footer], i));
         if (removed == added) {
             append(bands, &len, .{
                 .before = old_y,
@@ -435,7 +446,12 @@ fn assembleBands(before: Keys, after: Keys, limits: Limits, anchors: Anchors, fr
                 .added = visible,
             });
             if ((end or i == footer) and added > paired) {
-                reveal(bands, &len, after[0..m.after], old_y + paired, new_y + paired, new_background);
+                const start = new_y + paired;
+                // A new solid band still counts if its paint differs from the backdrop.
+                const flat_tail = clipped_scroll != 0 and old_y -| new_y == clipped_scroll and
+                    (after[start] == new_background or after[start] == after[start -| 1]) and
+                    if (limits.images) |images| flatPaint(images[1], start, m.after, limits.left, limits.width) else false;
+                if (!flat_tail) reveal(bands, &len, after[0..m.after], old_y + paired, start, new_background);
             }
         } else {
             const first_band = len;
@@ -649,12 +665,30 @@ fn positionalPaintBands(before: Keys, after: Keys, first: usize, limits: Limits,
         const new_flat = flatPaint(images[1], start, bottom, span.left, span.width);
         // Two distant overpaints can overlap vertically. In that case the
         // bounding rectangle includes paint and untouched space between them.
-        if (!old_flat and !new_flat and !flatChanges(images, span, start, bottom)) return null;
+        if (!old_flat and !new_flat and !flatChanges(images, span, start, bottom) and
+            (span.width > @min(images[0].width, images[1].width) / repeated_badge_width_divisor or bottom - start > limits.replacement / repeated_badge_height_divisor or
+                !stationaryContour(images, span, start, bottom))) return null;
         interrupted_ink = interrupted_ink or !(old_flat and new_flat);
         append(bands, &len, .{ .before = start, .after = start, .removed = bottom - start, .added = bottom - start });
         start = end + (std.mem.indexOfDiff(u64, before[end..], after[end..]) orelse break);
     }
     return if (len > 1 and interrupted_ink) bands[0..len] else null;
+}
+
+fn stationaryContour(images: [2]Image, span: columns.Span, top: usize, bottom: usize) bool {
+    const right = span.left + span.width;
+    if (span.left == 0 or right >= @min(images[0].width, images[1].width)) return false;
+    for (top..bottom) |y| {
+        const old = images[0].row(y);
+        const new = images[1].row(y);
+        const backdrop = old[span.left - 1];
+        if (!pixel_ops.same(backdrop, old[right]) or !pixel_ops.same(backdrop, new[span.left - 1]) or
+            !pixel_ops.same(backdrop, new[right])) return false;
+        for (old[span.left..right], new[span.left..right]) |before, after| {
+            if (pixel_ops.same(before, backdrop) != pixel_ops.same(after, backdrop)) return false;
+        }
+    }
+    return true;
 }
 
 fn flatChanges(images: [2]Image, span: columns.Span, top: usize, bottom: usize) bool {
@@ -813,6 +847,20 @@ fn markSpacing(bands: []Band, keys_: Keys, background_key: ?u64, inserted: bool)
     }
 }
 
+fn fixedHeaderPadding(limits: Limits, start: usize, end: usize) bool {
+    const images = limits.images orelse return false;
+    if (limits.width < 2 or start == 0 or !flatPaint(images[0], start, end, limits.left, limits.width)) return false;
+    const left = limits.left;
+    const right = left + limits.width - 1;
+    const header = images[0].row(start - 1);
+    const old = images[0].row(start);
+    const new = images[1].row(start);
+    if (pixel_ops.same(header[left], old[left]) or pixel_ops.same(header[right], old[right])) return false;
+    // The stationary header and the unclipped paint meet at the same
+    // position on both sides of the moving content.
+    return pixel_ops.same(old[left], new[left]) and pixel_ops.same(old[right], new[right]);
+}
+
 fn scrollPersists(anchors: []const Match, first: usize) bool {
     if (first >= anchors.len) return false;
     const shift = anchors[first].offset();
@@ -840,12 +888,16 @@ fn panelInsertion(before: Keys, after: Keys, first: usize, limits: Limits, bands
         const available = after.len - start;
         const length = std.mem.indexOfDiff(u64, before[first..][0..available], after[start..]) orelse available;
         const edge = start + length;
-        if (edge < last or length < 2 * shift or edge == after.len) continue;
+        if (edge < last or length < shift or edge == after.len) continue;
 
-        // The unobserved tail must be flat paint. A body deletion can
-        // also restore offset zero, but can remove meaningful old rows.
-        if (before[edge - shift - 1] != before[edge - shift] or
-            !flatPaint(image, edge - shift, edge, limits.left, limits.width)) continue;
+        // A fixed closing rule explains displaced content falling behind
+        // the frame. Without that rule, require the lost tail to be paint.
+        const inset: columns.Span = .{ .left = limits.left, .width = limits.width };
+        const closed_panel = edge == last and columns.closesRoundedPanel(image, inset, edge, shift);
+        if (!closed_panel) {
+            if (length < 2 * shift or before[edge - shift - 1] != before[edge - shift] or
+                !flatPaint(image, edge - shift, edge, limits.left, limits.width)) continue;
+        }
         var moved_rows: usize = 0;
         for (before[first..][0..length], before[start..edge]) |old, stationary| {
             moved_rows += @intFromBool(old != stationary);
@@ -853,7 +905,7 @@ fn panelInsertion(before: Keys, after: Keys, first: usize, limits: Limits, bands
         }
         if (moved_rows < min_panel_evidence) continue;
         bands[0] = .{ .before = 0, .after = 0, .removed = first, .added = first, .mode = .hash_match };
-        bands[1] = .{ .before = first, .after = first, .removed = 0, .added = shift };
+        bands[1] = .{ .before = first, .after = first, .removed = 0, .added = shift, .mode = if (closed_panel) .element else .regular };
         bands[2] = .{ .before = first, .after = start, .removed = length, .added = length, .mode = .hash_match };
         bands[3] = .{ .before = edge, .after = edge, .removed = after.len - edge, .added = after.len - edge, .mode = .hash_match };
         return bands[0..4];
@@ -1138,6 +1190,104 @@ test "row hashes use the validated stride on one-pixel and final cropped rows" {
     keys(.{ .width = 5, .height = 2, .pixels = &data }, 2, 3, &hashes);
     try std.testing.expectEqual(std.hash.Wyhash.hash(0, std.mem.sliceAsBytes(data[7..])), hashes[1]);
     try std.testing.expect(hashes[0] != hashes[1]);
+}
+
+test "fixed-header scroll reveals content and skips flat paint" {
+    const width = 40;
+    const height = 120;
+    const header = 10;
+    const body = 20;
+    const scroll = 6;
+    const backdrop: values.Pixel = @splat(255);
+    var old: [height][width]values.Pixel = @splat(@splat(backdrop));
+    var new = old;
+    for (old[0..header], new[0..header]) |*a, *b| {
+        a.* = @splat(.{ 210, 215, 220, 255 });
+        b.* = a.*;
+    }
+    for (old[body..], body..) |*row, y| {
+        for (row[4..36]) |*ink| ink.* = .{ @intCast(y), 90, 40, 255 };
+    }
+    @memcpy(new[body - scroll .. height - scroll], old[body..]);
+    const old_pixels: *const [height * width]values.Pixel = @ptrCast(&old);
+    const new_pixels: *const [height * width]values.Pixel = @ptrCast(&new);
+    const original: Image = .{ .width = width, .height = height, .pixels = old_pixels };
+    const scrolled: Image = .{ .width = width, .height = height, .pixels = new_pixels };
+    var a: [height]u64 = undefined;
+    var b: [height]u64 = undefined;
+    keys(original, 0, width, &a);
+    const matches = [_]Match{
+        .{ .before = 0, .after = 0, .length = header },
+        .{ .before = body, .after = body - scroll, .length = height - body },
+    };
+    var bands: [2 * height + 1]Band = undefined;
+    var frontier: [2 * height + 3]Diagonal = undefined;
+    var raw: [height]Match = undefined;
+    for ([_]bool{ false, true }) |has_content| {
+        if (has_content) for (new[height - scroll ..]) |*row| {
+            @memset(row[4..36], .{ 112, 96, 60, 255 });
+        };
+        keys(scrolled, 0, width, &b);
+        const result = assembleBands(&a, &b, .{ .scroll = 2, .replacement = 24, .images = .{ original, scrolled }, .width = width }, .{
+            .rows = &matches,
+            .footer = matches.len,
+            .first_offset = 0,
+            .background = .{ a[header], b[header] },
+        }, &frontier, &raw, &bands);
+        try std.testing.expectEqual(@as(usize, if (has_content) 4 else 3), result.len);
+        for (result[0..3]) |band| try std.testing.expectEqual(band.removed, band.added);
+        try std.testing.expectEqual(@as(usize, scroll), result[2].before - result[2].after);
+        if (has_content) {
+            try std.testing.expectEqual(@as(usize, height - scroll), result[3].after);
+            try std.testing.expectEqual(@as(usize, scroll), result[3].added);
+            try std.testing.expect(result[3].mode == .revealed);
+        }
+    }
+}
+
+test "inserting and deleting above a divider preserves the deletion" {
+    const width = 96;
+    const height = 120;
+    const first = 24;
+    const pitch = 16;
+    const edge = 72;
+    const white: values.Pixel = @splat(255);
+    const rule: values.Pixel = .{ 130, 134, 140, 255 };
+    var old: [height][width]values.Pixel = @splat(@splat(white));
+    var new = old;
+    for (old[first..edge], first..) |*row, y| {
+        @memset(row[24..72], .{ @intCast(y), 90, 40, 255 });
+    }
+    @memcpy(new[first + pitch .. edge], old[first .. edge - pitch]);
+    for (new[first .. first + pitch]) |*row| @memset(row[24..72], .{ 224, 36, 80, 255 });
+    for ([_]*[height][width]values.Pixel{ &old, &new }) |pixels| {
+        @memset(pixels[edge][20..76], rule);
+        for (edge - pitch / 2..edge - pitch / 2 + 2) |y| {
+            pixels[y][12] = rule;
+            pixels[y][83] = rule;
+        }
+    }
+    const a: Image = .{ .width = width, .height = height, .pixels = @as(*const [width * height]values.Pixel, @ptrCast(&old)) };
+    const b: Image = .{ .width = width, .height = height, .pixels = @as(*const [width * height]values.Pixel, @ptrCast(&new)) };
+    const limits: Limits = .{ .scroll = 2, .replacement = 24, .images = .{ a, b }, .left = 24, .width = 48 };
+    var before: [height]u64 = undefined;
+    var after: [height]u64 = undefined;
+    keys(a, limits.left, limits.width, &before);
+    keys(b, limits.left, limits.width, &after);
+    var bands: [2 * height + 1]Band = undefined;
+    try std.testing.expect(panelInsertion(&before, &after, first, limits, &bands) == null);
+    var workspace: Workspace = .{};
+    defer workspace.deinit(std.testing.allocator);
+    var filtered: [2 * height]u64 = undefined;
+    const aligned = (try matchBands(std.testing.allocator, &before, &after, limits, &bands, &filtered, &workspace)) orelse return error.TestUnexpectedResult;
+    var removed: usize = 0;
+    var added: usize = 0;
+    for (aligned) |band| {
+        removed += band.removed -| band.added;
+        added += band.added -| band.removed;
+    }
+    try std.testing.expectEqual(@as(usize, pitch), removed);
+    try std.testing.expectEqual(@as(usize, pitch), added);
 }
 
 test {

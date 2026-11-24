@@ -153,11 +153,12 @@ pub fn compareChecked(allocator: Allocator, before: Image, after: Image, options
     }
     collector.growGap();
     if (collector.len >= regions.outline_corners) collector.len = regions.mergeCorners(storage[0..collector.len], before, options.scale);
-    if (collector.len > 1) collector.len = regions.mergeLogical(storage[0..collector.len], before, after, options.scale);
+    if (collector.len > 1) collector.len = regions.mergeLogical(storage[0..collector.len], before, after, options.scale, moves.items);
     const out = try allocator.alloc(values.Region, collector.len);
     errdefer allocator.free(out);
     for (out, storage[0..collector.len]) |*region, box| region.* = box.region;
     if (moves.items.len != 0) moves.shrinkRetainingCapacity(regions.keepMoves(moves.items, out, options.scale, options.scale.devicePixels(scroll_shift)));
+    if (out.len == 1 and moves.items.len == 0) regions.classifyOverlay(&out[0], before, after, options.scale);
     regions.finish(out, before.size(), after.size(), options.scale);
     return .{ .regions = out, .moves = try moves.toOwnedSlice(allocator), .width = width, .height = height };
 }
@@ -334,7 +335,7 @@ fn gatherMoves(allocator: Allocator, moves: *std.ArrayList(values.Move), scope: 
             blankBand(scope.after, move.after.y, move.after.height, span)) continue;
         var full = move;
         const pitch = move.shift();
-        if (columns.enclosingCard(scope.before, span, scope.frame orelse scope.bounds, move.before.y, pitch)) |card| {
+        if (columns.enclosingCard(scope.before, span, scope.frame orelse scope.bounds, move.before.y, columns.CardSearch.motion(span, pitch))) |card| {
             full.x = .init(card.columns.left);
             full.width = .init(card.columns.width);
         }
@@ -508,7 +509,7 @@ fn unpaired(collector: *Collector, scope: Scope, scratch: Scratch, rows: Unpaire
     const width = scope.span.width;
     const y = rows.y;
     if (rows.element and rows.background == null) {
-        if (columns.enclosingCard(source, scope.span, scope.frame orelse scope.bounds, y, rows.count)) |card| {
+        if (columns.enclosingCard(source, scope.span, scope.frame orelse scope.bounds, y, columns.CardSearch.motion(scope.span, rows.count))) |card| {
             const box = Box.fromPixels(card.columns.left, card.top, card.columns.width, card.height);
             collector.addOn(rows.side, box);
             return;
@@ -2258,10 +2259,6 @@ test "anchor boundaries and translucent edits remain visible on moved rows" {
     try std.testing.expect(hasRegion(result, .after, 101, 201, null));
 }
 
-test {
-    std.testing.refAllDecls(@This());
-}
-
 test "fixed footers with internal edits clip shifted content" {
     const before = try sample.Canvas.init(240, 400);
     defer before.deinit();
@@ -2678,4 +2675,150 @@ test "many spaced edits still obey the region cap on a dark page" {
     try std.testing.expect(found.regions.len <= max_regions);
     try std.testing.expectEqual(@as(usize, 0), found.moves.len);
     for (0..42) |i| try std.testing.expect(hasRegion(found, .after, 65 + i % 6 * 190, 65 + i / 6 * 250, .changed));
+}
+
+test "a compact outline joins edits to its label and value without spanning cards" {
+    const before = try sample.Canvas.init(480, 164);
+    defer before.deinit();
+    const after = try sample.Canvas.init(480, 164);
+    defer after.deinit();
+    for ([_]sample.Canvas{ before, after }) |canvas| {
+        for ([_]usize{ 20, 254 }) |left| {
+            canvas.fill(left, 20, 198, 112, sample.inkShade(120, 4));
+            canvas.fill(left + 2, 22, 194, 108, sample.inkShade(240, 4));
+        }
+    }
+    for ([_]usize{ 52, 286 }) |left| {
+        before.fill(left, 44, 40, 12, sample.inkShade(64, 4));
+        after.fill(left, 44, 56, 12, sample.inkShade(72, 4));
+        before.fill(left, 70, 68, 22, sample.inkShade(64, 4));
+        after.fill(left, 70, 82, 22, sample.inkShade(72, 4));
+    }
+    const result = try compareCanvases(before, after, 1);
+    defer result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 2), result.regions.len);
+    for ([_]usize{ 52, 286 }) |left| {
+        try std.testing.expect(hasRegion(result, .after, left, 46, .changed));
+        try std.testing.expect(hasRegion(result, .after, left, 90, .changed));
+    }
+    const label = Box.fromPixels(52, 44, 56, 12);
+    const value = Box.fromPixels(52, 70, 82, 22);
+    var candidates = [_]regions.Candidate{
+        .{ .region = .{ .before = label, .after = label }, .pixels = 4 },
+        .{ .region = .{ .before = value, .after = value }, .pixels = 4 },
+    };
+    var moves = [_]values.Move{.{
+        .before = .{ .y = 56, .height = 32 },
+        .after = .{ .y = 74, .height = 32 },
+        .x = .init(160),
+        .width = .init(24),
+    }};
+    const len = regions.mergeLogical(&candidates, before.view, after.view, .one, &moves);
+    var edits: [candidates.len]values.Region = undefined;
+    for (edits[0..len], candidates[0..len]) |*edit, candidate| edit.* = candidate.region;
+    try std.testing.expectEqual(@as(usize, 1), regions.keepMoves(&moves, edits[0..len], .one, Scale.one.devicePixels(scroll_shift)));
+}
+
+test "a clipped list shifts by one row without reporting the obscured tail" {
+    const before = try sample.Canvas.init(368, 390);
+    defer before.deinit();
+    const after = try sample.Canvas.init(368, 390);
+    defer after.deinit();
+    // Lower rounded corners shorten the visible closing rule.
+    for ([_]sample.Canvas{ before, after }) |canvas| {
+        canvas.fill(16, 40, 336, 224, sample.inkShade(120, 4));
+        canvas.fill(18, 42, 332, 218, sample.inkShade(240, 4));
+        canvas.fill(16, 260, 14, 4, sample.inkShade(255, 4));
+        canvas.fill(338, 260, 14, 4, sample.inkShade(255, 4));
+        for (1..15) |rise| {
+            const x = 30 - rise;
+            canvas.fill(x, 260 - rise, 1, 1, sample.inkShade(120, 4));
+            canvas.fill(367 - x, 260 - rise, 1, 1, sample.inkShade(120, 4));
+        }
+    }
+    for (0..4) |row| {
+        before.fill(36, 70 + 48 * row, 30 + 16 * row, if (row == 3) 46 else 16, sample.inkShade(40, 4));
+        before.fill(256, 70 + 48 * row, 30 + 10 * row, if (row == 3) 46 else 16, sample.inkShade(64, 4));
+    }
+    after.copyRows(70, before, 70, 86);
+    for (166..260) |y| @memcpy(after.pixels[y * 368 + 34 ..][0..302], before.view.row(y - 48)[34..][0..302]);
+    after.fill(36, 118, 90, 18, sample.inkShade(80, 4));
+    after.fill(256, 118, 64, 18, sample.inkShade(38, 4));
+    const result = try compareCanvases(before, after, 1);
+    defer result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 1), result.regions.len);
+    try std.testing.expectEqual(Kind.inserted, result.regions[0].kind);
+    try std.testing.expectEqual(@as(usize, 1), result.moves.len);
+    try std.testing.expectEqual(@as(usize, 48), result.moves[0].shift());
+}
+
+test "a dimmed viewport with a new opaque center pane is an inserted overlay" {
+    const before = try sample.Canvas.init(192, 160);
+    defer before.deinit();
+    const after = try sample.Canvas.init(192, 160);
+    defer after.deinit();
+    before.fill(0, 0, 50, 160, sample.inkShade(192, 4));
+    before.fill(50, 0, 142, 42, sample.inkShade(220, 4));
+    for (before.pixels, after.pixels) |ink, *shade| {
+        shade.* = .{ ink[0] / 2, ink[1] / 2, ink[2] / 2, 255 };
+    }
+    const dimmed = try compareCanvases(before, after, 1);
+    defer dimmed.deinit(std.testing.allocator);
+    try std.testing.expectEqual(Kind.changed, dimmed.regions[0].kind);
+    after.fill(52, 52, 88, 56, sample.inkShade(216, 4));
+    const shown = try compareCanvases(before, after, 1);
+    defer shown.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 1), shown.regions.len);
+    try std.testing.expectEqual(Kind.inserted, shown.regions[0].kind);
+    const hidden = try compareCanvases(after, before, 1);
+    defer hidden.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 1), hidden.regions.len);
+    try std.testing.expectEqual(Kind.removed, hidden.regions[0].kind);
+}
+
+test "a modal does not hide a changed page behind its scrim" {
+    const before = try sample.Canvas.init(192, 160);
+    defer before.deinit();
+    const after = try sample.Canvas.init(192, 160);
+    defer after.deinit();
+    before.fill(0, 0, 50, 160, sample.inkShade(192, 4));
+    before.fill(50, 0, 142, 42, sample.inkShade(220, 4));
+    for (before.pixels, after.pixels) |ink, *shade| {
+        shade.* = .{ ink[0] / 2, ink[1] / 2, ink[2] / 2, 255 };
+    }
+    after.fill(52, 52, 88, 56, sample.inkShade(216, 4));
+    after.fill(12, 20, 24, 16, sample.inkShade(58, 4));
+    const result = try compareCanvases(before, after, 1);
+    defer result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 1), result.regions.len);
+    try std.testing.expectEqual(Kind.changed, result.regions[0].kind);
+    try std.testing.expect(result.regions[0].before != null);
+}
+
+test "redrawn status pills in stationary rows cannot borrow each other's offset" {
+    const before = try sample.Canvas.init(360, 230);
+    defer before.deinit();
+    const after = try sample.Canvas.init(360, 230);
+    defer after.deinit();
+    for ([_]sample.Canvas{ before, after }) |canvas| {
+        for (0..4) |i| canvas.line(18, 220, 28 + 48 * i, i, 48);
+    }
+    const a: values.Pixel = .{ 160, 190, 230, 255 };
+    const b: values.Pixel = .{ 242, 150, 120, 255 };
+    const c: values.Pixel = .{ 146, 210, 145, 255 };
+    for ([_]usize{ 64, 112 }, [_]values.Pixel{ a, b }, [_]values.Pixel{ c, a }) |y, old, new| {
+        before.fill(245, y, 70, 24, old);
+        after.fill(245, y, 70, 24, new);
+        before.fill(255, y + 9, 18, 5, sample.inkShade(60, 4));
+        after.fill(255, y + 9, 18, 5, sample.inkShade(60, 4));
+    }
+    const result = try compareCanvases(before, after, 1);
+    defer result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 2), result.regions.len);
+    for (result.regions) |region| try std.testing.expectEqual(Kind.changed, region.kind);
+    try std.testing.expectEqual(@as(usize, 0), result.moves.len);
+}
+
+test {
+    std.testing.refAllDecls(@This());
 }
