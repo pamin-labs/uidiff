@@ -25,26 +25,31 @@ const Image = values.Image;
 /// Maps a rectangle of source pixels to a rectangle on the sheet.
 pub const Crop = struct { from: SourceRect, to: Rect };
 
+const Axis = enum { row, column };
+const Direction = enum { lower, higher };
+
 /// Maximum detail column width at the base UI scale.
 pub const max_crop_w = 360;
 
 const max_crop_h = 220;
+const base_context_px = 20;
+const edge_trim_divisor = 32;
+/// Maximum source-pixel extension to recover a cut line.
+const context_search_px = 24;
 
 /// Plans a detail crop with context clipped to the source and slot.
 pub fn crop(image: Image, box: ?SourceRect, x: usize, y: usize, slot: usize, ui: Layout) ?Crop {
     const region = box orelse return null;
-    var from = cropBounds(image, region, ui);
+    const from = cropBounds(image, region, ui);
     const inset = ui.px(3);
     const slot_w = slot - 2 * inset;
     const slot_h = ui.px(max_crop_h) - 2 * inset;
     const long = @max(region.w, region.h);
-    const zoom = @min((ui.px(120) + long - 1) / long, slot_w / region.w, slot_h / region.h);
-    const out_w = if (zoom > 1) w: {
-        // Prefer magnifying the edit to filling the slot with its context.
-        from = fitContext(from, region, slot_w / zoom, slot_h / zoom);
-        break :w from.w * zoom;
-    } else @max(1, @min(from.w, slot_w, from.w * slot_h / from.h));
-    const out_h = if (zoom > 1) from.h * zoom else @max(1, from.h * out_w / from.w);
+    const ideal_zoom = (ui.px(120) + long - 1) / long;
+    // Keep the recovered line intact even if this lowers the enlargement.
+    const zoom = @min(ideal_zoom, slot_w / from.w, slot_h / from.h);
+    const out_w = if (zoom > 1) from.w * zoom else @max(1, @min(from.w, slot_w, from.w * slot_h / from.h));
+    const out_h = @max(1, @divFloor(from.h * out_w, from.w));
     return .{
         .from = from,
         .to = .{ .x = x + inset, .y = y + inset, .w = out_w, .h = out_h },
@@ -141,49 +146,49 @@ fn cropRow(c: Crop, image: Image, y: usize, output: []Pixel) void {
     }
 }
 
-fn fitContext(bounds: SourceRect, region: SourceRect, width: usize, height: usize) SourceRect {
-    const w = @min(bounds.w, width);
-    const h = @min(bounds.h, height);
-    return .{
-        .x = std.math.clamp(region.x -| ((w - region.w) / 2), bounds.x, bounds.x + bounds.w - w),
-        .y = std.math.clamp(region.y -| ((h - region.h) / 2), bounds.y, bounds.y + bounds.h - h),
-        .w = w,
-        .h = h,
-    };
+/// Extends a valid source crop to the first uniform line on each edge.
+fn growContext(image: Image, crop_: SourceRect, reach_px: usize) SourceRect {
+    var grown = crop_;
+    const top = backgroundEdge(.row, .lower, image, grown, grown.y, reach_px);
+    const bottom = backgroundEdge(.row, .higher, image, grown, grown.bottom() - 1, reach_px) + 1;
+    grown.y = top;
+    grown.h = bottom - top;
+    const left = backgroundEdge(.column, .lower, image, grown, grown.x, reach_px);
+    const right = backgroundEdge(.column, .higher, image, grown, grown.right() - 1, reach_px) + 1;
+    grown.x = left;
+    grown.w = right - left;
+    return grown;
 }
 
-fn blankCropRow(image: Image, y: usize, cut: SourceRect) bool {
-    const row = image.row(y)[cut.x..][0..cut.w];
-    const trim = row.len / 32;
-    const center = row[trim .. row.len - trim];
-    for (center[1..]) |pixel| if (!std.meta.eql(pixel, center[0])) return false;
+noinline fn backgroundEdge(axis: Axis, direction: Direction, image: Image, cut: SourceRect, near_px: usize, reach_px: usize) usize {
+    const extent = if (axis == .row) image.height else image.width;
+    const available = if (direction == .lower) near_px else extent - 1 - near_px;
+    const end = @min(reach_px, available);
+    for (0..end + 1) |step| {
+        const at = if (direction == .lower) near_px - step else near_px + step;
+        if (uniformLine(axis, image, cut, at)) return at;
+    }
+    // Only grow when an edge is actually found.
+    return near_px;
+}
+
+fn uniformLine(axis: Axis, image: Image, cut: SourceRect, at: usize) bool {
+    const count = if (axis == .row) cut.w else cut.h;
+    const trim = @divFloor(count, edge_trim_divisor);
+    const stride: usize = if (axis == .row) 1 else image.width;
+    const start = if (axis == .row) at * image.width + cut.x + trim else (cut.y + trim) * image.width + at;
+    const first = image.pixels[start];
+    for (1..count - 2 * trim) |offset| {
+        if (!std.meta.eql(first, image.pixels[start + offset * stride])) return false;
+    }
     return true;
 }
 
 fn cropBounds(image: Image, box: SourceRect, ui: Layout) SourceRect {
-    var from = box.outset(ui.px(20));
+    var from = box.outset(ui.px(base_context_px));
     from.w = @min(from.w, image.width - from.x);
-    const end = @min(image.height, from.y + from.h);
-    const search = ui.px(24);
-    var top = from.y;
-    var bottom = end;
-    for (0..@min(search, from.y) + 1) |distance| {
-        const at = from.y - distance;
-        if (blankCropRow(image, at, from)) {
-            top = at;
-            break;
-        }
-    }
-    for (0..@min(search + 1, image.height - end)) |distance| {
-        const at = end + distance;
-        if (blankCropRow(image, at, from)) {
-            bottom = at + 1;
-            break;
-        }
-    }
-    from.y = top;
-    from.h = bottom - top;
-    return from;
+    from.h = @min(from.h, image.height - from.y);
+    return growContext(image, from, ui.px(context_search_px));
 }
 
 test "close-ups enlarge a tiny edit and average samples when shrinking" {
@@ -213,4 +218,17 @@ test "close-up bounds extend outward to nearby blank rows" {
     const cut = cropBounds(image, .{ .x = 18, .y = 38, .w = 12, .h = 8 }, ui);
     try std.testing.expectEqual(@as(usize, 9), cut.y);
     try std.testing.expectEqual(@as(usize, 74), cut.y + cut.h);
+}
+test "a narrow close-up keeps the complete labels above and beside an edit" {
+    const width = 140;
+    const height = 110;
+    var pixels: [width * height]Pixel = @splat(palette.white);
+    // The nominal crop starts inside the first line and cuts the label on the right.
+    for (23..35) |y| @memset(pixels[y * width + 53 ..][0..24], palette.ink);
+    for (48..56) |y| @memset(pixels[y * width + 68 ..][0..27], palette.ink);
+    const image: Image = .{ .width = width, .height = height, .pixels = &pixels };
+    const ui = Layout.init(image.size(), image.size());
+    const patch = crop(image, .{ .x = 62, .y = 50, .w = 6, .h = 5 }, 0, 0, ui.px(90), ui).?;
+    try std.testing.expect(patch.from.y < 23);
+    try std.testing.expect(patch.from.right() > 95);
 }
