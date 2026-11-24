@@ -348,6 +348,50 @@ test "encoding releases each allocation on failure" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, encodeOnce, .{Image{ .width = 4, .height = 4, .pixels = &pixels }});
 }
 
+test "streaming PNG unfilters Average with and without a previous row" {
+    const allocator = std.testing.allocator;
+    const width = 7;
+    const height = 2;
+    var pixels: [width * height]values.Pixel = undefined;
+    for (&pixels, 0..) |*pixel, i| {
+        pixel.* = .{ @intCast(7 + 17 * i), @intCast(101 - 3 * i), @intCast(2 + i * i), @intCast(254 - 5 * i) };
+    }
+    var output: Writer.Allocating = .init(allocator);
+    defer output.deinit();
+    try output.writer.writeAll(png_format.signature);
+    var header: [png_format.header_data_bytes]u8 = @splat(0);
+    std.mem.writeInt(u32, header[0..4], width, .big);
+    std.mem.writeInt(u32, header[4..8], height, .big);
+    header[8] = bit_depth;
+    header[9] = rgba_color;
+    try chunk(&output.writer, png_format.header_type, &header);
+    var staging: [chunk_bytes]u8 = undefined;
+    var backing = allocator;
+    var deflater: Deflater = undefined;
+    try deflater.init(&backing, &output.writer, &staging);
+    defer deflater.deinit();
+    const pixels_bytes = std.mem.sliceAsBytes(&pixels);
+    const row_bytes = width * @sizeOf(values.Pixel);
+    const average_filter: u8 = 3;
+    for (0..height) |y| {
+        var residual: [row_bytes]u8 = undefined;
+        for (&residual, 0..) |*out, x| {
+            const at = y * row_bytes + x;
+            const left = if (x >= @sizeOf(values.Pixel)) pixels_bytes[at - @sizeOf(values.Pixel)] else 0;
+            const above = if (y > 0) pixels_bytes[at - row_bytes] else 0;
+            out.* = pixels_bytes[at] -% @as(u8, @intCast(@divFloor(@as(u16, left) + above, 2)));
+        }
+        try deflater.write(&.{average_filter});
+        try deflater.write(&residual);
+    }
+    try deflater.finish();
+    try chunk(&output.writer, "IEND", "");
+    const probed = try probe(allocator, output.written(), values.max_decode_bytes);
+    const found = (try stb.loadStreaming(allocator, output.written(), probed, values.max_decode_bytes)) orelse return error.TestUnexpectedResult;
+    defer stb.free(found);
+    try std.testing.expectEqualSlices(values.Pixel, &pixels, found[0..pixels.len]);
+}
+
 test {
     std.testing.refAllDecls(@This());
 }

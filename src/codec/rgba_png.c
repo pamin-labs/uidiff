@@ -7,9 +7,9 @@
 
 /* A larger output span amortizes dictionary updates on Apple silicon. */
 #if defined(__APPLE__) && defined(__aarch64__)
-#define INFLATE_CHUNK (64 * 1024)
+#define INFLATE_CHUNK_BYTES (64 * 1024)
 #else
-#define INFLATE_CHUNK (32 * 1024)
+#define INFLATE_CHUNK_BYTES (32 * 1024)
 #endif
 
 void *uidiff_stbi_malloc(size_t size);
@@ -109,8 +109,8 @@ static rgba16 select_rgba(rgba16 mask, rgba16 yes, rgba16 no) {
     return (mask & yes) | (~mask & no);
 }
 
-static void unfilter_paeth(uint8_t *restrict dst, const uint8_t *restrict src,
-                          const uint8_t *restrict above, size_t size) {
+static void unfilter_paeth(uint8_t *dst, const uint8_t *src,
+                          const uint8_t *above, size_t size) {
     rgba16 upper_left = widen(load_rgba(above));
     rgba16 left = (widen(load_rgba(src)) + upper_left) & 255;
     store_rgba(dst, narrow(left));
@@ -143,6 +143,8 @@ static void unfilter_paeth(uint8_t *restrict dst, const uint8_t *restrict src,
 static bool unfilter(png_rows *rows, const uint8_t *raw) {
     if (rows->remaining == 0 || raw[0] > 4) return false;
     unsigned filter = raw[0];
+    /* Input is a complete validated row in inflate scratch. Destination
+       is the next output row, disjoint from scratch and the prior row. */
     const uint8_t *src = raw + 1;
     uint8_t *dst = rows->next;
     const uint8_t *above = rows->above;
@@ -165,18 +167,28 @@ static bool unfilter(png_rows *rows, const uint8_t *raw) {
             }
             break;
         }
-        case 2:
-            for (size_t i = 0; i < size; ++i) dst[i] = (uint8_t)(src[i] + above[i]);
+        case 2: {
+            size_t i = 0;
+            for (; size - i >= sizeof(rgba_block); i += sizeof(rgba_block)) {
+                const rgba_block sum = load_block(src + i) + load_block(above + i);
+                memcpy(dst + i, &sum, sizeof(sum));
+            }
+            for (; i < size; ++i) dst[i] = (uint8_t)(src[i] + above[i]);
             break;
-        case 3:
-            if (above) {
-                for (size_t i = 0; i < channels; ++i) dst[i] = (uint8_t)(src[i] + above[i] / 2);
-                for (size_t i = channels; i < size; ++i) dst[i] = (uint8_t)(src[i] + (dst[i - channels] + above[i]) / 2);
-            } else {
-                memcpy(dst, src, channels);
-                for (size_t i = channels; i < size; ++i) dst[i] = (uint8_t)(src[i] + dst[i - channels] / 2);
+        }
+        case 3: {
+            const uint8_t zero[sizeof(rgba8)] = {0};
+            const uint8_t *up = above ? above : zero;
+            const size_t step = above ? sizeof(rgba8) : 0;
+            rgba8 left = {0};
+            for (size_t i = 0; i < size; i += sizeof(rgba8)) {
+                const rgba16 predictor = (widen(left) + widen(load_rgba(up))) >> 1;
+                left = load_rgba(src + i) + narrow(predictor);
+                store_rgba(dst + i, left);
+                up += step;
             }
             break;
+        }
         case 4:
             unfilter_paeth(dst, src, above, size);
             break;
@@ -251,11 +263,11 @@ static bool inflate_rows(const uint8_t *data, size_t first, size_t end,
         z.avail_in = (uint32_t)(available - header - trailer);
         for (;;) {
             z.next_out = chunk;
-            z.avail_out = INFLATE_CHUNK;
+            z.avail_out = INFLATE_CHUNK_BYTES;
             const int status = zng_inflate(&z, Z_NO_FLUSH);
             if (status == Z_MEM_ERROR) *alloc_failed = true;
             if (status != Z_OK && status != Z_STREAM_END && status != Z_BUF_ERROR) goto done;
-            if (!consume_rows(rows, chunk, INFLATE_CHUNK - z.avail_out)) goto done;
+            if (!consume_rows(rows, chunk, INFLATE_CHUNK_BYTES - z.avail_out)) goto done;
             if (status == Z_STREAM_END) {
                 ok = rows->remaining == 0 && rows->used == 0;
                 goto done;
@@ -273,18 +285,18 @@ int uidiff_png_load(const uint8_t *data, size_t len, uint32_t width,
     size_t first, end;
     if (!idat_range(data, len, &first, &end) || width != be32(data + 16) ||
         height != be32(data + 20) || width == 0 || height == 0 ||
-        width > (SIZE_MAX - INFLATE_CHUNK - 1) / 4 ||
+        width > (SIZE_MAX - INFLATE_CHUNK_BYTES - 1) / 4 ||
         height > SIZE_MAX / (4 * (size_t)width)) return UIDIFF_PNG_FALLBACK;
 
     const size_t stride = 4 * (size_t)width;
     uint8_t *pixels = uidiff_stbi_malloc(stride * height);
     if (!pixels) return UIDIFF_PNG_ALLOC_FAILED;
-    uint8_t *scratch = uidiff_stbi_malloc(INFLATE_CHUNK + stride + 1);
+    uint8_t *scratch = uidiff_stbi_malloc(INFLATE_CHUNK_BYTES + stride + 1);
     if (!scratch) {
         uidiff_stbi_free(pixels);
         return UIDIFF_PNG_ALLOC_FAILED;
     }
-    png_rows rows = {pixels, scratch + INFLATE_CHUNK, stride, 0, height, NULL};
+    png_rows rows = {pixels, scratch + INFLATE_CHUNK_BYTES, stride, 0, height, NULL};
     bool alloc_failed = false;
     const bool ok = inflate_rows(data, first, end, scratch, &rows, &alloc_failed);
     uidiff_stbi_free(scratch);
