@@ -43,6 +43,9 @@ pub const Detail = struct {
 };
 
 const focus_gap = 40;
+const horizontal_context = 200;
+const vertical_context = 120;
+const full_height_limit = 480;
 
 /// Space reserved above a focus crop for its caption.
 pub const focus_caption_height = 36;
@@ -56,11 +59,11 @@ pub const detail_gap = 30;
 /// Finds a source window with context around a reported region.
 pub fn focusWindow(box: ?SourceRect, size: Size) ?SourceRect {
     const source = box orelse return null;
-    const x = source.x -| 200;
-    const y = if (size.height <= 480) 0 else source.y -| 120;
+    const x = source.x -| horizontal_context;
+    const y = if (size.height <= full_height_limit) 0 else source.y -| vertical_context;
     if (x >= size.width or y >= size.height) return null;
-    const bottom = if (size.height <= 480) size.height else @min(size.height, source.bottom() + 120);
-    return .{ .x = x, .y = y, .w = @min(size.width, source.right() + 200) - x, .h = bottom - y };
+    const bottom = if (size.height <= full_height_limit) size.height else @min(size.height, source.bottom() + vertical_context);
+    return .{ .x = x, .y = y, .w = @min(size.width, source.right() + horizontal_context) - x, .h = bottom - y };
 }
 
 /// Returns the left sheet coordinate for a focus column.

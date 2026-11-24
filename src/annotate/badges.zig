@@ -4,12 +4,13 @@ const values = @import("../value.zig");
 const placement = @import("placement.zig");
 const geometry = @import("geometry.zig");
 const text = @import("text.zig");
+const canvas = @import("canvas.zig");
 const focus_layout = @import("focus.zig");
 const palette = @import("palette.zig");
 const Rect = geometry.Rect;
 const Layout = geometry.Layout;
-const Line = text.Line;
-const roundSpan = text.roundSpan;
+const Line = canvas.Line;
+const roundSpan = canvas.roundSpan;
 const textWidth = text.textWidth;
 const Detail = focus_layout.Detail;
 const Focus = focus_layout.Focus;
@@ -19,11 +20,17 @@ const tint = palette.tint;
 const Allocator = std.mem.Allocator;
 const Pixel = values.Pixel;
 
+/// Whether the gutter carries an alignment ribbon.
+pub const Gutter = enum { plain, alignment };
+
 const badge_r = 26;
 
 const badge_ring = 3;
 
 const overview_badge_diameter = 2 * (18 + badge_ring) + 1;
+
+/// Keeps overview badges away from the pane and sheet edges on thin sheets.
+pub const thin_badge_gap = 8;
 
 /// Returns the outside diameter of a detail badge in sheet pixels.
 pub fn badgeDiameter(ui: Layout) usize {
@@ -36,14 +43,14 @@ pub fn overviewDiameter(ui: Layout) usize {
 }
 
 /// Assigns non-overlapping overview and focus badge positions.
-pub fn placeBadges(allocator: Allocator, details: []Detail, focuses: []const Focus, panes: [2]Rect, size: values.Size, ui: Layout, captions: [2]Rect) Allocator.Error!void {
+pub fn placeBadges(allocator: Allocator, details: []Detail, focuses: []const Focus, panes: [2]Rect, size: values.Size, ui: Layout, captions: [2]Rect, gutter: Gutter) Allocator.Error!void {
     if (details.len == 0) return;
-    const storage = try allocator.alloc(values.SheetBox, 4 * details.len + panes.len);
+    const storage = try allocator.alloc(Rect, 4 * details.len + panes.len);
     defer allocator.free(storage);
-    placeOverview(details, storage, panes, size, ui, captions);
+    placeOverview(details, storage, panes, size, ui, captions, gutter);
     for (focuses, 0..) |focus, group| {
         for (focus.crops, 0..) |patch, side| {
-            if (patch) |p| placeFocus(details, storage, p.to, side, group, textWidth(.regular, 22, focus.captions[side].bytes()) + 12, focus.top + focus.height, ui);
+            if (patch) |p| placeFocus(details, storage, p.to, side, group, textWidth(.regular, text.caption_size, focus.captions[side].bytes()) + text.caption_padding, focus.top + focus.height, ui);
         }
     }
 }
@@ -74,55 +81,54 @@ pub noinline fn badge(line: Line, bounds: Rect, kind: values.Kind, number: []con
     line.badgeText(inner, number, white);
 }
 
-fn placeRect(comptime place: anytype, mark: Rect, bounds: Rect, diameter: usize, obstacles: []const values.SheetBox) ?Rect {
-    const d: f64 = @floatFromInt(diameter);
-    const box = place(mark.asBox(), bounds.asBox(), d, d, obstacles) orelse return null;
-    return .{ .x = @intFromFloat(box.x), .y = @intFromFloat(box.y), .w = diameter, .h = diameter };
-}
-
-fn placeOverview(details: []Detail, storage: []values.SheetBox, panes: [2]Rect, size: values.Size, ui: Layout, captions: [2]Rect) void {
+fn placeOverview(details: []Detail, storage: []Rect, panes: [2]Rect, size: values.Size, ui: Layout, captions: [2]Rect, gutter: Gutter) void {
     const diameter = overviewDiameter(ui);
+    const clearance = if (@min(panes[0].w, panes[1].w) < diameter) ui.px(thin_badge_gap) else 0;
     var len: usize = 0;
     for (captions) |caption| {
-        storage[len] = caption.asBox();
+        storage[len] = caption;
         len += 1;
     }
     for (details) |d| {
         for ([_]?Rect{ d.before_mark, d.after_mark }) |maybe| if (maybe) |mark| {
-            storage[len] = mark.asBox();
+            storage[len] = mark;
             len += 1;
         };
     }
     for (panes, 0..) |pane, side| {
-        const left_edge = if (!ui.wide and side == 1) panes[0].right() else 0;
-        const right_edge = if (!ui.wide and side == 0) panes[1].x else size.width;
+        const left_edge = @min(pane.x, clearance + if (!ui.wide and side == 1) panes[0].right() else 0);
+        const right_edge = @max(pane.right(), (if (!ui.wide and side == 0) panes[1].x else size.width) -| clearance);
+        const inner_left = pane.x -| clearance;
+        const inner_right = @min(right_edge, pane.right() + clearance);
         const lower_edge = if (ui.wide and side == 0) panes[1].y - diameter else @max(panes[0].bottom(), panes[1].bottom());
         const outside: [4]Rect = .{
             .{ .x = left_edge, .y = pane.y - diameter, .w = right_edge - left_edge, .h = diameter },
-            .{ .x = pane.right(), .y = pane.y, .w = right_edge - pane.right(), .h = pane.h },
-            .{ .x = left_edge, .y = pane.y, .w = pane.x - left_edge, .h = pane.h },
+            .{ .x = inner_right, .y = pane.y, .w = right_edge - inner_right, .h = pane.h },
+            .{ .x = left_edge, .y = pane.y, .w = inner_left -| left_edge, .h = pane.h },
             .{ .x = pane.x, .y = pane.bottom(), .w = pane.w, .h = lower_edge -| pane.bottom() },
         };
         for (details) |*d| {
             const mark = (if (side == 0) d.before_mark else d.after_mark) orelse continue;
             const used = storage[0..len];
-            const preferred = if (pane.w < diameter)
-                levelWithMark(mark, outside[1..3], diameter, used)
-            else if (mark.y == pane.y)
-                placeRect(placement.placeOutside, mark, outside[0], diameter, used)
+            const lanes = switch (gutter) {
+                .plain => outside[1..3],
+                .alignment => if (side == 0) outside[2..3] else outside[1..2],
+            };
+            const preferred = if (mark.y == pane.y and pane.w >= diameter)
+                placement.placeOutside(mark, outside[0], diameter, used)
             else
-                null;
-            const location = preferred orelse nearestOutside(mark, &outside, diameter, used) orelse placeRect(placement.place, mark, pane, diameter, used);
+                levelWithMark(mark, lanes, diameter, used);
+            const location = preferred orelse nearestOutside(mark, &outside, diameter, used) orelse placement.place(mark, pane, diameter, used);
             if (side == 0) d.before_badge = location else d.after_badge = location;
             if (location) |pos| {
-                storage[len] = pos.asBox();
+                storage[len] = pos;
                 len += 1;
             }
         }
     }
 }
 
-fn levelWithMark(mark: Rect, sides: []const Rect, diameter: usize, obstacles: []const values.SheetBox) ?Rect {
+fn levelWithMark(mark: Rect, sides: []const Rect, diameter: usize, obstacles: []const Rect) ?Rect {
     var level: [2]Rect = undefined;
     for (level[0..sides.len], sides) |*lane, side| {
         if (side.h < diameter) {
@@ -139,12 +145,12 @@ fn levelWithMark(mark: Rect, sides: []const Rect, diameter: usize, obstacles: []
     return nearestOutside(mark, level[0..sides.len], diameter, obstacles);
 }
 
-fn nearestOutside(mark: Rect, bounds: []const Rect, diameter: usize, obstacles: []const values.SheetBox) ?Rect {
+fn nearestOutside(mark: Rect, bounds: []const Rect, diameter: usize, obstacles: []const Rect) ?Rect {
     var best: ?Rect = null;
-    var distance: f64 = std.math.inf(f64);
+    var distance: usize = std.math.maxInt(usize);
     for (bounds) |area| {
-        const candidate = placeRect(placement.placeOutside, mark, area, diameter, obstacles) orelse continue;
-        const gap = candidate.asBox().distanceSquared(mark.asBox());
+        const candidate = placement.placeOutside(mark, area, diameter, obstacles) orelse continue;
+        const gap = candidate.distanceSquared(mark);
         if (gap >= distance) continue;
         best = candidate;
         distance = gap;
@@ -152,14 +158,14 @@ fn nearestOutside(mark: Rect, bounds: []const Rect, diameter: usize, obstacles: 
     return best;
 }
 
-fn placeFocus(details: []Detail, storage: []values.SheetBox, pane: Rect, side: usize, group: usize, caption_width: usize, row_bottom: usize, ui: Layout) void {
+fn placeFocus(details: []Detail, storage: []Rect, pane: Rect, side: usize, group: usize, caption_width: usize, row_bottom: usize, ui: Layout) void {
     const diameter = badgeDiameter(ui);
-    storage[0] = values.SheetBox.fromPixels(pane.x, pane.y -| diameter, caption_width, diameter);
+    storage[0] = Rect{ .x = pane.x, .y = pane.y -| diameter, .w = caption_width, .h = diameter };
     var len: usize = 1;
     for (details) |d| {
         if (d.focus != group) continue;
         if (d.focus_marks[side]) |r| {
-            storage[len] = r.asBox();
+            storage[len] = r;
             len += 1;
         }
     }
@@ -170,19 +176,19 @@ fn placeFocus(details: []Detail, storage: []values.SheetBox, pane: Rect, side: u
         if (d.focus != group) continue;
         const mark = d.focus_marks[side] orelse continue;
         const used = storage[0..len];
-        const location = placeRect(placement.placeOutside, mark, header, diameter, used) orelse placeRect(placement.placeOutside, mark, beside, diameter, used) orelse
-            placeRect(placement.placeOutside, mark, below, diameter, used) orelse placeRect(placement.place, mark, pane, diameter, used);
+        const location = placement.placeOutside(mark, header, diameter, used) orelse placement.placeOutside(mark, beside, diameter, used) orelse
+            placement.placeOutside(mark, below, diameter, used) orelse placement.place(mark, pane, diameter, used);
         d.focus_badges[side] = location;
         if (location) |position| {
-            storage[len] = position.asBox();
+            storage[len] = position;
             len += 1;
         }
     }
 }
 
 fn drawLeader(line: Line, mark: Rect, badge_box: Rect, color: Pixel) void {
-    const reach: f64 = @floatFromInt(badge_box.w);
-    if (badge_box.asBox().distanceSquared(mark.asBox()) <= reach * reach) return;
+    const reach = badge_box.w;
+    if (badge_box.distanceSquared(mark) <= reach * reach) return;
     const a_x = badge_box.x + badge_box.w / 2;
     const a_y = badge_box.y + badge_box.h / 2;
     const b_x = std.math.clamp(a_x, mark.x, mark.right() - 1);
@@ -213,7 +219,7 @@ fn strokeOutside(line: Line, frame: Rect, radius: usize, thickness: usize, color
 
 fn badgeBounds(box: ?Rect, pane: Rect, ui: Layout) ?Rect {
     const mark = box orelse return null;
-    return placeRect(placement.place, mark, pane, badgeDiameter(ui), &.{});
+    return placement.place(mark, pane, badgeDiameter(ui), &.{});
 }
 
 test "the halo and color stroke leave the changed pixels uncovered" {
@@ -333,7 +339,7 @@ test "edge badges stay near their numbered boxes and avoid all other marks" {
     defer rows.deinit(allocator);
     for (rows.plan.details, 0..) |detail, i| {
         const marker = detail.after_badge.?;
-        try std.testing.expect(marker.asBox().distanceSquared(detail.after_mark.?.asBox()) <= 144);
+        try std.testing.expect(marker.distanceSquared(detail.after_mark.?) <= 144);
         for (rows.plan.details, 0..) |other, j| {
             try std.testing.expect(!marker.overlaps(other.after_mark.?));
             if (i != j) try std.testing.expect(!marker.overlaps(other.after_badge.?));

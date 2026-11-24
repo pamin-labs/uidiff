@@ -4,15 +4,16 @@ const copy = @import("copy.zig");
 const values = @import("../value.zig");
 const geometry = @import("geometry.zig");
 const text = @import("text.zig");
+const canvas = @import("canvas.zig");
 const palette = @import("palette.zig");
 const Rect = geometry.Rect;
 const SourceRect = geometry.SourceRect;
 const Layout = geometry.Layout;
 const Pane = geometry.Pane;
 const paneRect = geometry.paneRect;
-const Line = text.Line;
+const Line = canvas.Line;
 const Face = text.Face;
-const roundSpan = text.roundSpan;
+const roundSpan = canvas.roundSpan;
 const textWidth = text.textWidth;
 const page = palette.page;
 const outline_gray = palette.outline_gray;
@@ -102,7 +103,7 @@ pub noinline fn drawDetail(line: Line, patch: ?Crop, image: Image, x: usize, slo
         const rect: Rect = .{ .x = x, .y = top, .w = slot, .h = height };
         line.stroke(rect, ui.px(12), ui.px(2), outline_gray);
         const label = copy.not_on_side;
-        const size = @max(1, @min(ui.px(22), 22 * (rect.w -| 8) / textWidth(.regular, 22, label)));
+        const size = @max(1, @min(ui.px(text.caption_size), text.caption_size * (rect.w -| 8) / textWidth(.regular, text.caption_size, label)));
         line.text(x + (rect.w -| textWidth(.regular, size, label)) / 2, top + (height - Face.regular.height(size)) / 2, label, .regular, size, muted);
     }
 }

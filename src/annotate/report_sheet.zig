@@ -6,12 +6,12 @@ const values = @import("../value.zig");
 const geometry = @import("geometry.zig");
 const palette = @import("palette.zig");
 const text = @import("text.zig");
+const canvas = @import("canvas.zig");
 const focus_layout = @import("focus.zig");
 const crops = @import("crops.zig");
 const badges = @import("badges.zig");
 const alignment = @import("alignment.zig");
 const Layout = geometry.Layout;
-const margin = geometry.margin;
 const gutter = geometry.gutter;
 const max_sheet_width = geometry.max_sheet_width;
 const overview_caption_gap = geometry.overview_caption_gap;
@@ -25,12 +25,9 @@ const white = palette.white;
 const stationary = palette.stationary;
 const moved_band = palette.moved_band;
 const insert_band = palette.insert_band;
-const kindBit = palette.kindBit;
 const kindName = palette.kindName;
 const tint = palette.tint;
-const Line = text.Line;
-const Face = text.Face;
-const textWidth = text.textWidth;
+const Line = canvas.Line;
 const focus_caption_height = focus_layout.focus_caption_height;
 const focusColumn = focus_layout.focusColumn;
 const crop = crops.crop;
@@ -100,29 +97,24 @@ pub const Rows = struct {
         const a = plan.panes[0];
         const b = plan.panes[1];
         const left_x = a.x;
-        const body = ui.px(24);
+        const labels = plan.labels;
         if (ui.wide or y < a.y or y >= plan.pane_end) @memset(pixels, page);
         if (y < a.y) {
-            line.text(left_x, ui.px(34), plan.heading.bytes(), .bold, ui.px(34), ink);
-            if (y >= ui.px(79) and y < ui.px(116)) {
-                var x = left_x;
-                for ([_]values.Kind{ .changed, .inserted, .removed }) |kind| {
-                    if (plan.kinds & kindBit(kind) == 0) continue;
-                    const swatch = ui.px(22);
-                    line.rounded(.{ .x = x, .y = ui.px(86), .w = swatch, .h = swatch }, ui.px(5), tint(kind));
-                    line.text(x + ui.px(34), ui.px(79), kindName(kind), .regular, body, secondary);
-                    x += ui.px(56) + textWidth(.regular, body, kindName(kind));
-                }
-            }
+            const title = labels.title;
+            if (title.containsRow(y)) line.text(title.x, title.y, plan.heading.bytes(), .bold, title.size, ink);
+            for (labels.legend) |entry| if (entry) |e| {
+                if (e.box.containsRow(y)) line.rounded(e.box, e.radius, tint(e.kind));
+                if (e.label.containsRow(y)) line.text(e.label.x, e.label.y, kindName(e.kind), .regular, e.label.size, secondary);
+            };
             const caption = plan.captions.bounds[0];
-            line.text(caption.x, caption.y, copy.before, .bold, plan.captions.size, secondary);
+            if (caption.containsRow(y)) line.text(caption.x, caption.y, copy.before, .bold, plan.captions.size, secondary);
         } else if (!ui.wide and y < plan.pane_end) {
             line.fill(0, left_x, page);
             line.fill(b.right(), pixels.len, page);
             alignment.drawGutter(line, y - a.y, ui, plan.panes, plan.ribbons);
         }
         const caption = plan.captions.bounds[1];
-        line.text(caption.x, caption.y, copy.after, .bold, plan.captions.size, secondary);
+        if (caption.containsRow(y)) line.text(caption.x, caption.y, copy.after, .bold, plan.captions.size, secondary);
         if (y + ui.px(8) >= a.y and y < plan.pane_end + ui.px(12)) {
             if (!ui.wide or nearPane(y, a, ui)) drawPane(line, plan.before, a.x, a.y, ui);
             if (!ui.wide or nearPane(y, b, ui)) drawPane(line, plan.after, b.x, b.y, ui);
@@ -135,19 +127,22 @@ pub const Rows = struct {
             }
         }
         if (plan.details.len != 0 and y >= plan.pane_end) {
+            const heading = labels.details;
+            if (heading.containsRow(y)) {
+                const title = if (ui.wide) copy.at_full_size else copy.changes_up_close;
+                line.text(heading.x, heading.y, title, .bold, heading.size, ink);
+            }
             if (ui.wide) {
                 self.drawFocus(line);
                 return pixels;
             }
-            line.text(left_x, plan.pane_end + ui.px(26), copy.changes_up_close, .bold, ui.px(30), ink);
             const detail_x = plan.detail_x[0];
             const after_detail_x = plan.detail_x[1];
             for (plan.details) |detail| {
                 if (y < detail.top or y >= detail.top + detail.height) continue;
-                const diameter = badgeDiameter(ui);
-                const center = detail.top + diameter / 2;
+                const diameter = labels.detail_badge;
                 badge(line, .{ .x = left_x, .y = detail.top, .w = diameter, .h = diameter }, detail.region.kind, detail.number.bytes(), ui);
-                line.text(left_x + ui.px(71), center - Face.regular.height(body) / 2, kindName(detail.region.kind), .regular, body, secondary);
+                line.text(labels.detail_kind_x, detail.top + labels.detail_kind_offset, kindName(detail.region.kind), .regular, labels.body_size, secondary);
                 drawDetail(line, detail.before, plan.before.image, detail_x, plan.detail_slot_width, detail.top, detail.height, detail.region.kind, ui);
                 drawDetail(line, detail.after, plan.after.image, after_detail_x, plan.detail_slot_width, detail.top, detail.height, detail.region.kind, ui);
                 break;
@@ -158,7 +153,6 @@ pub const Rows = struct {
 
     noinline fn drawFocus(self: Rows, line: Line) void {
         const plan = self.plan;
-        line.text(margin, plan.pane_end + 26, copy.at_full_size, .bold, 30, ink);
         const badge_reach = badgeDiameter(plan.layout) -| focus_caption_height;
         for (plan.focuses, 0..) |focus, index| {
             // A badge placed above a short crop can extend into the gap
@@ -166,12 +160,12 @@ pub const Rows = struct {
             if (focus.height == 0 or line.y + badge_reach < focus.top or line.y >= focus.top + focus.height) continue;
             for (focus.crops, [2]Image{ plan.before.image, plan.after.image }, focus.captions, 0..) |patch, image, caption, side| {
                 const x = focusColumn(side);
-                line.text(x, focus.top, caption.bytes(), .regular, 22, secondary);
+                line.text(x, focus.top, caption.bytes(), .regular, text.caption_size, secondary);
                 if (patch) |p| {
                     paintCrop(line, p, image);
                     line.stroke(p.to.outset(1), 2, 1, outline_gray);
                 } else {
-                    line.text(x, focus.top + focus_caption_height, copy.not_on_side, .regular, 22, muted);
+                    line.text(x, focus.top + focus_caption_height, copy.not_on_side, .regular, text.caption_size, muted);
                 }
             }
             for (plan.details) |detail| {

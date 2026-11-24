@@ -187,7 +187,7 @@ pub fn rectAtSize(size: Size, box: ?values.Box) ?SourceRect {
     return .{ .x = x, .y = y, .w = @as(usize, @intFromFloat(@ceil(b.right()))) - x, .h = @as(usize, @intFromFloat(@ceil(b.bottom()))) - y };
 }
 
-fn RectFor(comptime space: Space) type {
+fn RectFor(comptime _: Space) type {
     return struct {
         const Self = @This();
 
@@ -228,12 +228,11 @@ fn RectFor(comptime space: Space) type {
             return self.x < other.right() and other.x < self.right() and self.y < other.bottom() and other.y < self.bottom();
         }
 
-        /// Converts whole coordinates to fractional bounds in the same pixel space.
-        pub fn asBox(self: Self) switch (space) {
-            .source => values.Box,
-            .sheet => values.SheetBox,
-        } {
-            return .fromPixels(self.x, self.y, self.w, self.h);
+        /// Returns the squared gap in pixels between rectangles.
+        pub fn distanceSquared(self: Self, other: Self) usize {
+            const dx = @max(self.x -| other.right(), other.x -| self.right());
+            const dy = @max(self.y -| other.bottom(), other.y -| self.bottom());
+            return dx *| dx +| dy *| dy;
         }
     };
 }

@@ -44,6 +44,34 @@ pub const RenderError = Allocator.Error || Image.Invalid || error{ SheetTooLarge
 
 const Captions = struct { size: usize, bounds: [2]Rect };
 
+const Label = struct {
+    x: usize,
+    y: usize,
+    size: usize,
+    height: usize,
+
+    pub fn containsRow(self: Label, y: usize) bool {
+        return y >= self.y and y - self.y < self.height;
+    }
+};
+
+const LegendEntry = struct {
+    kind: values.Kind,
+    box: Rect,
+    radius: usize,
+    label: Label,
+};
+
+const Labels = struct {
+    title: Label,
+    legend: [legend_kinds.len]?LegendEntry,
+    details: Label,
+    detail_kind_x: usize,
+    detail_kind_offset: usize,
+    detail_badge: usize,
+    body_size: usize,
+};
+
 /// Owns placements and borrows the source images. Release with deinit.
 pub const Plan = struct {
     before: Pane,
@@ -58,7 +86,7 @@ pub const Plan = struct {
     detail_slot_width: usize,
     detail_x: [2]usize,
     captions: Captions,
-    kinds: u8,
+    labels: Labels,
     heading: Text,
 
     /// Lays out the sheet and checks that the complete output fits image bounds.
@@ -117,7 +145,7 @@ pub const Plan = struct {
         }
         if (layout.wide) top = try layoutFocus(details, focuses, .{ before.size(), after.size() }, top);
         const captions = layoutCaptions(layout, panes, size.width);
-        try placeBadges(allocator, details, focuses, panes, size, layout, captions.bounds);
+        try placeBadges(allocator, details, focuses, panes, size, layout, captions.bounds, if (moves.len != 0 and !layout.wide) .alignment else .plain);
         if (details.len != 0) size.height = top + layout.px(margin) - layout.px(detail_gap);
         if (size.width > max_sheet_width or size.pixelCount() == null) return error.SheetTooLarge;
 
@@ -181,7 +209,7 @@ pub const Plan = struct {
             .detail_slot_width = slot,
             .detail_x = .{ detail_x, after_detail_x },
             .captions = captions,
-            .kinds = kinds,
+            .labels = layoutLabels(layout, panes[0].x, pane_end, kinds),
             .heading = heading,
         };
     }
@@ -203,6 +231,20 @@ const min_slot_h = 68;
 const caption_gap = 16;
 const caption_offset = 48;
 
+const legend_kinds = [_]values.Kind{ .changed, .inserted, .removed };
+const title_size = 34;
+const title_top = 34;
+const legend_top = 79;
+const swatch_top = 86;
+const swatch_size = 22;
+const swatch_rounding = 5;
+const legend_text_x = 34;
+const legend_spacing = 56;
+const detail_title_gap = 26;
+const detail_title_size = 30;
+const body_size = 24;
+const detail_kind_gap = 71;
+
 /// Checks the preview dimensions before allocating report details.
 pub fn minimumSize(before: Size, after: Size) error{SheetTooLarge}!Size {
     if (before.pixelCount() == null or after.pixelCount() == null) return error.SheetTooLarge;
@@ -214,6 +256,37 @@ pub fn minimumSize(before: Size, after: Size) error{SheetTooLarge}!Size {
     };
     if (size.width > max_sheet_width or size.pixelCount() == null) return error.SheetTooLarge;
     return size;
+}
+
+fn layoutLabels(ui: Layout, left: usize, pane_end: usize, kinds: u8) Labels {
+    const body = ui.px(body_size);
+    const mark = badges.badgeDiameter(ui);
+    var labels: Labels = .{
+        .title = makeLabel(left, ui.px(title_top), ui.px(title_size), .bold),
+        .legend = @splat(null),
+        .details = makeLabel(if (ui.wide) ui.px(margin) else left, pane_end + ui.px(detail_title_gap), ui.px(detail_title_size), .bold),
+        .detail_kind_x = left + ui.px(detail_kind_gap),
+        .detail_kind_offset = mark / 2 - text.Face.regular.height(body) / 2,
+        .detail_badge = mark,
+        .body_size = body,
+    };
+    var x = left;
+    const swatch = ui.px(swatch_size);
+    for (legend_kinds, &labels.legend) |kind, *entry| {
+        if (kinds & kindBit(kind) == 0) continue;
+        entry.* = .{
+            .kind = kind,
+            .box = .{ .x = x, .y = ui.px(swatch_top), .w = swatch, .h = swatch },
+            .radius = ui.px(swatch_rounding),
+            .label = makeLabel(x + ui.px(legend_text_x), ui.px(legend_top), body, .regular),
+        };
+        x += ui.px(legend_spacing) + textWidth(.regular, body, palette.kindName(kind));
+    }
+    return labels;
+}
+
+fn makeLabel(x: usize, y: usize, size: usize, face: text.Face) Label {
+    return .{ .x = x, .y = y, .size = size, .height = face.height(size) };
 }
 
 fn layoutCaptions(layout: Layout, panes: [2]Rect, width: usize) Captions {
@@ -230,6 +303,7 @@ fn layoutCaptions(layout: Layout, panes: [2]Rect, width: usize) Captions {
 
 fn reserveBadgeLanes(panes: *[2]Rect, size: *Size, ui: Layout, before: Image, after: Image, regions: []const Region) void {
     const diameter = overviewDiameter(ui);
+    const needed = diameter + if (@min(panes[0].w, panes[1].w) < diameter) 2 * ui.px(badges.thin_badge_gap) else 0;
     var left = false;
     var right = false;
     var middle = false;
@@ -244,17 +318,17 @@ fn reserveBadgeLanes(panes: *[2]Rect, size: *Size, ui: Layout, before: Image, af
         }
     }
     if (left) {
-        const extra = diameter -| panes[0].x;
+        const extra = needed -| panes[0].x;
         panes[0].x += extra;
         panes[1].x += extra;
         size.width += extra;
     }
     if (middle) {
-        const extra = diameter -| (panes[1].x - panes[0].right());
+        const extra = needed -| (panes[1].x - panes[0].right());
         panes[1].x += extra;
         size.width += extra;
     }
-    if (right) size.width = @max(size.width, panes[1].right() + diameter, panes[0].right() + diameter);
+    if (right) size.width = @max(size.width, panes[1].right() + needed, panes[0].right() + needed);
 }
 
 test {
@@ -293,4 +367,24 @@ test "a top change in a thin preview can use the beside lane" {
     const edit = plan.details[0].before_mark.?;
     const badge = plan.details[0].before_badge.?;
     try std.testing.expect(badge.y + badge.h > edit.y and badge.y < edit.bottom());
+}
+
+test "two stacked badges stay level with their own marks" {
+    const size: Size = .{ .width = 320, .height = 520 };
+    const allocator = std.testing.allocator;
+    const pixels = try allocator.alloc(values.Pixel, size.width * size.height);
+    defer allocator.free(pixels);
+    @memset(pixels, .{ 240, 242, 245, 255 });
+    const image: Image = .{ .width = size.width, .height = size.height, .pixels = pixels };
+    const regions = [_]Region{
+        .{ .number = 1, .after = values.Box.fromPixels(280, 80, 25, 30) },
+        .{ .number = 2, .after = values.Box.fromPixels(280, 190, 25, 30) },
+    };
+    const plan = try Plan.init(allocator, image, image, &regions, &.{});
+    defer plan.deinit(allocator);
+    for (plan.details) |detail| {
+        const badge = detail.after_badge orelse return error.TestUnexpectedResult;
+        const mark = detail.after_mark orelse return error.TestUnexpectedResult;
+        try std.testing.expectEqual(mark.y + mark.h / 2, badge.y + badge.h / 2);
+    }
 }
