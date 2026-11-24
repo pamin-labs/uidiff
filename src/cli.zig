@@ -9,7 +9,7 @@ const Allocator = std.mem.Allocator;
 pub const panic = std.debug.simple_panic;
 
 const Exit = enum(u8) { unchanged = 0, changed = 1, failed = 2 };
-const RunError = std.process.Args.ToSliceError || uidiff.CompareFilesError || uidiff.report.WriteError ||
+const RunError = std.process.Args.ToSliceError || uidiff.CompareFilesError || uidiff.report.PixelWriteError ||
     Io.File.Writer.Error || args.ParseError;
 
 /// Empty: main maps every failure to exit status 2 and a log line, because an
@@ -67,9 +67,9 @@ fn run(io: Io, allocator: Allocator, input: std.process.Args, arena: Allocator, 
     return if (result.regions.len == 0) .unchanged else .changed;
 }
 
-fn write(allocator: Allocator, output: *Io.Writer, format: args.Output, result: uidiff.Comparison) uidiff.report.WriteError!void {
+fn write(allocator: Allocator, output: *Io.Writer, format: args.Output, result: uidiff.Comparison) uidiff.report.PixelWriteError!void {
     switch (format) {
-        .json => try uidiff.report.write(allocator, output, result.regions, result.canvas(), result.moves),
+        .json => try uidiff.report.writeWholePixels(allocator, output, result.regions, result.canvas(), result.moves),
         .count => {
             const count = result.regions.len;
             try output.print("{d} {s}\n", .{ count, if (count == 1) "region" else "regions" });

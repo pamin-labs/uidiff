@@ -18,7 +18,20 @@ const Match = struct { len: usize = 0, distance: usize = 0 };
 
 const Distance = struct { symbol: u5, extra: Code };
 
-const Run = struct { symbol: u9, extra: Code, fixed_code: Code };
+// Each length has a five-bit offset from the first length symbol and a
+// fixed code of at most thirteen bits. Keep the lookup in one word.
+const Run = packed struct(u32) {
+    symbol_offset: u5,
+    extra_bits: u5,
+    extra_len: u3,
+    fixed_bits: u13,
+    fixed_len: u4,
+    unused: u2 = 0,
+
+    fn symbol(self: Run) u9 {
+        return first_length_symbol + @as(u9, self.symbol_offset);
+    }
+};
 
 const Statistics = struct {
     symbols: [literal_count]u16 = @splat(0),
@@ -38,12 +51,12 @@ const Statistics = struct {
             } else {
                 const len = token & length_mask;
                 const run = runs[len];
-                result.symbols[run.symbol] += 1;
+                result.symbols[run.symbol()] += 1;
                 const distance = distanceCode(token);
                 result.distances[distance.symbol] += 1;
                 result.raw_bytes += len;
-                result.extra_bits += @as(usize, run.extra.len) + distance.extra.len;
-                result.fixed_bits += @as(usize, run.fixed_code.len) + 5 + distance.extra.len;
+                result.extra_bits += @as(usize, run.extra_len) + distance.extra.len;
+                result.fixed_bits += @as(usize, run.fixed_len) + 5 + distance.extra.len;
             }
         }
         return result;
@@ -93,7 +106,7 @@ const Dynamic = struct {
     fn prepare(self: *Dynamic, stats: *const Statistics) void {
         huffman.assign(literal_count, &stats.symbols, &self.literals, 15);
         huffman.assign(distance_count, &stats.distances, &self.distances, 15);
-        self.hlit = usedCodes(&self.literals, 257);
+        self.hlit = usedCodes(&self.literals, first_length_symbol);
         self.hdist = usedCodes(&self.distances, 1);
 
         var widths: [literal_count + distance_count]u5 = undefined;
@@ -145,7 +158,7 @@ const Dynamic = struct {
     }
 
     fn write(self: *const Dynamic, bits: *BitWriter, tokens: []const Token) Writer.Error!void {
-        try bits.push(.{ .bits = @intCast(self.hlit - 257), .len = 5 });
+        try bits.push(.{ .bits = @intCast(self.hlit - first_length_symbol), .len = 5 });
         try bits.push(.{ .bits = @intCast(self.hdist - 1), .len = 5 });
         try bits.push(.{ .bits = @intCast(self.hclen - 4), .len = 4 });
         for (length_order[0..self.hclen]) |symbol| try bits.push(.{ .bits = self.lengths[symbol].len, .len = 3 });
@@ -158,12 +171,12 @@ const Dynamic = struct {
                 try bits.push(self.literals[token]);
             } else {
                 const run = runs[token & length_mask];
-                const code = self.literals[run.symbol];
+                const code = self.literals[run.symbol()];
                 const distance = distanceCode(token);
                 const dist_code = self.distances[distance.symbol];
-                const prefix_len = code.len + run.extra.len;
+                const prefix_len = code.len + run.extra_len;
                 try bits.push(.{
-                    .bits = code.bits | (run.extra.bits << code.len),
+                    .bits = code.bits | (@as(u32, run.extra_bits) << code.len),
                     .len = prefix_len,
                 });
                 try bits.push(.{
@@ -343,7 +356,7 @@ pub const Stream = struct {
                 } else {
                     const run = runs[token & length_mask];
                     const distance = distanceCode(token);
-                    try bits.push(run.fixed_code);
+                    try bits.push(.{ .bits = run.fixed_bits, .len = run.fixed_len });
                     try bits.push(.{
                         .bits = @as(u32, @bitReverse(distance.symbol)) | (distance.extra.bits << 5),
                         .len = 5 + distance.extra.len,
@@ -370,23 +383,29 @@ const bucket_bits = 15;
 const hash_stride = 4;
 const dense_match_bytes = 32;
 const max_length = 258;
+const first_length_symbol = 257;
 const literal_count = 286;
 const distance_count = 30;
 const length_order = [_]u5{ 16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15 };
 const lengths = [_]u16{ 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258 };
-const runs: [259]Run = table: {
-    var codes: [259]Run = undefined;
+const runs: [max_length + 1]Run = table: {
+    var codes: [max_length + 1]Run = undefined;
     @setEvalBranchQuota(10000);
-    for (3..259) |n| {
+    for (3..codes.len) |n| {
         var index: usize = 0;
         while (index + 1 < lengths.len and n >= lengths[index + 1]) : (index += 1) {}
-        const symbol: u9 = @intCast(257 + index);
-        const code = fixed(symbol);
+        const code = fixed(@intCast(first_length_symbol + index));
         const extra: Code = .{
             .bits = @intCast(n - lengths[index]),
             .len = if (index < 8 or index == lengths.len - 1) 0 else @intCast(index / 4 - 1),
         };
-        codes[n] = .{ .symbol = symbol, .extra = extra, .fixed_code = .{ .bits = code.bits | (extra.bits << code.len), .len = code.len + extra.len } };
+        codes[n] = .{
+            .symbol_offset = @intCast(index),
+            .extra_bits = @intCast(extra.bits),
+            .extra_len = @intCast(extra.len),
+            .fixed_bits = @intCast(code.bits | (extra.bits << code.len)),
+            .fixed_len = @intCast(code.len + extra.len),
+        };
     }
     break :table codes;
 };
@@ -597,6 +616,16 @@ test "pane matches span the token and input buffer boundaries" {
     defer decoded.deinit();
     try std.testing.expectEqual(data.len, try inflated.reader.streamRemaining(&decoded.writer));
     try std.testing.expectEqualSlices(u8, data, decoded.written());
+}
+
+test "packed length entries preserve their decoded run and fixed prefix" {
+    for (lengths[0]..runs.len) |length| {
+        const run = runs[length];
+        try std.testing.expectEqual(length, lengths[run.symbol_offset] + @as(usize, run.extra_bits));
+        const prefix = fixed(run.symbol());
+        try std.testing.expectEqual(prefix.len + @as(u5, run.extra_len), @as(u5, run.fixed_len));
+        try std.testing.expectEqual(prefix.bits | (@as(u32, run.extra_bits) << prefix.len), @as(u32, run.fixed_bits));
+    }
 }
 
 test {
