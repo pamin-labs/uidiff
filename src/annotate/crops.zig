@@ -32,6 +32,8 @@ const Direction = enum { lower, higher };
 pub const max_crop_w = 360;
 
 const max_crop_h = 220;
+const detail_inset_px = 3;
+const detail_zoom_target_px = 120;
 const base_context_px = 20;
 const edge_trim_divisor = 32;
 /// Maximum source-pixel extension to recover a cut line.
@@ -41,15 +43,15 @@ const context_search_px = 24;
 pub fn crop(image: Image, box: ?SourceRect, x: usize, y: usize, slot: usize, ui: Layout) ?Crop {
     const region = box orelse return null;
     const from = cropBounds(image, region, ui);
-    const inset = ui.px(3);
+    const inset = ui.px(detail_inset_px);
     const slot_w = slot - 2 * inset;
     const slot_h = ui.px(max_crop_h) - 2 * inset;
     const long = @max(region.w, region.h);
-    const ideal_zoom = (ui.px(120) + long - 1) / long;
+    const ideal_zoom = (ui.px(detail_zoom_target_px) + long - 1) / long;
     // Keep the recovered line intact even if this lowers the enlargement.
     const zoom = @min(ideal_zoom, slot_w / from.w, slot_h / from.h);
     const out_w = if (zoom > 1) from.w * zoom else @max(1, @min(from.w, slot_w, from.w * slot_h / from.h));
-    const out_h = @max(1, @divFloor(from.h * out_w, from.w));
+    const out_h = @min(slot_h, @max(1, @divFloor(from.h * out_w, from.w)));
     return .{
         .from = from,
         .to = .{ .x = x + inset, .y = y + inset, .w = out_w, .h = out_h },
@@ -160,6 +162,7 @@ fn growContext(image: Image, crop_: SourceRect, reach_px: usize) SourceRect {
     return grown;
 }
 
+// Share one scan across the four crop edges to limit code duplication.
 noinline fn backgroundEdge(axis: Axis, direction: Direction, image: Image, cut: SourceRect, near_px: usize, reach_px: usize) usize {
     const extent = if (axis == .row) image.height else image.width;
     const available = if (direction == .lower) near_px else extent - 1 - near_px;
@@ -231,4 +234,14 @@ test "a narrow close-up keeps the complete labels above and beside an edit" {
     const patch = crop(image, .{ .x = 62, .y = 50, .w = 6, .h = 5 }, 0, 0, ui.px(90), ui).?;
     try std.testing.expect(patch.from.y < 23);
     try std.testing.expect(patch.from.right() > 95);
+}
+
+test "detail crop clips the height of a one-pixel-wide source" {
+    const height = max_crop_h * 2;
+    const pixels: [height]Pixel = @splat(palette.white);
+    const image: Image = .{ .width = 1, .height = height, .pixels = &pixels };
+    const ui = Layout.init(image.size(), image.size());
+    const patch = crop(image, .{ .x = 0, .y = 0, .w = 1, .h = height }, 0, 0, ui.px(max_crop_w), ui).?;
+    try std.testing.expectEqual(@as(usize, 1), patch.to.w);
+    try std.testing.expectEqual(ui.px(max_crop_h) - 2 * ui.px(detail_inset_px), patch.to.h);
 }

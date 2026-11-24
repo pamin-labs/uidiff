@@ -119,10 +119,10 @@ pub fn mask(a: Raster, b: Raster, top: usize, rows: usize, out: []regions.Cell) 
                     found = true;
                     continue;
                 }
-                if (writeChangedLanes(a, b, x, y, policy, .above_threshold, laneBits(candidates), output[x..][0..lanes])) found = true;
+                if (writeChangedLanes(a, b, x, y, policy, markChange, laneBits(candidates), output[x..][0..lanes])) found = true;
             } else {
                 const different = @select(bool, equal, @as(@Vector(lanes, bool), @splat(false)), @as(@Vector(lanes, bool), @splat(true)));
-                if (writeChangedLanes(a, b, x, y, policy, .needs_threshold, laneBits(different), output[x..][0..lanes])) found = true;
+                if (writeChangedLanes(a, b, x, y, policy, scalarChange, laneBits(different), output[x..][0..lanes])) found = true;
             }
         }
         while (x < a.width) : (x += 1) {
@@ -166,7 +166,8 @@ fn laneBits(mask_: @Vector(lanes, bool)) LaneBits {
     return if (@import("builtin").target.cpu.arch.endian() == .little) bits else @bitReverse(bits);
 }
 
-noinline fn writeChangedLanes(a: Raster, b: Raster, x: usize, y: usize, policy: EdgePolicy, decision: enum { above_threshold, needs_threshold }, bits: LaneBits, output: *[lanes]regions.Cell) bool {
+// Keep the sparse walk out of the hot mask and share it between classifiers.
+noinline fn writeChangedLanes(a: Raster, b: Raster, x: usize, y: usize, policy: EdgePolicy, classify: *const @TypeOf(markChange), bits: LaneBits, output: *[lanes]regions.Cell) bool {
     @branchHint(.cold);
     output.* = @splat(.clear);
     var remaining = bits;
@@ -174,10 +175,7 @@ noinline fn writeChangedLanes(a: Raster, b: Raster, x: usize, y: usize, policy: 
     while (remaining != 0) {
         const lane = @ctz(remaining);
         remaining &= remaining - 1;
-        const cell = if (decision == .above_threshold)
-            markChange(a, b, x + lane, y, policy)
-        else
-            scalarChange(a, b, x + lane, y, policy);
+        const cell = classify(a, b, x + lane, y, policy);
         output[lane] = cell;
         changed = changed or cell != .clear;
     }
