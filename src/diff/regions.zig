@@ -19,16 +19,16 @@ pub const Collector = struct {
     boxes: []Candidate,
     len: usize = 0,
     /// Current merging distance in device pixels.
-    gap: f64,
+    gap_px: f64,
     /// The gap at which every box on a side merges.
-    max_gap: f64,
+    max_gap_px: f64,
     /// Minimum changed pixels in a merged region, from minPixels.
     min_pixels: usize = min_region_pixels,
     expanding: bool = false,
 
     /// Returns scratch capacity for the two validated image sizes.
-    pub fn capacity(before: Size, after: Size, gap: usize) usize {
-        return @min(max_pending_regions, cells(before, gap) + cells(after, gap));
+    pub fn capacity(before: Size, after: Size, gap_px: usize) usize {
+        return @min(max_pending_regions, cells(before, gap_px) + cells(after, gap_px));
     }
 
     /// Keeps a region established by geometry rather than by the pixel mask.
@@ -72,9 +72,9 @@ pub const Collector = struct {
         self.len = kept;
     }
 
-    fn cells(size: Size, gap: usize) usize {
+    fn cells(size: Size, gap_px: usize) usize {
         // Two boxes on the same side cannot survive in the same grid cell.
-        return (1 + (size.width - 1) / (gap + 1)) * (1 + (size.height - 1) / (gap + 1));
+        return (1 + (size.width - 1) / (gap_px + 1)) * (1 + (size.height - 1) / (gap_px + 1));
     }
 
     fn absorb(self: *Collector, candidate: Candidate) Candidate {
@@ -87,9 +87,9 @@ pub const Collector = struct {
             const a = box.region;
             const b = other.region;
             const same_kind = (a.before == null) == (b.before == null) and (a.after == null) == (b.after == null);
-            const supported_gap = if (box.pixels < self.min_pixels or other.pixels < self.min_pixels) @min(self.gap, evidence_gap) else self.gap;
-            const gap = if (!same_kind and !self.expanding) @min(supported_gap, self.gap / 2) else supported_gap;
-            if (nearby(box.region.before, other.region.before, gap) or nearby(box.region.after, other.region.after, gap)) {
+            const supported_gap = if (box.pixels < self.min_pixels or other.pixels < self.min_pixels) @min(self.gap_px, evidence_gap) else self.gap_px;
+            const gap_px = if (!same_kind and !self.expanding) @min(supported_gap, self.gap_px / 2) else supported_gap;
+            if (nearby(box.region.before, other.region.before, gap_px) or nearby(box.region.after, other.region.after, gap_px)) {
                 box.region.before = unite(box.region.before, other.region.before);
                 box.region.after = unite(box.region.after, other.region.after);
                 box.pixels = @min(self.min_pixels, box.pixels + other.pixels);
@@ -104,7 +104,7 @@ pub const Collector = struct {
     fn expand(self: *Collector) void {
         // The maximum spans either image. At that gap all boxes sharing a
         // side merge, leaving at most one box per side.
-        self.gap = if (self.gap < 0.5) std.math.frexp(self.gap).significand else @min(self.gap * 2, self.max_gap);
+        self.gap_px = if (self.gap_px < 0.5) std.math.frexp(self.gap_px).significand else @min(self.gap_px * 2, self.max_gap_px);
         self.expanding = true;
         defer self.expanding = false;
         const input = self.boxes[0..self.len];
@@ -737,8 +737,8 @@ fn betweenDividers(before: Image, after: Image, p: Box, q: Box, r: Box, s: Box) 
 fn lineNeighbours(a: Box, b: Box, max_height: f64) bool {
     const tallest = @max(a.height, b.height);
     const overlap = @min(a.bottom(), b.bottom()) - @max(a.y, b.y);
-    const gap = @max(a.x, b.x) - @min(a.right(), b.right());
-    return tallest <= max_height and overlap >= line_overlap * @min(a.height, b.height) and gap <= line_gap_factor * tallest;
+    const gap_px = @max(a.x, b.x) - @min(a.right(), b.right());
+    return tallest <= max_height and overlap >= line_overlap * @min(a.height, b.height) and gap_px <= line_gap_factor * tallest;
 }
 
 noinline fn commonCard(a: Region, b: Region, before: Image, after: Image, scale: values.Scale) ?Box {
@@ -748,8 +748,8 @@ noinline fn commonCard(a: Region, b: Region, before: Image, after: Image, scale:
     const s = b.after orelse return null;
     if (!std.meta.eql(p, r) or !std.meta.eql(q, s)) return null;
     const overlap = @min(p.right(), q.right()) - @max(p.x, q.x);
-    const gap = @max(p.y, q.y) - @min(p.bottom(), q.bottom());
-    if (overlap <= 0 or gap < 0 or gap > scale.devicePixels(stack_gap)) return null;
+    const gap_px = @max(p.y, q.y) - @min(p.bottom(), q.bottom());
+    if (overlap <= 0 or gap_px < 0 or gap_px > scale.devicePixels(stack_gap)) return null;
     const ink = unite(p, q).?;
     const max_height = scale.devicePixels(compact_card_height);
     const max_width = scale.devicePixels(compact_card_width);
@@ -780,7 +780,7 @@ fn removeCardParts(boxes: []Candidate, card: usize, cover: Box) usize {
     return len;
 }
 
-fn stacked(a: Region, b: Region, before: Image, after: Image, max_gap: f64) bool {
+fn stacked(a: Region, b: Region, before: Image, after: Image, max_gap_px: f64) bool {
     if ((a.before == null) != (b.before == null) or (a.after == null) != (b.after == null)) return false;
     if (a.before != null and a.after != null) return false;
     const p = a.before orelse a.after orelse return false;
@@ -789,9 +789,9 @@ fn stacked(a: Region, b: Region, before: Image, after: Image, max_gap: f64) bool
     const shared = @min(p.right(), q.right()) - @max(p.x, q.x);
     if (shared < stack_overlap * @min(p.width, q.width)) return false;
     const upper, const lower = if (p.y <= q.y) .{ p, q } else .{ q, p };
-    const gap = lower.y - upper.bottom();
-    if (gap > max_gap) return false;
-    if (gap <= 0) return true;
+    const gap_px = lower.y - upper.bottom();
+    if (gap_px > max_gap_px) return false;
+    if (gap_px <= 0) return true;
     // The collector has already bounded these whole pixel boxes to their image.
     const left: usize = @intFromFloat(@min(p.x, q.x));
     const right: usize = @intFromFloat(@max(p.right(), q.right()));
@@ -895,11 +895,11 @@ fn unite(a: ?Box, b: ?Box) ?Box {
     return .{ .x = x, .y = y, .width = @max(p.right(), q.right()) - x, .height = @max(p.bottom(), q.bottom()) - y };
 }
 
-fn nearby(a: ?Box, b: ?Box, gap: f64) bool {
+fn nearby(a: ?Box, b: ?Box, gap_px: f64) bool {
     const p = a orelse return false;
     const q = b orelse return false;
-    return p.x <= q.right() + gap and q.x <= p.right() + gap and
-        p.y <= q.bottom() + gap and q.y <= p.bottom() + gap;
+    return p.x <= q.right() + gap_px and q.x <= p.right() + gap_px and
+        p.y <= q.bottom() + gap_px and q.y <= p.bottom() + gap_px;
 }
 
 fn widen(range: ?RowRange, more: RowRange) RowRange {
@@ -915,7 +915,7 @@ fn translated(box: Box, top: ?usize) ?Box {
 
 test "a gap between an insertion and a recolour separates their boxes" {
     var boxes: [4]Candidate = undefined;
-    var collector: Collector = .{ .boxes = &boxes, .gap = @floatFromInt(merge_gap.count()), .max_gap = 100 };
+    var collector: Collector = .{ .boxes = &boxes, .gap_px = @floatFromInt(merge_gap.count()), .max_gap_px = 100 };
     const insertion = Box.fromPixels(10, 10, 30, 10);
     const recolour = Box.fromPixels(12, 32, 26, 5);
     collector.add(.{ .after = insertion });
@@ -926,7 +926,7 @@ test "a gap between an insertion and a recolour separates their boxes" {
 
 test "a full pending buffer expands and accepts another distinct box" {
     var storage: [max_pending_regions]Candidate = undefined;
-    var collector: Collector = .{ .boxes = &storage, .gap = @floatFromInt(merge_gap.count()), .max_gap = 65_536 };
+    var collector: Collector = .{ .boxes = &storage, .gap_px = @floatFromInt(merge_gap.count()), .max_gap_px = 65_536 };
     for (0..storage.len + 1) |i| collector.add(.{ .after = Box.fromPixels(i * 15, 0, 1, 1) });
     collector.growGap();
     try std.testing.expectEqual(@as(usize, 1), collector.len);
@@ -947,7 +947,7 @@ test "a serpentine larger than the seed stack is one component" {
         }
     }
     var storage: [4]Candidate = undefined;
-    var collector: Collector = .{ .boxes = &storage, .gap = 0, .max_gap = width };
+    var collector: Collector = .{ .boxes = &storage, .gap_px = 0, .max_gap_px = width };
     var seeds: [2]u32 = undefined;
     try std.testing.expectEqual(GroupResult.kept, group(&collector, .{ .cells = &cells, .width = width }, &seeds, .{ .left = 3, .before_y = 5, .after_y = null }));
     try std.testing.expectEqual(@as(usize, 1), collector.len);

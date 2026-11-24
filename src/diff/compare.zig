@@ -131,28 +131,28 @@ pub fn compareChecked(allocator: Allocator, before: Image, after: Image, options
     if (!before.valid() or !after.valid()) return error.InvalidImage;
     const width = @max(before.width, after.width);
     const height = @max(before.height, after.height);
-    const max_gap: f64 = @floatFromInt(@max(width, height));
-    const gap = @min(options.scale.devicePixels(regions.merge_gap), max_gap);
+    const max_gap_px: f64 = @floatFromInt(@max(width, height));
+    const gap_px = @min(options.scale.devicePixels(regions.merge_gap), max_gap_px);
     const overlap_width = @min(before.width, after.width);
     const span = columns.span(before, after, overlap_width);
     if (span.width == 0 and before.width == after.width) {
         return .{ .regions = &.{}, .width = width, .height = height };
     }
     // The integer gap and scroll tolerance are clamped to validated image dimensions.
-    const capacity = if (span.width == 0) 1 else Collector.capacity(before.size(), after.size(), @intFromFloat(gap));
+    const capacity = if (span.width == 0) 1 else Collector.capacity(before.size(), after.size(), @intFromFloat(gap_px));
     const storage = try allocator.alloc(regions.Candidate, capacity);
     defer allocator.free(storage);
     var collector: Collector = .{
         .boxes = storage,
-        .gap = gap,
-        .max_gap = max_gap,
+        .gap_px = gap_px,
+        .max_gap_px = max_gap_px,
         .min_pixels = regions.minPixels(before.size(), after.size()),
     };
     var moves: std.ArrayList(values.Move) = .empty;
     defer moves.deinit(allocator);
     if (span.width != 0) {
         const scope: Scope = .{ .before = before, .after = after, .span = span, .bounds = .{ .left = 0, .width = overlap_width } };
-        try spanRegions(allocator, &collector, &moves, scope, @intFromFloat(@min(max_gap, options.scale.devicePixels(scroll_shift))));
+        try spanRegions(allocator, &collector, &moves, scope, @intFromFloat(@min(max_gap_px, options.scale.devicePixels(scroll_shift))));
     }
     if (before.width != after.width) {
         const old = before.width > after.width;
@@ -171,7 +171,7 @@ pub fn compareChecked(allocator: Allocator, before: Image, after: Image, options
     return .{ .regions = out, .moves = try moves.toOwnedSlice(allocator), .width = width, .height = height };
 }
 
-fn spanRegions(allocator: Allocator, collector: *Collector, moves: *std.ArrayList(values.Move), scope: Scope, scroll_limit: usize) !void {
+fn spanRegions(allocator: Allocator, collector: *Collector, moves: *std.ArrayList(values.Move), scope: Scope, scroll_limit_px: usize) !void {
     const before = scope.before;
     const after = scope.after;
     const row_count = before.height + after.height;
@@ -184,8 +184,8 @@ fn spanRegions(allocator: Allocator, collector: *Collector, moves: *std.ArrayLis
 
     var buffers: CompareBuffers = .{};
     defer buffers.deinit(allocator);
-    const local_limit: usize = @intFromFloat(@min(collector.max_gap, 2 * collector.gap));
-    var aligned = try alignSpan(allocator, scope, scroll_limit, local_limit, keys, bands, filtered, &buffers.alignment);
+    const local_limit_px: usize = @intFromFloat(@min(collector.max_gap_px, 2 * collector.gap_px));
+    var aligned = try alignSpan(allocator, scope, scroll_limit_px, local_limit_px, keys, bands, filtered, &buffers.alignment);
     const ambiguous = if (aligned) |whole| mixedShifts(whole) else true;
     if (scope.span.width > columns.min_gutter and (ambiguous or hasFlatEdge(scope))) {
         const stationary = try allocator.alloc(bool, scope.span.width);
@@ -194,7 +194,7 @@ fn spanRegions(allocator: Allocator, collector: *Collector, moves: *std.ArrayLis
         if (parts.next()) |first| if (first.span.width != scope.span.width and
             (ambiguous or hasFlatColumn(before, after, first, parts)))
         {
-            if (before.height == after.height and !hasWideColumn(first, parts, local_limit)) {
+            if (before.height == after.height and !hasWideColumn(first, parts, local_limit_px)) {
                 buffers.alignment.deinit(allocator);
                 return compareSpan(allocator, collector, scope, null, &buffers);
             }
@@ -208,12 +208,12 @@ fn spanRegions(allocator: Allocator, collector: *Collector, moves: *std.ArrayLis
                 // A strip as narrow as the replacement gap may be only the
                 // edge of a card. Give it the same positional comparison as
                 // a stationary group unless the whole span explains a move.
-                const local_bands = if (part.span.width <= local_limit)
+                const local_bands = if (part.span.width <= local_limit_px)
                     null
                 else
-                    try alignSpan(allocator, local, scroll_limit, local_limit, keys, bands, filtered, &buffers.alignment);
+                    try alignSpan(allocator, local, scroll_limit_px, local_limit_px, keys, bands, filtered, &buffers.alignment);
                 const column_moved = if (local_bands) |alignment|
-                    try gatherColumnMoves(allocator, moves, local, alignment, keys, scroll_limit)
+                    try gatherColumnMoves(allocator, moves, local, alignment, keys, scroll_limit_px)
                 else
                     false;
                 has_movement = has_movement or column_moved;
@@ -277,12 +277,12 @@ fn hasWideColumn(first: columns.Group, tail: columns.Partition, limit: usize) bo
     return true;
 }
 
-fn columnMotion(scope: Scope, keys: []const u64, move: values.Move, scroll_limit: usize) bool {
+fn columnMotion(scope: Scope, keys: []const u64, move: values.Move, scroll_limit_px: usize) bool {
     // A matching edge that remains at its old position gives no evidence
     // that the column moved. Require several content rows at the new offset.
     const before = keys[0..scope.before.height];
     const after = keys[scope.before.height..];
-    const minimum: usize = @max(min_column_motion_rows, column_motion_scroll_factor * scroll_limit);
+    const minimum: usize = @max(min_column_motion_rows, column_motion_scroll_factor * scroll_limit_px);
     var supported: usize = 0;
     for (0..move.before.height) |i| {
         const old = move.before.y + i;
@@ -353,7 +353,7 @@ fn gatherMoves(allocator: Allocator, moves: *std.ArrayList(values.Move), scope: 
     moves.items.len = kept;
 }
 
-fn alignSpan(allocator: Allocator, scope: Scope, scroll_limit: usize, local_limit: usize, keys: []u64, bands: []row_diff.Band, filtered: []u64, workspace: *row_diff.Workspace) Allocator.Error!?[]row_diff.Band {
+fn alignSpan(allocator: Allocator, scope: Scope, scroll_limit_px: usize, local_limit_px: usize, keys: []u64, bands: []row_diff.Band, filtered: []u64, workspace: *row_diff.Workspace) Allocator.Error!?[]row_diff.Band {
     const old_keys = keys[0..scope.before.height];
     const new_keys = keys[scope.before.height..];
     row_diff.keys(scope.before, scope.span.left, scope.span.width, old_keys);
@@ -362,17 +362,17 @@ fn alignSpan(allocator: Allocator, scope: Scope, scroll_limit: usize, local_limi
         std.mem.allEqual(u64, new_keys, new_keys[0]))) return null;
     // A compact change is local motion, even if re-pairing its two edges
     // happens to match a few rows at a different offset.
-    const narrow_view = (scope.kind == .column or old_keys.len == new_keys.len) and scope.span.width <= local_limit;
+    const narrow_view = (scope.kind == .column or old_keys.len == new_keys.len) and scope.span.width <= local_limit_px;
     const growing_column = scope.kind == .column and old_keys.len != new_keys.len;
     if (narrow_view or growing_column) {
         var end = @min(old_keys.len, new_keys.len);
         const first = std.mem.indexOfDiff(u64, old_keys[0..end], new_keys[0..end]) orelse return null;
         while (end > first and old_keys[end - 1] == new_keys[end - 1]) end -= 1;
-        if (end - first <= local_limit) return row_diff.compactInsertion(old_keys, new_keys, scroll_limit, bands);
+        if (end - first <= local_limit_px) return row_diff.compactInsertion(old_keys, new_keys, scroll_limit_px, bands);
     }
     const limits: row_diff.Limits = .{
-        .scroll = scroll_limit,
-        .replacement = 2 * local_limit,
+        .scroll = scroll_limit_px,
+        .replacement = 2 * local_limit_px,
         // Unchanged columns on the same rows are additional evidence of a
         // local overwrite, especially when repeating lines can match at a pitch.
         .narrow_edit = scope.span.width <= @min(scope.before.width, scope.after.width) / 2,
@@ -824,7 +824,7 @@ test "blank space above a fixed input bar does not inherit unrelated sidebar pai
     }
     const scope: Scope = .{ .before = before.view, .after = after.view, .span = .{ .left = 24, .width = 96 }, .bounds = .{ .left = 0, .width = 144 } };
     var boxes: [2]regions.Candidate = undefined;
-    var collector: Collector = .{ .boxes = &boxes, .gap = 0, .max_gap = 144 };
+    var collector: Collector = .{ .boxes = &boxes, .gap_px = 0, .max_gap_px = 144 };
     var mask: [96 * 20]regions.Cell = undefined;
     var seeds: [20]u32 = undefined;
     unpaired(&collector, scope, .{ .mask = &mask, .seeds = &seeds }, .{ .side = .before, .y = 110, .count = 20, .opposite = 130 });
@@ -961,7 +961,7 @@ test "an equal unpaired bottom margin does not produce a removal" {
             .bounds = .{ .left = 0, .width = 64 },
         };
         var boxes: [2]regions.Candidate = undefined;
-        var collector: Collector = .{ .boxes = &boxes, .gap = 0, .max_gap = 64 };
+        var collector: Collector = .{ .boxes = &boxes, .gap_px = 0, .max_gap_px = 64 };
         var mask: [64 * 6]regions.Cell = undefined;
         var seeds: [6]u32 = undefined;
         const scratch: Scratch = .{ .mask = &mask, .seeds = &seeds };
