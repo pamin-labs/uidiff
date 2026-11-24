@@ -48,20 +48,18 @@ pub fn probe(allocator: Allocator, bytes: []const u8, cap: usize) DecodeError!He
 /// header's budget exceeds the cap or stb asks for more than it.
 /// Releases via free.
 pub fn load(allocator: Allocator, bytes: []const u8, header: Header, cap: usize) DecodeError![*]Pixel {
-    const len = std.math.cast(c_int, bytes.len) orelse return error.ImageTooLarge;
-    var width: c_int = 0;
-    var height: c_int = 0;
-    var channels: c_int = 0;
-    const limit = budget(header, bytes.len) orelse return error.ImageTooLarge;
-    if (limit > cap) return error.ImageTooLarge;
-    memory.begin(allocator, limit);
-    defer memory.end();
-    if (try stream(bytes, header.size)) |pixels| return pixels;
-    const pixel_data: [*]Pixel = @ptrCast(c.stbi_load_from_memory(bytes.ptr, len, &width, &height, &channels, @sizeOf(Pixel)) orelse return memory.failure());
-    errdefer free(pixel_data);
-    const actual = try size(width, height);
-    if (actual.width != header.size.width or actual.height != header.size.height) return error.InvalidImage;
-    return pixel_data;
+    return withBudget(loadPng, allocator, bytes, header, cap);
+}
+
+/// Decodes slices accepted by stb and returns the validated pixel extent.
+pub fn loadLegacy(allocator: Allocator, bytes: []const u8, header: Header, cap: usize) DecodeError![]Pixel {
+    const pixels = try withBudget(loadStb, allocator, bytes, header, cap);
+    return pixels[0 .. header.size.width * header.size.height];
+}
+
+/// Frees pixels allocated by the bounded stb adapter.
+pub fn release(_: Allocator, pixels: []const Pixel) void {
+    free(@constCast(pixels.ptr));
 }
 
 /// Recognizes the header of a noninterlaced RGBA8 PNG.
@@ -72,16 +70,41 @@ pub fn streamingHeader(bytes: []const u8) bool {
 /// Attempts to stream a PNG with row-sized scratch. Null requests the
 /// regular decoder. Frees through the same allocator as load.
 pub fn loadStreaming(allocator: Allocator, bytes: []const u8, header: Header, cap: usize) DecodeError!?[*]Pixel {
-    const limit = budget(header, bytes.len) orelse return error.ImageTooLarge;
-    if (limit > cap) return error.ImageTooLarge;
-    memory.begin(allocator, limit);
-    defer memory.end();
-    return stream(bytes, header.size);
+    return withBudget(stream, allocator, bytes, header, cap);
 }
 
 /// Releases a pixel buffer returned by load.
 pub fn free(pixel_data: [*]Pixel) void {
     c.stbi_image_free(pixel_data);
+}
+
+fn withBudget(comptime decodePixels: anytype, allocator: Allocator, bytes: []const u8, header: Header, cap: usize) @typeInfo(@TypeOf(decodePixels)).@"fn".return_type.? {
+    try beginDecode(allocator, header, bytes.len, cap);
+    defer memory.end();
+    return decodePixels(bytes, header.size);
+}
+
+noinline fn beginDecode(allocator: Allocator, header: Header, len: usize, cap: usize) DecodeError!void {
+    const limit = budget(header, len) orelse return error.ImageTooLarge;
+    if (limit > cap) return error.ImageTooLarge;
+    memory.begin(allocator, limit);
+}
+
+fn loadPng(bytes: []const u8, expected: Size) DecodeError![*]Pixel {
+    if (try stream(bytes, expected)) |pixels| return pixels;
+    return loadStb(bytes, expected);
+}
+
+fn loadStb(bytes: []const u8, expected: Size) DecodeError![*]Pixel {
+    const len = std.math.cast(c_int, bytes.len) orelse return error.ImageTooLarge;
+    var width: c_int = 0;
+    var height: c_int = 0;
+    var channels: c_int = 0;
+    const pixels: [*]Pixel = @ptrCast(c.stbi_load_from_memory(bytes.ptr, len, &width, &height, &channels, @sizeOf(Pixel)) orelse return memory.failure());
+    errdefer free(pixels);
+    const actual = try size(width, height);
+    if (actual.width != expected.width or actual.height != expected.height) return error.InvalidImage;
+    return pixels;
 }
 
 fn stream(bytes: []const u8, dimensions: Size) DecodeError!?[*]Pixel {

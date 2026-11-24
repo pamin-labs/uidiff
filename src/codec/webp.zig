@@ -10,15 +10,27 @@ const Size = values.Size;
 /// Malformed bytes, an exceeded budget, or a failed allocation.
 pub const DecodeError = memory.Error;
 
-/// Returns dimensions without decoding the pixels.
-pub fn probe(bytes: []const u8) values.Image.Invalid!Size {
-    var width: c_int = 0;
-    var height: c_int = 0;
-    if (c.WebPGetInfo(bytes.ptr, bytes.len, &width, &height) == 0) return error.InvalidImage;
-    return .{
-        .width = std.math.cast(usize, width) orelse return error.InvalidImage,
-        .height = std.math.cast(usize, height) orelse return error.InvalidImage,
-    };
+/// Validated dimensions of an encoded WebP image.
+pub const Header = struct { size: Size };
+
+/// Recognizes the WebP RIFF form.
+pub fn matches(prefix: []const u8) bool {
+    return prefix.len >= 12 and std.mem.eql(u8, prefix[0..4], "RIFF") and std.mem.eql(u8, prefix[8..12], "WEBP");
+}
+
+/// Probes the WebP image without allocating decoded pixels.
+pub fn probe(_: Allocator, bytes: []const u8, _: usize) DecodeError!Header {
+    return .{ .size = try dimensions(bytes) };
+}
+
+/// Decodes using the validated size in the header.
+pub fn decode(allocator: Allocator, bytes: []const u8, header: Header, cap: usize) DecodeError![]Pixel {
+    return load(allocator, bytes, header.size, cap);
+}
+
+/// Frees the caller-owned WebP output buffer.
+pub fn release(allocator: Allocator, pixels: []const Pixel) void {
+    allocator.free(pixels);
 }
 
 /// Decodes RGBA8 pixels of a probed size. Assumes size.pixelCount() is not
@@ -39,8 +51,19 @@ pub fn load(allocator: Allocator, bytes: []const u8, size: Size, cap: usize) Dec
     return pixels;
 }
 
+/// Returns dimensions without decoding the pixels.
+fn dimensions(bytes: []const u8) values.Image.Invalid!Size {
+    var width: c_int = 0;
+    var height: c_int = 0;
+    if (c.WebPGetInfo(bytes.ptr, bytes.len, &width, &height) == 0) return error.InvalidImage;
+    return .{
+        .width = std.math.cast(usize, width) orelse return error.InvalidImage,
+        .height = std.math.cast(usize, height) orelse return error.InvalidImage,
+    };
+}
+
 test "a RIFF header without a WebP image is rejected" {
-    try std.testing.expectError(error.InvalidImage, probe("RIFF\x04\x00\x00\x00WEBP"));
+    try std.testing.expectError(error.InvalidImage, dimensions("RIFF\x04\x00\x00\x00WEBP"));
 }
 
 test {

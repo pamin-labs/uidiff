@@ -3,6 +3,7 @@ const std = @import("std");
 const values = @import("value.zig");
 const stb = @import("codec/stb.zig");
 const webp = @import("codec/webp.zig");
+const jpeg = @import("codec/jpeg.zig");
 const png = @import("codec/png.zig");
 const png_format = @import("codec/png_format.zig");
 const memory = @import("codec_memory");
@@ -11,6 +12,7 @@ const Image = values.Image;
 const Pixel = values.Pixel;
 const Size = values.Size;
 const Io = std.Io;
+
 /// Writes a valid image as PNG.
 pub const encodePng = png.write;
 /// Encodes PNG from a source that provides rows.
@@ -20,34 +22,30 @@ pub const EncodeError = png.EncodeError;
 /// The largest encoded input file or byte stream accepted, in bytes.
 pub const max_encoded_bytes = values.max_encoded_bytes;
 
-const Codec = enum { stb, webp };
-
-/// Header and borrowed encoded bytes for a validated image.
-const Prepared = struct {
-    bytes: []const u8,
-    size: Size,
-    header: union(Codec) { stb: stb.Header, webp: void },
-    limit: usize,
-    count: usize,
-};
+const Format = std.meta.FieldEnum(@TypeOf(formats));
 
 // The stb binding exports the allocation hooks stb's C code calls, so it is
 // analyzed in every build that links the decoders, decoding or not.
 comptime {
     _ = memory;
+    for (@typeInfo(@TypeOf(formats)).@"struct".field_names) |name| {
+        const format = @field(formats, name);
+        for (.{ "matches", "probe", "decode", "release" }) |decl| {
+            if (!@hasDecl(format, decl)) @compileError(name ++ " codec must declare " ++ decl);
+        }
+    }
 }
 
 /// An image with decoder-owned pixels, released by deinit.
 pub const Decoded = struct {
     image: Image,
-    codec: Codec,
+    format: Format,
     allocator: Allocator,
 
     /// Releases pixels with the decoder that allocated them.
     pub fn deinit(self: *Decoded) void {
-        switch (self.codec) {
-            .stb => stb.free(@constCast(self.image.pixels.ptr)),
-            .webp => self.allocator.free(self.image.pixels),
+        switch (self.format) {
+            inline else => |format| @field(formats, @tagName(format)).release(self.allocator, self.image.pixels),
         }
         self.* = undefined;
     }
@@ -97,19 +95,14 @@ pub const FileInput = struct {
     pub fn stream(self: FileInput, io: Io, allocator: Allocator, cap: usize) (ReadError || DecodeError)!?Decoded {
         const bytes = try readEncoded(io, allocator, self.file, self.length);
         defer allocator.free(bytes);
-        const prepared = try prepare(allocator, bytes, cap);
-        const header = switch (prepared.header) {
-            .webp => return null,
-            .stb => |header| header,
-        };
-        const pixels = (try stb.loadStreaming(allocator, bytes, header, prepared.limit)) orelse return null;
-        return .{
-            .image = .{ .width = prepared.size.width, .height = prepared.size.height, .pixels = pixels[0..prepared.count] },
-            .codec = .stb,
-            .allocator = allocator,
-        };
+        if (!png.matches(bytes)) return null;
+        const probed = try probeFormat(png.probe, allocator, bytes, cap);
+        const pixels = (try stb.loadStreaming(allocator, bytes, probed.header, probed.limit)) orelse return null;
+        return owned(probed.size, pixels[0..probed.count], allocator, .png);
     }
 };
+
+const formats = .{ .png = png, .jpeg = jpeg, .webp = webp };
 
 const probe_prefix_bytes = 4096;
 // Keep the extra encoded buffer cheap for comparisons that load two files.
@@ -123,7 +116,17 @@ pub fn decode(allocator: Allocator, bytes: []const u8) DecodeError!Decoded {
 
 /// Decodes bytes with a caller-supplied cap no higher than the default.
 pub fn decodeCapped(allocator: Allocator, bytes: []const u8, cap: usize) DecodeError!Decoded {
-    return decodePrepared(allocator, try prepare(allocator, bytes, cap));
+    if (bytes.len > max_encoded_bytes) return error.ImageTooLarge;
+    inline for (@typeInfo(@TypeOf(formats)).@"struct".field_names) |name| {
+        const format = @field(formats, name);
+        if (format.matches(bytes)) {
+            const tag: Format = @field(Format, name);
+            const probed = try probeFormat(format.probe, allocator, bytes, cap);
+            const pixels = try format.decode(allocator, bytes, probed.header, probed.limit);
+            return owned(probed.size, pixels, allocator, tag);
+        }
+    }
+    return error.UnsupportedImageFormat;
 }
 
 /// Reads a file of at most max_encoded_bytes and decodes it. The caller owns the result.
@@ -146,15 +149,15 @@ pub fn probeFile(io: Io, allocator: Allocator, path: []const u8, cap: usize) (Re
     var prefix: [probe_prefix_bytes]u8 = undefined;
     const header = prefix[0..@min(length, prefix.len)];
     try readBytes(io, file, header);
-    if (prepare(allocator, header, cap)) |prepared| {
-        return prepared.size;
+    if (probeSize(allocator, header, cap)) |size| {
+        return size;
     } else |err| {
         // JPEG metadata and WebP chunks can put dimensions past the prefix.
         if (err != error.InvalidImage or header.len == length) return err;
     }
     const bytes = try readEncoded(io, allocator, file, length);
     defer allocator.free(bytes);
-    return (try prepare(allocator, bytes, cap)).size;
+    return probeSize(allocator, bytes, cap);
 }
 
 /// Reads a file of at most max_encoded_bytes. The caller owns the returned bytes.
@@ -164,31 +167,30 @@ pub fn readFile(io: Io, allocator: Allocator, path: []const u8) ReadError![]u8 {
     return readEncoded(io, allocator, file, try encodedLength(io, file));
 }
 
-/// Validates the header and records its dimensions before allocating pixels.
-fn prepare(allocator: Allocator, bytes: []const u8, cap: usize) DecodeError!Prepared {
-    if (bytes.len > max_encoded_bytes) return error.ImageTooLarge;
-    const codec = detect(bytes) orelse return error.UnsupportedImageFormat;
-    const limit = @min(cap, values.max_decode_bytes);
-    const header: @FieldType(Prepared, "header") = switch (codec) {
-        .stb => .{ .stb = try stb.probe(allocator, bytes, limit) },
-        .webp => .webp,
-    };
-    const size = switch (header) {
-        .stb => |info| info.size,
-        .webp => try webp.probe(bytes),
-    };
-    return .{ .bytes = bytes, .size = size, .header = header, .limit = limit, .count = try pixelCount(size) };
+fn Probed(comptime probe: anytype) type {
+    const Header = @typeInfo(@typeInfo(@TypeOf(probe)).@"fn".return_type.?).error_union.payload;
+    return struct { header: Header, size: Size, count: usize, limit: usize };
 }
 
-/// Decodes a prepared image. The caller owns the decoded pixels.
-fn decodePrepared(allocator: Allocator, prepared: Prepared) DecodeError!Decoded {
-    const pixels = switch (prepared.header) {
-        .stb => |header| (try stb.load(allocator, prepared.bytes, header, prepared.limit))[0..prepared.count],
-        .webp => try webp.load(allocator, prepared.bytes, prepared.size, prepared.limit),
-    };
+fn probeSize(allocator: Allocator, bytes: []const u8, cap: usize) DecodeError!Size {
+    inline for (@typeInfo(@TypeOf(formats)).@"struct".field_names) |name| {
+        if (@field(formats, name).matches(bytes)) {
+            return (try probeFormat(@field(formats, name).probe, allocator, bytes, cap)).size;
+        }
+    }
+    return error.UnsupportedImageFormat;
+}
+
+noinline fn probeFormat(comptime probe: anytype, allocator: Allocator, bytes: []const u8, cap: usize) DecodeError!Probed(probe) {
+    const limit = @min(cap, values.max_decode_bytes);
+    const header = try probe(allocator, bytes, limit);
+    return .{ .header = header, .size = header.size, .count = try pixelCount(header.size), .limit = limit };
+}
+
+fn owned(size: Size, pixels: []const Pixel, allocator: Allocator, format: Format) Decoded {
     return .{
-        .image = .{ .width = prepared.size.width, .height = prepared.size.height, .pixels = pixels },
-        .codec = std.meta.activeTag(prepared.header),
+        .image = .{ .width = size.width, .height = size.height, .pixels = pixels },
+        .format = format,
         .allocator = allocator,
     };
 }
@@ -212,12 +214,6 @@ fn readBytes(io: Io, file: Io.File, bytes: []u8) ReadError!void {
 
 fn pixelCount(size: Size) DecodeError!usize {
     return size.pixelCount() orelse if (size.width == 0 or size.height == 0) error.InvalidImage else error.ImageTooLarge;
-}
-
-fn detect(bytes: []const u8) ?Codec {
-    if (std.mem.startsWith(u8, bytes, png_format.signature) or std.mem.startsWith(u8, bytes, "\xff\xd8")) return .stb;
-    if (bytes.len >= 12 and std.mem.eql(u8, bytes[0..4], "RIFF") and std.mem.eql(u8, bytes[8..12], "WEBP")) return .webp;
-    return null;
 }
 
 fn readOnce(allocator: Allocator, dir: Io.Dir, name: []const u8) !void {
@@ -273,10 +269,10 @@ test "streaming PNG matches procedural RGBA across dictionary wraps" {
     var output: Io.Writer.Allocating = .init(allocator);
     defer output.deinit();
     try encodePng(allocator, .{ .width = width, .height = height, .pixels = pixels }, &output.writer);
-    const prepared = try prepare(allocator, output.written(), values.max_decode_bytes);
-    const streamed = (try stb.loadStreaming(allocator, prepared.bytes, prepared.header.stb, prepared.limit)) orelse return error.TestUnexpectedResult;
+    const header = try png.probe(allocator, output.written(), values.max_decode_bytes);
+    const streamed = (try stb.loadStreaming(allocator, output.written(), header, values.max_decode_bytes)) orelse return error.TestUnexpectedResult;
     defer stb.free(streamed);
-    try std.testing.expectEqualSlices(Pixel, pixels, streamed[0..prepared.count]);
+    try std.testing.expectEqualSlices(Pixel, pixels, streamed[0 .. header.size.width * header.size.height]);
 }
 
 test "header preflight handles JPEG metadata beyond its initial read" {

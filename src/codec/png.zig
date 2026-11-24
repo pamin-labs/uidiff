@@ -2,10 +2,16 @@
 const std = @import("std");
 const values = @import("../value.zig");
 const png_format = @import("png_format.zig");
+const stb = @import("stb.zig");
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
 const zlib = @import("zlib_c");
 const Image = values.Image;
+
+/// Probes the dimensions and channel depth.
+pub const probe = stb.probe;
+/// Releases decoded pixels through their PNG or fallback allocator.
+pub const release = stb.release;
 
 /// Allocation, invalid image or output failures.
 pub const EncodeError = Allocator.Error || Writer.Error || Image.Invalid;
@@ -107,6 +113,16 @@ const filter_switch_margin = 4;
 const chunk_bytes = 64 * 1024;
 const window_bits = 15;
 const memory_level = 8;
+
+/// Recognizes the PNG signature.
+pub fn matches(prefix: []const u8) bool {
+    return std.mem.startsWith(u8, prefix, png_format.signature);
+}
+
+/// Decodes the probed dimensions through the scanline or legacy decoder.
+pub fn decode(allocator: Allocator, bytes: []const u8, header: stb.Header, cap: usize) stb.DecodeError![]values.Pixel {
+    return (try stb.load(allocator, bytes, header, cap))[0 .. header.size.width * header.size.height];
+}
 
 /// Encodes a valid image. Allocates the compressor's window and one filtered row.
 pub fn write(allocator: Allocator, image: Image, output: *Writer) EncodeError!void {
