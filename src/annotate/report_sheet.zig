@@ -114,13 +114,15 @@ pub const Rows = struct {
                     x += ui.px(56) + textWidth(.regular, body, kindName(kind));
                 }
             }
-            line.text(left_x, a.y - ui.px(48), copy.before, .bold, plan.pane_caption_size[0], secondary);
+            const caption = plan.captions.bounds[0];
+            line.text(caption.x, caption.y, copy.before, .bold, plan.captions.size, secondary);
         } else if (!ui.wide and y < plan.pane_end) {
             line.fill(0, left_x, page);
             line.fill(b.right(), pixels.len, page);
             alignment.drawGutter(line, y - a.y, ui, plan.panes, plan.ribbons);
         }
-        line.text(b.x, b.y - ui.px(48), copy.after, .bold, plan.pane_caption_size[1], secondary);
+        const caption = plan.captions.bounds[1];
+        line.text(caption.x, caption.y, copy.after, .bold, plan.captions.size, secondary);
         if (y + ui.px(8) >= a.y and y < plan.pane_end + ui.px(12)) {
             if (!ui.wide or nearPane(y, a, ui)) drawPane(line, plan.before, a.x, a.y, ui);
             if (!ui.wide or nearPane(y, b, ui)) drawPane(line, plan.after, b.x, b.y, ui);

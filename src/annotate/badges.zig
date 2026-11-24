@@ -36,11 +36,11 @@ pub fn overviewDiameter(ui: Layout) usize {
 }
 
 /// Assigns non-overlapping overview and focus badge positions.
-pub fn placeBadges(allocator: Allocator, details: []Detail, focuses: []const Focus, panes: [2]Rect, size: values.Size, ui: Layout) Allocator.Error!void {
+pub fn placeBadges(allocator: Allocator, details: []Detail, focuses: []const Focus, panes: [2]Rect, size: values.Size, ui: Layout, captions: [2]Rect) Allocator.Error!void {
     if (details.len == 0) return;
     const storage = try allocator.alloc(values.SheetBox, 4 * details.len + panes.len);
     defer allocator.free(storage);
-    placeOverview(details, storage, panes, size, ui);
+    placeOverview(details, storage, panes, size, ui, captions);
     for (focuses, 0..) |focus, group| {
         for (focus.crops, 0..) |patch, side| {
             if (patch) |p| placeFocus(details, storage, p.to, side, group, textWidth(.regular, 22, focus.captions[side].bytes()) + 12, focus.top + focus.height, ui);
@@ -80,12 +80,11 @@ fn placeRect(comptime place: anytype, mark: Rect, bounds: Rect, diameter: usize,
     return .{ .x = @intFromFloat(box.x), .y = @intFromFloat(box.y), .w = diameter, .h = diameter };
 }
 
-fn placeOverview(details: []Detail, storage: []values.SheetBox, panes: [2]Rect, size: values.Size, ui: Layout) void {
+fn placeOverview(details: []Detail, storage: []values.SheetBox, panes: [2]Rect, size: values.Size, ui: Layout, captions: [2]Rect) void {
     const diameter = overviewDiameter(ui);
     var len: usize = 0;
-    for (panes) |pane| {
-        const caption = @min(pane.w, ui.px(100));
-        storage[len] = values.SheetBox.fromPixels(pane.x, pane.y - diameter, caption, diameter);
+    for (captions) |caption| {
+        storage[len] = caption.asBox();
         len += 1;
     }
     for (details) |d| {
@@ -107,8 +106,13 @@ fn placeOverview(details: []Detail, storage: []values.SheetBox, panes: [2]Rect, 
         for (details) |*d| {
             const mark = (if (side == 0) d.before_mark else d.after_mark) orelse continue;
             const used = storage[0..len];
-            const top = if (mark.y == pane.y) placeRect(placement.placeOutside, mark, outside[0], diameter, used) else null;
-            const location = top orelse nearestOutside(mark, outside, diameter, used) orelse placeRect(placement.place, mark, pane, diameter, used);
+            const preferred = if (pane.w < diameter)
+                levelWithMark(mark, outside[1..3], diameter, used)
+            else if (mark.y == pane.y)
+                placeRect(placement.placeOutside, mark, outside[0], diameter, used)
+            else
+                null;
+            const location = preferred orelse nearestOutside(mark, &outside, diameter, used) orelse placeRect(placement.place, mark, pane, diameter, used);
             if (side == 0) d.before_badge = location else d.after_badge = location;
             if (location) |pos| {
                 storage[len] = pos.asBox();
@@ -118,7 +122,24 @@ fn placeOverview(details: []Detail, storage: []values.SheetBox, panes: [2]Rect, 
     }
 }
 
-fn nearestOutside(mark: Rect, bounds: [4]Rect, diameter: usize, obstacles: []const values.SheetBox) ?Rect {
+fn levelWithMark(mark: Rect, sides: []const Rect, diameter: usize, obstacles: []const values.SheetBox) ?Rect {
+    var level: [2]Rect = undefined;
+    for (level[0..sides.len], sides) |*lane, side| {
+        if (side.h < diameter) {
+            lane.* = side;
+            continue;
+        }
+        lane.* = .{
+            .x = side.x,
+            .y = std.math.clamp((mark.y + mark.h / 2) -| (diameter / 2), side.y, side.bottom() - diameter),
+            .w = side.w,
+            .h = diameter,
+        };
+    }
+    return nearestOutside(mark, level[0..sides.len], diameter, obstacles);
+}
+
+fn nearestOutside(mark: Rect, bounds: []const Rect, diameter: usize, obstacles: []const values.SheetBox) ?Rect {
     var best: ?Rect = null;
     var distance: f64 = std.math.inf(f64);
     for (bounds) |area| {

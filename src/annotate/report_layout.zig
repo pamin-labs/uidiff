@@ -42,6 +42,8 @@ const Move = values.Move;
 /// Invalid images or regions, a sheet past the pixel cap, or an allocation failure.
 pub const RenderError = Allocator.Error || Image.Invalid || error{ SheetTooLarge, InvalidRegionBox, InvalidRegionNumber };
 
+const Captions = struct { size: usize, bounds: [2]Rect };
+
 /// Owns placements and borrows the source images. Release with deinit.
 pub const Plan = struct {
     before: Pane,
@@ -55,7 +57,7 @@ pub const Plan = struct {
     pane_end: usize,
     detail_slot_width: usize,
     detail_x: [2]usize,
-    pane_caption_size: [2]usize,
+    captions: Captions,
     kinds: u8,
     heading: Text,
 
@@ -114,7 +116,8 @@ pub const Plan = struct {
             }
         }
         if (layout.wide) top = try layoutFocus(details, focuses, .{ before.size(), after.size() }, top);
-        try placeBadges(allocator, details, focuses, panes, size, layout);
+        const captions = layoutCaptions(layout, panes, size.width);
+        try placeBadges(allocator, details, focuses, panes, size, layout, captions.bounds);
         if (details.len != 0) size.height = top + layout.px(margin) - layout.px(detail_gap);
         if (size.width > max_sheet_width or size.pixelCount() == null) return error.SheetTooLarge;
 
@@ -177,10 +180,7 @@ pub const Plan = struct {
             .pane_end = pane_end,
             .detail_slot_width = slot,
             .detail_x = .{ detail_x, after_detail_x },
-            .pane_caption_size = .{
-                captionSize(layout, copy.before, if (layout.wide) size.width - panes[0].x else panes[1].x - panes[0].x -| layout.px(8)),
-                captionSize(layout, copy.after, size.width - panes[1].x),
-            },
+            .captions = captions,
             .kinds = kinds,
             .heading = heading,
         };
@@ -200,6 +200,8 @@ const detail_label_w = 260;
 const detail_header = 82;
 const crop_gap = 40;
 const min_slot_h = 68;
+const caption_gap = 16;
+const caption_offset = 48;
 
 /// Checks the preview dimensions before allocating report details.
 pub fn minimumSize(before: Size, after: Size) error{SheetTooLarge}!Size {
@@ -214,10 +216,16 @@ pub fn minimumSize(before: Size, after: Size) error{SheetTooLarge}!Size {
     return size;
 }
 
-fn captionSize(layout: Layout, label: []const u8, available: usize) usize {
+fn layoutCaptions(layout: Layout, panes: [2]Rect, width: usize) Captions {
+    const available_before = if (layout.wide) width - panes[0].x else panes[1].x - panes[0].x -| layout.px(caption_gap);
     var size = layout.px(24);
-    while (size > 1 and textWidth(.bold, size, label) > available) size -= 1;
-    return size;
+    while (size > 1 and (textWidth(.bold, size, copy.before) > available_before or
+        textWidth(.bold, size, copy.after) > width - panes[1].x)) size -= 1;
+    var result: Captions = .{ .size = size, .bounds = undefined };
+    for (panes, [_][]const u8{ copy.before, copy.after }, &result.bounds) |pane, label, *bounds| {
+        bounds.* = .{ .x = pane.x, .y = pane.y - layout.px(caption_offset), .w = textWidth(.bold, size, label), .h = text.Face.bold.height(size) };
+    }
+    return result;
 }
 
 fn reserveBadgeLanes(panes: *[2]Rect, size: *Size, ui: Layout, before: Image, after: Image, regions: []const Region) void {
@@ -264,8 +272,25 @@ test "thin tall previews have room for both pane captions" {
     const source: Size = .{ .width = 200, .height = 20_030 };
     const layout = Layout.init(source, source);
     const panes = layout.panes(source, source);
-    const available = panes[1].x - panes[0].x - layout.px(8);
-    try std.testing.expect(textWidth(.bold, layout.px(24), copy.before) > available);
-    const size = captionSize(layout, copy.before, available);
-    try std.testing.expect(textWidth(.bold, size, copy.before) <= available);
+    const sheet = try minimumSize(source, source);
+    const captions = layoutCaptions(layout, panes, sheet.width);
+    try std.testing.expect(captions.size < layout.px(24));
+    try std.testing.expectEqual(captions.bounds[0].h, captions.bounds[1].h);
+    try std.testing.expect(captions.bounds[0].right() + layout.px(caption_gap) <= captions.bounds[1].x);
+    try std.testing.expect(captions.bounds[1].right() <= sheet.width);
+}
+
+test "a top change in a thin preview can use the beside lane" {
+    const source: Size = .{ .width = 200, .height = 20_030 };
+    const allocator = std.testing.allocator;
+    const pixels = try allocator.alloc(values.Pixel, source.width * source.height);
+    defer allocator.free(pixels);
+    @memset(pixels, .{ 240, 241, 242, 255 });
+    const image: Image = .{ .width = source.width, .height = source.height, .pixels = pixels };
+    const mark = values.Box.fromPixels(20, 0, 160, 160);
+    const plan = try Plan.init(allocator, image, image, &.{.{ .number = 1, .before = mark, .after = mark }}, &.{});
+    defer plan.deinit(allocator);
+    const edit = plan.details[0].before_mark.?;
+    const badge = plan.details[0].before_badge.?;
+    try std.testing.expect(badge.y + badge.h > edit.y and badge.y < edit.bottom());
 }
