@@ -79,23 +79,32 @@ const Unpaired = struct { side: values.Side, y: usize, count: usize, background:
 const Scratch = struct { mask: []regions.Cell, seeds: []u32 };
 
 const CompareBuffers = struct {
-    mask: std.ArrayList(regions.Cell) = .empty,
+    mask: []regions.Cell = &.{},
     seeds: std.ArrayList(u32) = .empty,
     alignment: row_diff.Workspace = .{},
 
     fn deinit(self: *CompareBuffers, allocator: Allocator) void {
         self.alignment.deinit(allocator);
         self.seeds.deinit(allocator);
-        self.mask.deinit(allocator);
+        self.freeMask(allocator);
     }
 
     fn prepare(self: *CompareBuffers, allocator: Allocator, area: usize) Allocator.Error!Scratch {
         const seed_rows = @max(1, @min(regions.max_fill_seeds, area));
-        try self.mask.ensureTotalCapacityPrecise(allocator, area);
+        if (area > self.mask.len) {
+            comptime std.debug.assert(@sizeOf(regions.Cell) == 1);
+            // yiq.mask writes every cell it hands to the grouping pass.
+            const ptr = allocator.rawAlloc(area, .of(regions.Cell), @returnAddress()) orelse return error.OutOfMemory;
+            self.freeMask(allocator);
+            self.mask = std.mem.bytesAsSlice(regions.Cell, ptr[0..area]);
+        }
         try self.seeds.ensureTotalCapacityPrecise(allocator, seed_rows);
-        self.mask.items.len = area;
         self.seeds.items.len = seed_rows;
-        return .{ .mask = self.mask.items, .seeds = self.seeds.items };
+        return .{ .mask = self.mask[0..area], .seeds = self.seeds.items };
+    }
+
+    fn freeMask(self: *CompareBuffers, allocator: Allocator) void {
+        if (self.mask.len != 0) allocator.rawFree(std.mem.sliceAsBytes(self.mask), .of(regions.Cell), @returnAddress());
     }
 };
 
