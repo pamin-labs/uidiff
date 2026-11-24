@@ -62,7 +62,7 @@ pub fn release(_: Allocator, pixels: []const Pixel) void {
     free(@constCast(pixels.ptr));
 }
 
-/// Recognizes the header of a noninterlaced RGBA8 PNG.
+/// Recognizes the PNG streaming profiles enabled for this target.
 pub fn streamingHeader(bytes: []const u8) bool {
     return c.uidiff_png_stream_header(bytes.ptr, bytes.len) != 0;
 }

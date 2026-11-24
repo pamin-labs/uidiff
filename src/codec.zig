@@ -282,6 +282,25 @@ test "streaming PNG matches procedural RGBA across dictionary wraps" {
     try std.testing.expectEqualSlices(Pixel, pixels, streamed[0 .. header.size.width * header.size.height]);
 }
 
+test "streaming RGB8 expands opaque alpha on irregular partial rows" {
+    const target = @import("builtin").target;
+    if (target.os.tag != .macos or target.cpu.arch != .aarch64) return error.SkipZigTest;
+    const width = 29;
+    const height = 1103;
+    const allocator = std.testing.allocator;
+    var pixels: [width * height]Pixel = undefined;
+    for (&pixels, 0..) |*pixel, i| {
+        pixel.* = .{ @intCast(i % 229), @intCast((3 * i) % 231), @intCast((i / width) % 233), 255 };
+    }
+    var output: Io.Writer.Allocating = .init(allocator);
+    defer output.deinit();
+    try encodePng(allocator, .{ .width = width, .height = height, .pixels = &pixels }, &output.writer);
+    const probed = try png.probe(allocator, output.written(), values.max_decode_bytes);
+    const streamed = (try stb.loadStreaming(allocator, output.written(), probed, values.max_decode_bytes)) orelse return error.TestUnexpectedResult;
+    defer stb.free(streamed);
+    try std.testing.expectEqualSlices(Pixel, &pixels, streamed[0..pixels.len]);
+}
+
 test "header preflight handles JPEG metadata beyond its initial read" {
     const io = std.testing.io;
     const allocator = std.testing.allocator;
