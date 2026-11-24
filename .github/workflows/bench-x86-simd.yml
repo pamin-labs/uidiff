@@ -1,0 +1,37 @@
+name: x86 SIMD benchmarks
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            # The repository variable supplies the private runner's label.
+            runner: ${{ github.event.repository.private && format('["self-hosted","Linux","X64",{0}]', toJSON(vars.X86_LINUX_BENCH_RUNNER)) || '["ubuntu-latest"]' }}
+          - name: windows
+            runner: '["windows-latest"]'
+          - name: macos
+            runner: '["macos-15-intel"]'
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          cache-key: simd-${{ matrix.name }}
+      - name: Measure zlib-ng dispatch variants
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            python scripts/bench-x86-simd.py
+          else
+            python3 scripts/bench-x86-simd.py
+          fi

@@ -45,6 +45,8 @@ jobs:
       - run: zig build e2e
       - run: zig build test-threaded
         if: runner.os == 'Linux'
+      - run: zig build test -Dcpu=baseline -Dx86-simd=without_avx2 "-Dtest-filter=streaming PNG matches procedural RGBA across dictionary wraps"
+        if: runner.os == 'Linux' && runner.arch == 'X64'
 
   release-build:
     runs-on: ubuntu-latest
