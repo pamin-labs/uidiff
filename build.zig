@@ -133,11 +133,19 @@ pub fn build(b: *Build) void {
     const optimize = override orelse release orelse shipped_mode;
     const test_mode = override orelse release orelse .debug;
     const decoders = addDecoders(b, target);
-    const uidiff = b.addModule("uidiff", libraryOptions(b, target, optimize, decoders));
-    linkCodecs(b, uidiff, target, .shipped, x86_simd);
+    const lib = libraryOptions(b, target, optimize, decoders);
+    const uidiff = b.addModule("uidiff", lib);
+    linkShippedCodecs(b, uidiff, target, x86_simd, false);
+    // Only the measured Linux arm64 musl release uses link-time optimization.
+    // Keep bitcode archives out of the public module consumed by other builds.
+    const use_lto = optimize == shipped_mode and target.result.os.tag == .linux and
+        target.result.cpu.arch == .aarch64 and target.result.abi == .musl;
+    const cli_library = if (use_lto) b.createModule(lib) else uidiff;
+    if (use_lto) linkShippedCodecs(b, cli_library, target, x86_simd, true);
 
     const cli = b.addExecutable(.{
         .name = cli_name,
+        .use_lld = if (use_lto) true else null,
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/cli.zig"),
             .target = target,
@@ -146,9 +154,10 @@ pub fn build(b: *Build) void {
             // The stripped CLI emits message-only panics. Windows retains
             // the unwind metadata used by its exception machinery.
             .unwind_tables = if (optimize != .debug and target.result.os.tag != .windows) .none else null,
-            .imports = &.{.{ .name = "uidiff", .module = uidiff }},
+            .imports = &.{.{ .name = "uidiff", .module = cli_library }},
         }),
     });
+    if (use_lto) cli.lto = .full;
     const install_cli = b.addInstallArtifact(cli, .{});
     b.getInstallStep().dependOn(&install_cli.step);
     inline for (.{ "LICENSE", "THIRD_PARTY_NOTICES" }) |notice| b.installFile(notice, "bin/" ++ notice);
@@ -165,7 +174,7 @@ pub fn build(b: *Build) void {
     fixture_build.dependOn(&generator.step);
 }
 
-/// The library module's options, without its C decoders; linkCodecs adds them.
+/// The library module's options, without its C decoders.
 fn libraryOptions(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoders: Decoders) Build.Module.CreateOptions {
     return .{
         .root_source_file = b.path("src/root.zig"),
@@ -183,21 +192,18 @@ fn libraryOptions(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, d
 
 fn addCheckedLibrary(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoders: Decoders, x86_simd: X86Simd) *Build.Module {
     const module = b.createModule(libraryOptions(b, target, optimize, decoders));
-    linkCodecs(b, module, target, .checked, x86_simd);
+    addDecoderSources(b, module, target, .checked, x86_simd);
     return module;
 }
 
-fn linkCodecs(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, mode: CodecBuild, x86_simd: X86Simd) void {
-    switch (mode) {
-        .checked => addDecoderSources(b, module, target, .checked, x86_simd),
-        .shipped => {
-            // Keep unwind metadata in checked builds where codec failures
-            // are diagnosed. The shipped C archive uses error returns.
-            const codecs = b.createModule(.{ .target = target, .optimize = codec_mode, .link_libc = true, .unwind_tables = .none });
-            addDecoderSources(b, codecs, target, .shipped, x86_simd);
-            module.linkLibrary(b.addLibrary(.{ .name = "uidiff-codecs", .root_module = codecs }));
-        },
-    }
+fn linkShippedCodecs(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, x86_simd: X86Simd, use_lto: bool) void {
+    // Keep unwind metadata in checked builds where codec failures
+    // are diagnosed. The shipped C archive uses error returns.
+    const codecs = b.createModule(.{ .target = target, .optimize = codec_mode, .link_libc = true, .unwind_tables = .none });
+    addDecoderSources(b, codecs, target, .shipped, x86_simd);
+    const archive = b.addLibrary(.{ .name = "uidiff-codecs", .root_module = codecs, .use_lld = if (use_lto) true else null });
+    if (use_lto) archive.lto = .full;
+    module.linkLibrary(archive);
 }
 
 /// Adds the PNG, JPEG and WebP decoders' C sources, bounded by the limits
