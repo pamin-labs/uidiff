@@ -247,18 +247,12 @@ fn addStbDecoder(b: *Build, module: *Build.Module, target: Build.ResolvedTarget,
 fn zlibHeaders(b: *Build, target: Build.ResolvedTarget) *Build.Step.WriteFile {
     const zlib = b.dependency("zlib_ng", .{});
     const files = b.addWriteFiles();
-    const api = std.mem.replaceOwned(u8, b.allocator, zlibSource(b, zlib, "zlib-ng.h.in"), "@ZLIB_SYMBOL_PREFIX@", "") catch @panic("OOM");
+    const api = replaceExactly(b.allocator, zlibSource(b, zlib, "zlib-ng.h.in"), "@ZLIB_SYMBOL_PREFIX@", "", 2);
     _ = files.add("zlib-ng.h", b.fmt("#define UIDIFF_PNG_COMPRESSION_LEVEL {d}\n#define UIDIFF_ZLIB_CRC {d}\n{s}", .{
         png_compression_level, @intFromBool(zlibPngCrc(target)), api,
     }));
     const conf = zlibSource(b, zlib, "zconf-ng.h.in");
-    _ = files.add("zconf-ng.h", if (target.result.os.tag == .windows) conf else std.mem.replaceOwned(
-        u8,
-        b.allocator,
-        conf,
-        "#ifdef HAVE_UNISTD_H",
-        "#if 1",
-    ) catch @panic("OOM"));
+    _ = files.add("zconf-ng.h", if (target.result.os.tag == .windows) conf else replaceExactly(b.allocator, conf, "#ifdef HAVE_UNISTD_H", "#if 1", 1));
     _ = files.add("zlib_name_mangling-ng.h", zlibSource(b, zlib, "zlib_name_mangling.h.empty"));
     return files;
 }
@@ -280,22 +274,17 @@ fn zlibDeflate(b: *Build, zlib: *Build.Dependency) Build.LazyPath {
     const close = (std.mem.indexOfScalarPos(u8, source, entry, '}') orelse @panic("zlib-ng level entry changed")) + 1;
     const end = (std.mem.indexOfPos(u8, source, close, "}};") orelse @panic("zlib-ng level table changed")) + 3;
     if (std.mem.indexOf(u8, source[entry..close], "deflate_medium") == null) @panic("zlib-ng level no longer uses the medium strategy");
-    var text = b.fmt("{s}static const config configuration = {s};{s}", .{ source[0..table], source[entry..close], source[end..] });
+    var text = replaceExactly(b.allocator, source, source[table..end], b.fmt("static const config configuration = {s};", .{source[entry..close]}), 1);
     const dispatch =
         \\s->level == 0 ? deflate_stored(s, flush) :
         \\                 s->strategy == Z_HUFFMAN_ONLY ? deflate_huff(s, flush) :
         \\                 s->strategy == Z_RLE ? deflate_rle(s, flush) :
         \\                 (*(configuration_table[s->level].func))(s, flush);
     ;
-    for ([_][2][]const u8{
-        .{ dispatch, "deflate_medium(s, flush);" },
-        .{ "configuration_table[s->level]", "configuration" },
-        .{ "configuration_table[level]", "configuration" },
-        .{ "level < 0 || level > 9 || strategy < 0 || strategy > Z_FIXED", "level != UIDIFF_PNG_COMPRESSION_LEVEL || strategy != Z_DEFAULT_STRATEGY" },
-    }) |change| {
-        if (std.mem.indexOf(u8, text, change[0]) == null) @panic("zlib-ng compressor changed");
-        text = std.mem.replaceOwned(u8, b.allocator, text, change[0], change[1]) catch @panic("OOM");
-    }
+    text = replaceExactly(b.allocator, text, dispatch, "deflate_medium(s, flush);", 1);
+    text = replaceExactly(b.allocator, text, "configuration_table[s->level]", "configuration", 1);
+    text = replaceExactly(b.allocator, text, "configuration_table[level]", "configuration", 5);
+    text = replaceExactly(b.allocator, text, "level < 0 || level > 9 || strategy < 0 || strategy > Z_FIXED", "level != UIDIFF_PNG_COMPRESSION_LEVEL || strategy != Z_DEFAULT_STRATEGY", 2);
     return b.addWriteFiles().add("deflate.c", text);
 }
 
@@ -305,18 +294,30 @@ fn zlibDispatch(b: *Build, zlib: *Build.Dependency) Build.LazyPath {
     const source = zlibSource(b, zlib, "functable.c");
     const first = std.mem.indexOf(u8, source, "static void crc32_fold_stub(") orelse @panic("zlib-ng dispatch stubs changed");
     const last = std.mem.indexOfPos(u8, source, first, "static void inflate_fast_stub(") orelse @panic("zlib-ng dispatch stubs changed");
-    const reachable = b.fmt("{s}{s}", .{ source[0..first], source[last..] });
-    var result: std.ArrayList(u8) = .empty;
-    var lines = std.mem.splitScalar(u8, reachable, '\n');
-    while (lines.next()) |line| {
-        if (std.mem.indexOf(u8, line, "ft.crc32_fold") != null or
-            std.mem.indexOf(u8, line, "FUNCTABLE_VERIFY_ASSIGN(ft, crc32_fold") != null) continue;
-        const trim = std.mem.trimStart(u8, line, " ");
-        const kept = if (std.mem.startsWith(u8, trim, "crc32_fold")) "    NULL," else line;
-        result.appendSlice(b.allocator, kept) catch @panic("OOM");
-        result.append(b.allocator, '\n') catch @panic("OOM");
-    }
-    return b.addWriteFiles().add("functable.c", result.items);
+    var text = replaceExactly(b.allocator, source, source[first..last], "", 1);
+    const removed = [_]struct { []const u8, usize }{
+        .{ "    ft.crc32_fold = &crc32_fold_c;\n    ft.crc32_fold_copy = &crc32_fold_copy_c;\n    ft.crc32_fold_final = &crc32_fold_final_c;\n    ft.crc32_fold_reset = &crc32_fold_reset_c;\n", 2 },
+        .{ "        ft.crc32_fold = &crc32_fold_pclmulqdq;\n        ft.crc32_fold_copy = &crc32_fold_pclmulqdq_copy;\n        ft.crc32_fold_final = &crc32_fold_pclmulqdq_final;\n        ft.crc32_fold_reset = &crc32_fold_pclmulqdq_reset;\n", 1 },
+        .{ "        ft.crc32_fold = &crc32_fold_vpclmulqdq;\n        ft.crc32_fold_copy = &crc32_fold_vpclmulqdq_copy;\n        ft.crc32_fold_final = &crc32_fold_vpclmulqdq_final;\n        ft.crc32_fold_reset = &crc32_fold_vpclmulqdq_reset;\n", 1 },
+        .{ "        ft.crc32_fold = &crc32_fold_armv8;\n        ft.crc32_fold_copy = &crc32_fold_copy_armv8;\n", 1 },
+        .{ "        ft.crc32_fold = &crc32_fold_loongarch64;\n        ft.crc32_fold_copy = &crc32_fold_copy_loongarch64;\n", 1 },
+        .{ "    FUNCTABLE_VERIFY_ASSIGN(ft, crc32_fold);\n    FUNCTABLE_VERIFY_ASSIGN(ft, crc32_fold_copy);\n    FUNCTABLE_VERIFY_ASSIGN(ft, crc32_fold_final);\n    FUNCTABLE_VERIFY_ASSIGN(ft, crc32_fold_reset);\n", 1 },
+    };
+    for (removed) |edit| text = replaceExactly(b.allocator, text, edit[0], "", edit[1]);
+    const fold_callbacks =
+        \\    crc32_fold_stub,
+        \\    crc32_fold_copy_stub,
+        \\    crc32_fold_final_stub,
+        \\    crc32_fold_reset_stub,
+    ;
+    text = replaceExactly(b.allocator, text, fold_callbacks, "    NULL,\n    NULL,\n    NULL,\n    NULL,", 1);
+    return b.addWriteFiles().add("functable.c", text);
+}
+
+fn replaceExactly(allocator: std.mem.Allocator, text: []const u8, from: []const u8, to: []const u8, expected_count: usize) []u8 {
+    if (std.mem.count(u8, text, from) != expected_count)
+        std.debug.panic("pinned zlib-ng edit expected {d} matches for {s}", .{ expected_count, from });
+    return std.mem.replaceOwned(u8, allocator, text, from, to) catch @panic("OOM");
 }
 
 fn zlibPngCrc(target: Build.ResolvedTarget) bool {

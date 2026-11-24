@@ -12,8 +12,10 @@ https://github.com/zlib-ng/zlib-ng
 
 Modified at build time. uidiff selects the upstream medium compressor at
 level 4, retains its original tuning, and removes the unused compressor
-strategies. The PNG-only build also omits gzip checksum dispatch. The pinned
-upstream sources are kept intact.
+strategies. The PNG-only build omits gzip checksum dispatch. The native
+zlib-ng header template receives an empty symbol prefix. The generated
+zconf-ng.h includes unistd.h on non-Windows targets without a CMake configure
+step. The pinned upstream sources are kept intact.
 
 (C) 1995-2024 Jean-loup Gailly and Mark Adler
 
