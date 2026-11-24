@@ -4,6 +4,7 @@ const values = @import("value.zig");
 const stb = @import("codec/stb.zig");
 const webp = @import("codec/webp.zig");
 const png = @import("codec/png.zig");
+const png_format = @import("codec/png_format.zig");
 const memory = @import("codec_memory");
 const Allocator = std.mem.Allocator;
 const Image = values.Image;
@@ -78,8 +79,8 @@ pub const FileInput = struct {
 
     /// Sniffs the bounded PNG profile without relying on its name.
     pub fn isStreaming(self: FileInput, io: Io) ReadError!bool {
-        if (self.length < png_header_bytes or self.length > concurrent_encoded_bytes) return false;
-        var prefix: [png_header_bytes]u8 = undefined;
+        if (self.length < png_format.header_bytes or self.length > concurrent_encoded_bytes) return false;
+        var prefix: [png_format.header_bytes]u8 = undefined;
         try readBytes(io, self.file, &prefix);
         return stb.streamingHeader(&prefix);
     }
@@ -113,7 +114,6 @@ pub const FileInput = struct {
 const probe_prefix_bytes = 4096;
 // Keep the extra encoded buffer cheap for comparisons that load two files.
 const concurrent_encoded_bytes = 1024 * 1024;
-const png_header_bytes = 29;
 
 /// Checks the encoded size, image dimensions and decode budget before
 /// allocating pixels. The caller owns the result.
@@ -215,7 +215,7 @@ fn pixelCount(size: Size) DecodeError!usize {
 }
 
 fn detect(bytes: []const u8) ?Codec {
-    if (std.mem.startsWith(u8, bytes, "\x89PNG\r\n\x1a\n") or std.mem.startsWith(u8, bytes, "\xff\xd8")) return .stb;
+    if (std.mem.startsWith(u8, bytes, png_format.signature) or std.mem.startsWith(u8, bytes, "\xff\xd8")) return .stb;
     if (bytes.len >= 12 and std.mem.eql(u8, bytes[0..4], "RIFF") and std.mem.eql(u8, bytes[8..12], "WEBP")) return .webp;
     return null;
 }

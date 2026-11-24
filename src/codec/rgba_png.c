@@ -2,7 +2,11 @@
    The stb_image binding handles all other PNG profiles. */
 #include "stb.h"
 #include <stdbool.h>
-#include "miniz.h"
+#include <string.h>
+#include "zlib-ng.h"
+
+/* Inflated bytes handed to the row reconstruction per call. */
+#define INFLATE_CHUNK (32 * 1024)
 
 void *uidiff_stbi_malloc(size_t size);
 void uidiff_stbi_free(void *block);
@@ -201,49 +205,63 @@ static bool consume_rows(png_rows *rows, const uint8_t *raw, size_t len) {
     return true;
 }
 
+static void *zalloc(void *opaque, unsigned int items, unsigned int size) {
+    (void)opaque;
+    if (size != 0 && items > SIZE_MAX / size) return NULL;
+    return uidiff_stbi_malloc((size_t)items * size);
+}
+
+static void zfree(void *opaque, void *block) {
+    (void)opaque;
+    uidiff_stbi_free(block);
+}
+
 static bool inflate_rows(const uint8_t *data, size_t first, size_t end,
-                         uint8_t *dict, png_rows *rows) {
+                         uint8_t *chunk, png_rows *rows, bool *alloc_failed) {
     // Match stb's checksum policy. Leave unusual chunk splits to stb,
-    // and validate the zlib header before passing the payload to miniz.
+    // and validate the zlib header before passing the raw payload to zlib-ng.
     if (be32(data + first) < 2) return false;
     const uint8_t cmf = data[first + 8];
     const uint8_t flg = data[first + 9];
     if ((cmf & 15) != 8 || (cmf >> 4) > 7 || (flg & 32) != 0 ||
         ((unsigned)cmf * 256 + flg) % 31 != 0) return false;
-    tinfl_decompressor decoder;
-    tinfl_init(&decoder);
-    size_t write = 0;
-    bool filled = false;
+    zng_stream z;
+    memset(&z, 0, sizeof(z));
+    z.zalloc = zalloc;
+    z.zfree = zfree;
+    const int window = -(int)((cmf >> 4) + 8);
+    const int init = zng_inflateInit2(&z, window);
+    if (init != Z_OK) {
+        *alloc_failed = init == Z_MEM_ERROR;
+        return false;
+    }
+    bool ok = false;
     for (size_t pos = first; pos < end;) {
         size_t available = be32(data + pos);
         const uint8_t *src = data + pos + 8;
         const size_t header = pos == first ? 2 : 0;
         pos += available + 12;
         const size_t trailer = pos == end ? 4 : 0;
-        if (available < header + trailer) return false;
-        src += header;
-        available -= header + trailer;
-        const uint32_t flags = pos < end ? TINFL_FLAG_HAS_MORE_INPUT : 0;
-        tinfl_status status;
-        do {
-            size_t in_len = available;
-            size_t out_len = TINFL_LZ_DICT_SIZE - write;
-            // Require references to stay inside produced bytes until the
-            // dictionary holds a full window of initialized history.
-            const uint32_t history = filled ? 0 : TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF;
-            status = tinfl_decompress(&decoder, src, &in_len, dict, dict + write, &out_len, flags | history);
-            if (status < 0 || !consume_rows(rows, dict + write, out_len)) return false;
-            write += out_len;
-            if (write == TINFL_LZ_DICT_SIZE) {
-                filled = true;
-                write = 0;
+        if (available < header + trailer) goto done;
+        z.next_in = src + header;
+        z.avail_in = (uint32_t)(available - header - trailer);
+        for (;;) {
+            z.next_out = chunk;
+            z.avail_out = INFLATE_CHUNK;
+            const int status = zng_inflate(&z, Z_NO_FLUSH);
+            if (status == Z_MEM_ERROR) *alloc_failed = true;
+            if (status != Z_OK && status != Z_STREAM_END && status != Z_BUF_ERROR) goto done;
+            if (!consume_rows(rows, chunk, INFLATE_CHUNK - z.avail_out)) goto done;
+            if (status == Z_STREAM_END) {
+                ok = rows->remaining == 0 && rows->used == 0;
+                goto done;
             }
-            src += in_len;
-            available -= in_len;
-            if (status == TINFL_STATUS_DONE) return rows->remaining == 0 && rows->used == 0;
-        } while (status == TINFL_STATUS_HAS_MORE_OUTPUT);
+            if (z.avail_out != 0 && z.avail_in == 0) break;
+            if (status == Z_BUF_ERROR) goto done;
+        }
     }
-    return false;
+done:
+    return zng_inflateEnd(&z) == Z_OK && ok;
 }
 
 int uidiff_png_load(const uint8_t *data, size_t len, uint32_t width,
@@ -251,23 +269,24 @@ int uidiff_png_load(const uint8_t *data, size_t len, uint32_t width,
     size_t first, end;
     if (!idat_range(data, len, &first, &end) || width != be32(data + 16) ||
         height != be32(data + 20) || width == 0 || height == 0 ||
-        width > (SIZE_MAX - TINFL_LZ_DICT_SIZE - 1) / 4 ||
+        width > (SIZE_MAX - INFLATE_CHUNK - 1) / 4 ||
         height > SIZE_MAX / (4 * (size_t)width)) return UIDIFF_PNG_FALLBACK;
 
     const size_t stride = 4 * (size_t)width;
     uint8_t *pixels = uidiff_stbi_malloc(stride * height);
     if (!pixels) return UIDIFF_PNG_ALLOC_FAILED;
-    uint8_t *scratch = uidiff_stbi_malloc(TINFL_LZ_DICT_SIZE + stride + 1);
+    uint8_t *scratch = uidiff_stbi_malloc(INFLATE_CHUNK + stride + 1);
     if (!scratch) {
         uidiff_stbi_free(pixels);
         return UIDIFF_PNG_ALLOC_FAILED;
     }
-    png_rows rows = {pixels, scratch + TINFL_LZ_DICT_SIZE, stride, 0, height, NULL};
-    const bool ok = inflate_rows(data, first, end, scratch, &rows);
+    png_rows rows = {pixels, scratch + INFLATE_CHUNK, stride, 0, height, NULL};
+    bool alloc_failed = false;
+    const bool ok = inflate_rows(data, first, end, scratch, &rows, &alloc_failed);
     uidiff_stbi_free(scratch);
     if (!ok) {
         uidiff_stbi_free(pixels);
-        return UIDIFF_PNG_FALLBACK;
+        return alloc_failed ? UIDIFF_PNG_ALLOC_FAILED : UIDIFF_PNG_FALLBACK;
     }
     *result = pixels;
     return UIDIFF_PNG_DECODED;

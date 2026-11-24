@@ -6,13 +6,13 @@
             .url = "https://github.com/webmproject/libwebp/archive/refs/tags/v1.6.0.tar.gz",
             .hash = "N-V-__8AAGkrewARcKiSyLfJKsaW0ZoqHh4hzi4mTGwekxjk",
         },
-        .miniz = .{
-            .url = "https://github.com/richgel999/miniz/archive/refs/tags/3.1.2.tar.gz",
-            .hash = "N-V-__8AAJmKFgC5zbelEEqRyvRErl5d8Qu74h8lKzSVc1xF",
-        },
         .stb = .{
             .url = "https://github.com/nothings/stb/archive/6b5799bae8a1fe3792691ef4b72ae26434c3e799.tar.gz",
             .hash = "N-V-__8AAMNjVQBtQqFTqLXf4ajZ6COgMe1AG_STJHG4jkdj",
+        },
+        .zlib_ng = .{
+            .url = "https://github.com/zlib-ng/zlib-ng/archive/refs/tags/2.3.3.tar.gz",
+            .hash = "N-V-__8AAPaJcABkB6U-96R7h2xuXX5TlDMvwPbE4PucPI59",
         },
     },
     .minimum_zig_version = "0.17.1",

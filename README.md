@@ -92,6 +92,6 @@ Run `zig build bench` to measure the bundled synthetic phone and desktop pairs: 
 
 ## License
 
-MIT. uidiff includes libwebp (BSD 3-Clause), miniz (MIT), stb_image (MIT or public domain) and code adapted from pixelmatch (ISC). Release archives include [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES) beside `LICENSE`.
+MIT. uidiff includes libwebp (BSD 3-Clause), zlib-ng (Zlib), stb_image (MIT or public domain) and code adapted from pixelmatch (ISC). Release archives include [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES) beside `LICENSE`.
 
 The annotated sheet embeds bitmap glyphs derived from IBM Plex Sans. The glyphs are not distributed as a font named Plex. The full OFL-1.1 text is in [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES). Run `python3 scripts/generate-font.py --check` to verify the [committed table](src/annotate/font-ascii.bin) offline. Use `--verify-generated` for a fresh rasterization with the pinned generator dependencies.

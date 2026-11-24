@@ -3,6 +3,7 @@
 const std = @import("std");
 const c = @import("stb_c");
 const values = @import("../value.zig");
+const png_format = @import("png_format.zig");
 const memory = @import("codec_memory");
 const Allocator = std.mem.Allocator;
 const Pixel = values.Pixel;
@@ -117,10 +118,10 @@ fn size(width: c_int, height: c_int) DecodeError!Size {
 // Read PNG dimensions on that error path. JPEG SOF dimensions fit u16,
 // so they cannot exceed the current extent limit.
 fn oversizedPng(bytes: []const u8) bool {
-    const magic = "\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR";
-    if (bytes.len < magic.len + 13 or !std.mem.startsWith(u8, bytes, magic)) return false;
-    const width = std.mem.readInt(u32, bytes[16..20], .big);
-    const height = std.mem.readInt(u32, bytes[20..24], .big);
+    if (bytes.len < png_format.header_bytes or !std.mem.startsWith(u8, bytes, png_format.header_prefix)) return false;
+    const offset = png_format.dimensions_offset;
+    const width = std.mem.readInt(u32, bytes[offset..][0..4], .big);
+    const height = std.mem.readInt(u32, bytes[offset + 4 ..][0..4], .big);
     return width != 0 and height != 0 and (width > values.max_extent or height > values.max_extent);
 }
 
@@ -136,6 +137,22 @@ test "the largest 8-bit images fit the decode budget and a 16-bit one does not" 
         try std.testing.expect(largest.pixelCount() != null);
         try std.testing.expect(budget(.{ .size = largest, .sample_bytes = 1 }, values.max_encoded_bytes) != null);
         try std.testing.expectEqual(@as(?usize, null), budget(.{ .size = largest, .sample_bytes = 2 }, 0));
+    }
+}
+
+test "the C streaming probe agrees with the PNG header layout" {
+    var header: [png_format.header_bytes]u8 = @splat(0);
+    @memcpy(header[0..png_format.header_prefix.len], png_format.header_prefix);
+    const offset = png_format.dimensions_offset;
+    std.mem.writeInt(u32, header[offset..][0..4], 253, .big);
+    std.mem.writeInt(u32, header[offset + 4 ..][0..4], 58, .big);
+    header[offset + 8 ..][0..2].* = .{ 8, 6 };
+    try std.testing.expect(streamingHeader(&header));
+    try std.testing.expect(!streamingHeader(header[0 .. header.len - 1]));
+    for (0..png_format.header_prefix.len) |i| {
+        header[i] ^= 1;
+        try std.testing.expect(!streamingHeader(&header));
+        header[i] ^= 1;
     }
 }
 
