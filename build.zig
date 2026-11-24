@@ -234,7 +234,8 @@ fn addDecoderSources(b: *Build, module: *Build.Module, target: Build.ResolvedTar
                 .flags = webp_flags,
             });
             // Upstream's CPU header omits these kernels unless the object
-            // itself targets their ISA. Otherwise these files are stubs.
+            // itself targets their ISA. Keep the portable build on SSE2
+            // until separate dispatch objects are measured on x86 WebP inputs.
             if (std.Target.x86.featureSetHas(features, .sse4_1)) module.addCSourceFiles(.{
                 .root = dsp,
                 .files = &.{ "alpha_processing_sse41.c", "dec_sse41.c", "lossless_sse41.c", "upsampling_sse41.c", "yuv_sse41.c" },
