@@ -71,6 +71,7 @@ pub const Raster = struct {
 const Point = struct { x: usize, y: usize };
 const EdgePolicy = enum { normal, stationary };
 const LaneBits = @Int(.unsigned, lanes);
+const ColorLanes = @Vector(lanes, f32);
 
 const threshold = 0.01;
 const max_delta = 35215 * threshold * threshold;
@@ -112,7 +113,7 @@ pub fn mask(a: Raster, b: Raster, top: usize, rows: usize, out: []regions.Cell) 
                 const r = channel(lanes, pa, 0) - channel(lanes, pb, 0);
                 const g = channel(lanes, pa, 1) - channel(lanes, pb, 1);
                 const blue = channel(lanes, pa, 2) - channel(lanes, pb, 2);
-                const candidates = yiq(@Vector(lanes, f64), r, g, blue) > @as(@Vector(lanes, f64), @splat(max_delta));
+                const candidates = yiq(ColorLanes, r, g, blue) > constant(ColorLanes, max_delta);
                 if (@reduce(.And, candidates) and flatBlock(a, old, pa, x, y) and flatBlock(b, new, pb, x, y)) {
                     @memset(output[x..][0..lanes], .changed);
                     found = true;
@@ -327,7 +328,7 @@ fn channelInt(comptime n: usize, pixels: @Vector(n, u32), comptime index: usize)
     return (pixels >> @as(@Vector(n, u5), @splat(shift))) & @as(@Vector(n, u32), @splat(255));
 }
 
-fn channel(comptime n: usize, pixels: @Vector(n, u32), comptime index: usize) @Vector(n, f64) {
+fn channel(comptime n: usize, pixels: @Vector(n, u32), comptime index: usize) @Vector(n, f32) {
     return @floatFromInt(channelInt(n, pixels, index));
 }
 
@@ -459,7 +460,12 @@ fn delta(a: Pixel, b: Pixel, index: usize) [3]f64 {
 }
 
 fn constant(comptime T: type, comptime k: f64) T {
-    return if (T == f64) k else @splat(k);
+    // The opaque-vector threshold is checked exhaustively against f64.
+    return switch (@typeInfo(T)) {
+        .vector => |v| @splat(@as(v.child, @floatCast(k))),
+        .float => @floatCast(k),
+        else => @compileError("YIQ requires a scalar or vector floating-point type"),
+    };
 }
 
 fn luminance(comptime T: type, r: T, g: T, b: T) T {
@@ -596,6 +602,28 @@ test "moved coverage clears a balanced edge redraw and keeps a stroke weight edi
         clearMovedCoverage(a, b, 0, &cells);
         try std.testing.expectEqual(expected, cells[left]);
         try std.testing.expectEqual(regions.Cell.clear, cells[right]);
+    }
+}
+
+test "opaque RGB delta cube has identical f32 and f64 thresholds" {
+    const largest: i32 = std.math.maxInt(u8);
+    const count = 2 * largest + 1;
+    const test_lanes = 8;
+    const Deltas = @Vector(test_lanes, i32);
+    const Single = @Vector(test_lanes, f32);
+    const Double = @Vector(test_lanes, f64);
+    for (0..count) |red| {
+        const r: Deltas = @splat(@as(i32, @intCast(red)) - largest);
+        for (0..count) |green| {
+            const g: Deltas = @splat(@as(i32, @intCast(green)) - largest);
+            var start: i32 = -largest;
+            while (start <= largest) : (start += test_lanes) {
+                const b = @min(@as(Deltas, @splat(start)) + std.simd.iota(i32, test_lanes), @as(Deltas, @splat(largest)));
+                const single = yiq(Single, @floatFromInt(r), @floatFromInt(g), @floatFromInt(b)) > constant(Single, max_delta);
+                const double = yiq(Double, @floatFromInt(r), @floatFromInt(g), @floatFromInt(b)) > constant(Double, max_delta);
+                if (!@reduce(.And, single == double)) return error.TestUnexpectedResult;
+            }
+        }
     }
 }
 
