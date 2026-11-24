@@ -48,6 +48,20 @@ jobs:
       - run: zig build test -Dcpu=baseline -Dx86-simd=without_avx2 "-Dtest-filter=streaming PNG matches procedural RGBA across dictionary wraps"
         if: runner.os == 'Linux' && runner.arch == 'X64'
 
+  clean-build:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          use-cache: false
+      - run: zig build -Doptimize=safe
+        env:
+          ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/uidiff-clean-zig-cache
+
   release-build:
     runs-on: ubuntu-latest
     strategy:
