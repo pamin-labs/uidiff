@@ -71,8 +71,6 @@ pub const Raster = struct {
 const Point = struct { x: usize, y: usize };
 const EdgePolicy = enum { normal, stationary };
 
-// f32 showed no measurable compare gain in zig build bench. Median f64 vs
-// f32 times were 1.435 vs 1.421 ms on phone and 4.407 vs 4.448 ms on desktop.
 const threshold = 0.01;
 const max_delta = 35215 * threshold * threshold;
 /// Neighboring samples that can establish the shared palette of a moved edge.

@@ -107,10 +107,7 @@ fn refuse(reason: Refusal) ?*anyopaque {
 // stb never wrote would see stale bytes instead of 0xaa. stb writes each
 // output byte before reading it back, the checked test and fuzz builds run
 // the decoders under UBSan, and the fill touched every page of a buffer a
-// malformed image never reaches. Measured with `zig build bench`, safe mode,
-// median of 7 rotated runs on an Apple M-series laptop, fill against raw:
-// decode 1.544 -> 1.263 ms phone-light (-18%) and 4.049 -> 3.244 ms
-// desktop-light (-20%), with peak RSS unchanged. The test "blocks handed to
+// malformed image never reaches. The test "blocks handed to
 // stb are freed through the allocator that made them" runs the raw paths
 // under the leak-checking allocator.
 fn allocate(allocator: Allocator, len: usize) ?*anyopaque {

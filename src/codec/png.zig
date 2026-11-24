@@ -50,16 +50,7 @@ const signature = "\x89PNG\r\n\x1a\n";
 const bit_depth = 8;
 const rgb_color = 2;
 const rgba_color = 6;
-/// Up filtering makes stationary areas runs of zero bytes. On the arm64
-/// macOS bench, bounded fixed/stored deflate cut phone-light / desktop-light
-/// sheet CPU from 22.355 / 54.820 ms to 4.943 / 12.255 ms (four alternating
-/// runs, 15 CPU samples per run). PNG size grew from 12.0 / 22.4 KiB to
-/// 57.2 / 130.6 KiB. With the same encoder and gap-only sheet initialization,
-/// SIMD Up cut sheet CPU from 4.902 / 12.232 ms to 3.137 / 7.925 ms
-/// (seven alternating runs) with identical encoded bytes.
-/// Dynamic codes then reduced the two PNGs to 11.8 / 22.8 KiB. On the same
-/// RGBA sheets, encode CPU was 2.860 / 6.960 ms before and 2.850 / 6.990 ms
-/// after (seven alternating runs, nine samples per run, arm64 macOS).
+/// Up filtering turns stationary areas into runs of zero bytes.
 const up_filter = 2;
 const sub_filter = 1;
 const paeth_filter = 4;

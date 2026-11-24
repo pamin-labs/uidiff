@@ -62,10 +62,8 @@ pub const max_pixels = 128 * 1024 * 1024;
 /// Allows very tall pages while bounding scratch storage that scales with one axis.
 pub const max_extent = 2 * (max_pixels / 4096);
 
-/// The largest encoded input accepted, in bytes: an RGBA8 image of max_pixels
-/// plus 1%. Incompressible noise measured at most 1.0017 times its RGBA8 size
-/// (PNG at zlib level 6, filter bytes included; lossless WebP 1.0001; JPEG at
-/// quality 100 less), so every image within max_pixels fits.
+/// The largest encoded input accepted in bytes. The allowance over an RGBA8
+/// image of max_pixels covers container and row-filter overhead.
 pub const max_encoded_bytes = max_pixels * @sizeOf(Pixel) / 100 * 101;
 
 /// The most memory one decode may hold, in bytes. The PNG and JPEG binding

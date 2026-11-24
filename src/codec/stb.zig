@@ -19,16 +19,12 @@ pub const Header = struct {
 pub const DecodeError = values.Image.Invalid || Allocator.Error || error{ImageTooLarge};
 
 /// Full-image buffers stb holds at once, each RGBA at the source sample depth.
-/// Measured peaks over that size (1024x768 noise, less the copy of the encoded
-/// data): 1.33 for an 8-bit RGBA PNG, 2.00 for a 16-bit one, 2.50 for an
-/// interlaced PNG and 2.52 for a progressive 4:4:4 JPEG. A progressive JPEG
-/// with four components holds two coefficient bytes and one plane byte per
-/// sample beside the RGBA output, which is four buffers: the bound.
+/// A progressive JPEG with four components holds two coefficient bytes and
+/// one plane byte per sample beside the RGBA output, which is four buffers.
 const live_images = 4;
 /// stb pads JPEG planes to whole blocks, at most 32 pixels on each axis.
 const block_pixels = 32;
-/// Allocations that do not scale with the image: stb's JPEG context (18,568
-/// bytes measured) and per-row buffers of up to four components.
+/// Headroom for stb's JPEG context and per-row buffers of up to four components.
 const fixed_bytes = 1024 * 1024;
 
 /// Returns dimensions and sample depth without decoding the pixels.
