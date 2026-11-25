@@ -31,9 +31,9 @@ const png_compression_level = 4;
 const max_cli_bytes = 1_200_000;
 const cli_name = "uidiff";
 const max_pinned_source_bytes = 256 * 1024;
-const styled_sheet_fuzz_source = "tests/fuzz/sheet.zig";
-/// Each fuzz target is its own test binary, so `zig build test --fuzz` runs every one.
-const fuzz_targets = [_][]const u8{ "src/cli.zig", "tests/fuzz/decode.zig", "tests/fuzz/jpeg.zig", "tests/fuzz/compare.zig", styled_sheet_fuzz_source };
+const cli_source = "src/cli.zig";
+const fuzz_directory = "tests/fuzz";
+const styled_sheet_fuzz_source = fuzz_directory ++ "/sheet.zig";
 /// Keeps clang's coverage instrumentation out of the C decoders under
 /// `zig build test --fuzz`. Zig 0.17's fuzzer reads one PC per edge counter
 /// from `__sancov_pcs1`, as its own backend writes them; clang writes two
@@ -156,7 +156,7 @@ pub fn build(b: *Build) void {
         .name = cli_name,
         .use_lld = if (cli_mode == .shipped_lto) true else null,
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/cli.zig"),
+            .root_source_file = b.path(cli_source),
             .target = target,
             .optimize = optimize,
             .strip = optimize != .debug,
@@ -671,7 +671,11 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
     b.step("fuzz-target-count", "Discover fuzz tests from the compiled runners").dependOn(&fuzz_count_install.step);
     addFuzzInventory(b, inventory, uidiff);
     step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = uidiff })).step);
-    for (fuzz_targets ++ [_][]const u8{"tests/decode.zig"}, 0..) |source, index| {
+    const fuzz_sources = fuzzSources(b);
+    const checked_sources = b.allocator.alloc([]const u8, fuzz_sources.len + 1) catch @panic("OOM");
+    @memcpy(checked_sources[0..fuzz_sources.len], fuzz_sources);
+    checked_sources[fuzz_sources.len] = "tests/decode.zig";
+    for (checked_sources, 0..) |source, index| {
         // The styled target encodes its full output. Use safe optimization
         // for this pixel-heavy workload while retaining decoder UBSan.
         const styled = std.mem.eql(u8, source, styled_sheet_fuzz_source);
@@ -684,7 +688,7 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
             .imports = &.{ .{ .name = "uidiff", .module = tested }, .{ .name = "fixtures", .module = cases } },
         });
         step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = test_module })).step);
-        if (index < fuzz_targets.len) addFuzzInventory(b, inventory, test_module);
+        if (index < fuzz_sources.len) addFuzzInventory(b, inventory, test_module);
     }
     for (source_tests) |source| {
         const run = b.addRunArtifact(b.addTest(.{ .root_module = b.createModule(.{
@@ -708,6 +712,31 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
         .optimize = optimize,
     }) })).step);
     addFixtures(b, step, host_generator);
+}
+
+fn fuzzSources(b: *Build) []const []const u8 {
+    const io = b.graph.io;
+    const path = b.pathJoin(&.{ b.root.sub_path, fuzz_directory });
+    const dir = b.root.root_dir.handle.openDir(io, path, .{ .iterate = true }) catch |err| switch (err) {
+        // The source package exports the library and omits external test runners.
+        error.FileNotFound => return &.{cli_source},
+        else => return std.process.fatal("cannot open " ++ fuzz_directory ++ ": {t}", .{err}),
+    };
+    defer dir.close(io);
+    b.dependOnDirectoryContents(b.path(fuzz_directory));
+    var iterator = dir.iterate();
+    var sources: std.ArrayList([]const u8) = .empty;
+    sources.append(b.allocator, cli_source) catch @panic("OOM");
+    while (iterator.next(io) catch |err| std.process.fatal("cannot list " ++ fuzz_directory ++ ": {t}", .{err})) |entry| {
+        if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".zig"))
+            sources.append(b.allocator, b.fmt(fuzz_directory ++ "/{s}", .{entry.name})) catch @panic("OOM");
+    }
+    std.mem.sort([]const u8, sources.items, {}, alphabetic);
+    return sources.items;
+}
+
+fn alphabetic(_: void, a: []const u8, b: []const u8) bool {
+    return std.mem.lessThan(u8, a, b);
 }
 
 fn addFuzzInventory(b: *Build, inventory: *Build.Step.Run, module: *Build.Module) void {
