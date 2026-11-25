@@ -82,6 +82,11 @@ pub fn isZig(path: []const u8) bool {
     return std.mem.endsWith(u8, path, ".zig");
 }
 
+/// Tests whether a normalized source path belongs to a named directory.
+pub fn inDirectory(path: []const u8, directory: []const u8) bool {
+    return std.mem.endsWith(u8, directory, "/") and std.mem.startsWith(u8, path, directory);
+}
+
 test {
     std.testing.refAllDecls(@This());
 }

@@ -20,10 +20,14 @@ const Layer = struct {
 /// or directories allowed to use it.
 const Grant = struct { module: []const u8, importers: []const []const u8 };
 
+/// The facade and private implementation directory of a nested module.
+const Submodule = struct { facade: []const u8, directory: []const u8 };
+
 /// The rules AGENTS.md states. Slices borrow its text; free with deinit.
 const Rules = struct {
     layers: []Layer,
     grants: []Grant,
+    submodules: []Submodule,
     arena: std.heap.ArenaAllocator,
 
     fn deinit(self: *Rules) void {
@@ -67,6 +71,10 @@ const sample_agents =
     \\| `stb_c` | `src/codec/stb.zig` |
     \\| `export` | `src/codec/stb.zig` |
     \\| `cases` | `tests/fuzz/` |
+    \\
+    \\| Submodule root | Implementation directory |
+    \\| --- | --- |
+    \\| `src/diff/regions.zig` | `src/diff/regions/` |
     \\## Gates
 ;
 
@@ -95,7 +103,8 @@ fn parseRules(allocator: Allocator, text: []const u8) !Rules {
     const a = arena.allocator();
     var layers: std.ArrayList(Layer) = .empty;
     var grants: std.ArrayList(Grant) = .empty;
-    var table: enum { none, layers, modules } = .none;
+    var submodules: std.ArrayList(Submodule) = .empty;
+    var table: enum { none, layers, modules, submodules } = .none;
     var lines = std.mem.splitScalar(u8, try section(text, layers_heading), '\n');
     while (lines.next()) |raw| {
         const line = std.mem.trim(u8, raw, " \r");
@@ -111,12 +120,18 @@ fn parseRules(allocator: Allocator, text: []const u8) !Rules {
                 .layers
             else if (std.mem.eql(u8, first, "Module"))
                 .modules
+            else if (std.mem.eql(u8, first, "Submodule root"))
+                .submodules
             else
                 return error.UnknownTable,
             .layers => try layers.append(a, .{
                 .name = first,
                 .paths = try ticks(a, cells.next() orelse return error.ShortRow),
                 .imports = try words(a, cells.next() orelse return error.ShortRow),
+            }),
+            .submodules => try submodules.append(a, .{
+                .facade = std.mem.trim(u8, first, "` "),
+                .directory = std.mem.trim(u8, cells.next() orelse return error.ShortRow, "` "),
             }),
             .modules => try grants.append(a, .{
                 .module = std.mem.trim(u8, first, "` "),
@@ -125,7 +140,7 @@ fn parseRules(allocator: Allocator, text: []const u8) !Rules {
         }
     }
     if (layers.items.len == 0 or grants.items.len == 0) return error.MissingTable;
-    return .{ .layers = layers.items, .grants = grants.items, .arena = arena };
+    return .{ .layers = layers.items, .grants = grants.items, .submodules = submodules.items, .arena = arena };
 }
 
 /// The backticked items of a cell.
@@ -153,7 +168,7 @@ fn words(allocator: Allocator, cell: []const u8) ![]const []const u8 {
 fn covered(named: []const []const u8, path: []const u8) bool {
     for (named) |prefix| {
         if (std.mem.eql(u8, prefix, path)) return true;
-        if (std.mem.endsWith(u8, prefix, "/") and std.mem.startsWith(u8, path, prefix)) return true;
+        if (sources.inDirectory(path, prefix)) return true;
     }
     return false;
 }
@@ -176,7 +191,13 @@ fn allowedImport(allocator: Allocator, rules: Rules, from_path: []const u8, targ
     const resolved = try std.fs.path.resolvePosix(allocator, &.{ std.fs.path.dirnamePosix(from_path) orelse ".", target });
     defer allocator.free(resolved);
     const to = rules.layerOf(resolved) orelse return false;
-    // A file under name/ never imports name.zig, its own module root.
+    for (rules.submodules) |submodule| {
+        const inside = sources.inDirectory(from_path, submodule.directory);
+        const facade = std.mem.eql(u8, from_path, submodule.facade);
+        if (inside and std.mem.eql(u8, resolved, submodule.facade)) return false;
+        if (sources.inDirectory(resolved, submodule.directory) and !inside and !facade) return false;
+    }
+    // A file under a layer never imports that layer's own root.
     if (to == from) return !isRoot(to, resolved);
     return isRoot(to, resolved) and contains(from.imports, to.name);
 }
@@ -276,6 +297,8 @@ test "every source imports only its layer and permitted lower layers" {
 
 test "the guard rejects reverse imports, submodule imports and foreign bindings" {
     const cases = [_]struct { path: []const u8, text: [:0]const u8 }{
+        .{ .path = "src/diff/compare.zig", .text = "const groups = @import(\"regions/grouping.zig\");" },
+        .{ .path = "src/diff/regions/grouping.zig", .text = "const regions = @import(\"../regions.zig\");" },
         .{ .path = "src/diff/rows.zig", .text = "const cli = @import(\"../cli/main.zig\");" },
         .{ .path = "src/diff/rows.zig", .text = "const diff = @import(\"../diff.zig\");" },
         .{ .path = "src/diff/rows.zig", .text = "const labels = @import(\"../annotate/labels.zig\");" },
@@ -295,6 +318,9 @@ test "the guard rejects reverse imports, submodule imports and foreign bindings"
     try testing.expectError(error.ForeignDeclaration, checkWithText("src/codec.zig", "const c = @cImport(@cInclude(\"image.h\"));"));
     try testing.expectError(error.ForeignDeclaration, checkWithText("src/diff.zig", "export fn hook() void {}"));
     try checkWithText("src/codec/stb.zig", "const c = @import(\"stb_c\");\nexport fn hook() void {}");
+    try checkWithText("src/diff/regions.zig", "const groups = @import(\"regions/grouping.zig\");");
+    try checkWithText("src/diff/regions/grouping.zig", "const pending = @import(\"candidate.zig\");");
+    try checkWithText("src/diff/compare.zig", "const regions = @import(\"regions.zig\");");
     try checkWithText("src/diff/rows.zig", "const values = @import(\"../value.zig\");");
     try checkWithText("src/diff.zig", "const rows = @import(\"diff/rows.zig\");");
     try checkWithText("src/root.zig", "const diff = @import(\"diff.zig\");");
