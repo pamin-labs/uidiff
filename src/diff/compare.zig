@@ -172,7 +172,7 @@ pub fn compareChecked(allocator: Allocator, before: Image, after: Image, options
         if (regions.shadeMarginEdit(storage[0].region, before, after, options.scale)) |mark| {
             // This smaller edit has independent evidence inside the shaded
             // extent. It must bypass the normal nearby-box merger.
-            storage[1] = .{ .region = mark, .pixels = storage[0].pixels };
+            storage[1] = mark;
             collector.len = 2;
         }
     }
@@ -2849,10 +2849,13 @@ test "audit: growing or replacing a toast retains the old panel" {
     after.fill(18, 48, 264, 86, .{ 230, 230, 230, 255 });
     after.fill(30, 54, 240, 72, .{ 122, 36, 45, 255 });
     after.line(60, 190, 76, 2, 218);
+    before.fill(42, 128, 18, 4, .{ 136, 136, 136, 255 });
+    after.fill(42, 128, 18, 4, .{ 115, 115, 115, 255 });
     const result = try compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(sample.hasRegion(result.regions, .before, 48, 88, null));
     try std.testing.expect(sample.hasRegion(result.regions, .after, 48, 88, null));
+    try std.testing.expect(sample.hasSeparateMark(result.regions, 48, 129, 120, 88));
 }
 
 test "reciprocal row moves are grouped only when both rows exchange intact" {

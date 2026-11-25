@@ -501,7 +501,7 @@ pub fn classifyOverlay(region: *Region, before: Image, after: Image, scale: valu
 
 /// Finds a separate colour edit embedded in a flat dimmed margin. The enclosing
 /// region remains available to account for the rest of the changed pixels.
-pub fn shadeMarginEdit(region: Region, before: Image, after: Image, scale: values.Scale) ?Region {
+pub fn shadeMarginEdit(region: Region, before: Image, after: Image, scale: values.Scale) ?Candidate {
     if (before.width != after.width or before.height != after.height) return null;
     const box = stationaryBox(region) orelse return null;
     const viewport = Box.fromPixels(0, 0, before.width, before.height);
@@ -666,7 +666,7 @@ fn toneDistance(a: values.Pixel, b: values.Pixel) f32 {
     return @reduce(.Add, @abs(tone(a) - tone(b)));
 }
 
-fn shadeMargin(before: Image, after: Image, area: PixelRect, extent: usize, edge: RailEnd) ?Region {
+fn shadeMargin(before: Image, after: Image, area: PixelRect, extent: usize, edge: RailEnd) ?Candidate {
     const width = area.right - area.left;
     const center = area.left + width / 2;
     const max_mark_width = width / shade_mark_width_divisor;
@@ -716,7 +716,7 @@ fn shadeMargin(before: Image, after: Image, area: PixelRect, extent: usize, edge
     } else return null;
     if (evidence < min_region_pixels or strongest < shade_mark_residual) return null;
     const mark = Box.fromPixels(left, top, right - left, bottom - top);
-    return .{ .before = mark, .after = mark };
+    return .{ .region = .{ .before = mark, .after = mark }, .pixels = evidence };
 }
 
 fn checkScrimShadow(before: Image, after: Image, panel: PixelRect, radius: usize, scrim: Scrim) bool {
@@ -1370,6 +1370,20 @@ test "a serpentine larger than the seed stack is one component" {
     try std.testing.expectEqual(@as(?Box, Box.fromPixels(3, 5, width, height)), collector.boxes[0].region.before);
     try std.testing.expectEqual(@as(?Box, null), collector.boxes[0].region.after);
     for (cells) |cell| try std.testing.expectEqual(Cell.clear, cell);
+}
+
+test "band placement translates only the sides present in the mask" {
+    const box = Box.fromPixels(4, 2, 5, 3);
+    const cases = [_]struct { placement: Placement, before: ?Box, after: ?Box }{
+        .{ .placement = .{ .left = 0, .rows = .{ .before = 7 } }, .before = Box.fromPixels(4, 9, 5, 3), .after = null },
+        .{ .placement = .{ .left = 0, .rows = .{ .after = 9 } }, .before = null, .after = Box.fromPixels(4, 11, 5, 3) },
+        .{ .placement = .{ .left = 0, .rows = .{ .paired = .{ .before = 7, .after = 9 } } }, .before = Box.fromPixels(4, 9, 5, 3), .after = Box.fromPixels(4, 11, 5, 3) },
+    };
+    for (cases) |item| {
+        const region = item.placement.place(box);
+        try std.testing.expectEqual(item.before, region.before);
+        try std.testing.expectEqual(item.after, region.after);
+    }
 }
 
 test "an image smaller than the noise minimum keeps single-pixel changes" {

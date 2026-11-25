@@ -90,16 +90,24 @@ fn consider(mark: Rect, bounds: Rect, diameter: usize, x: isize, y: isize, obsta
     best.* = .{ .result = candidate, .distance = distance };
 }
 
-test "badge ties prefer the top, then the left when the top is blocked" {
+test "blocked badge ties preserve top, left, bottom and right probe order" {
     const mark: Rect = .{ .x = 10, .y = 10, .w = 6, .h = 6 };
     const bounds: Rect = .{ .x = 0, .y = 0, .w = 30, .h = 30 };
     const diameter = 4;
-    const top: Rect = .{ .x = 10, .y = 0, .w = diameter, .h = diameter };
-    const left: Rect = .{ .x = 0, .y = 10, .w = diameter, .h = diameter };
-    try std.testing.expectEqual(@as(?Rect, top), place(mark, bounds, diameter, &.{}));
-    try std.testing.expectEqual(@as(?Rect, left), place(mark, bounds, diameter, &.{
+    const expected = [_]Rect{
+        .{ .x = 10, .y = 0, .w = diameter, .h = diameter },
+        .{ .x = 0, .y = 10, .w = diameter, .h = diameter },
+        .{ .x = 10, .y = 22, .w = diameter, .h = diameter },
+        .{ .x = 22, .y = 10, .w = diameter, .h = diameter },
+    };
+    const blocked = [_]Rect{
         .{ .x = 0, .y = 0, .w = bounds.w, .h = diameter },
-    }));
+        .{ .x = 0, .y = 0, .w = diameter, .h = bounds.h },
+        .{ .x = 0, .y = 22, .w = bounds.w, .h = bounds.h - 22 },
+    };
+    for (expected, 0..) |spot, n| {
+        try std.testing.expectEqual(@as(?Rect, spot), place(mark, bounds, diameter, blocked[0..n]));
+    }
 }
 
 test {
