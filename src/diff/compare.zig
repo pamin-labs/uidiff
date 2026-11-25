@@ -2849,6 +2849,32 @@ test "separate table cell edits stay separate unless both rows exchange intact" 
     try std.testing.expect(sample.hasRegion(independent.regions, .after, right + 1, upper + pitch + 1, .changed));
 }
 
+test "audit: a count edit between the exchanged rows remains a separate change" {
+    const before = try sample.Canvas.init(256, 160);
+    defer before.deinit();
+    const after = try sample.Canvas.init(256, 160);
+    defer after.deinit();
+    before.line(24, 160, 40, 1, 62);
+    before.line(94, 145, 80, 3, 62);
+    before.line(24, 160, 120, 7, 62);
+    after.copyRows(40, before, 120, 134);
+    after.copyRows(120, before, 40, 54);
+    after.line(94, 145, 80, 4, 62);
+    const boxes = [_]Box{
+        Box.fromPixels(24, 40, 136, 14),
+        Box.fromPixels(94, 80, 51, 14),
+        Box.fromPixels(24, 120, 136, 14),
+    };
+    var candidates: [boxes.len]regions.Candidate = undefined;
+    for (boxes, &candidates) |box, *candidate| candidate.* = .{
+        .region = .{ .before = box, .after = box },
+        .pixels = 8,
+    };
+    const original = candidates;
+    try std.testing.expectEqual(@as(?usize, null), regions.mergeSwap(&candidates, &.{}, before.view, after.view, .one));
+    try std.testing.expectEqualDeep(original, candidates);
+}
+
 test "a tab transfer groups its indicator and reciprocal label colors" {
     const before = try sample.Canvas.init(256, 120);
     defer before.deinit();

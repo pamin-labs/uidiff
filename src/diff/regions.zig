@@ -296,7 +296,6 @@ const floating_panel_inset_divisor = 4;
 const floating_panel_shadow_rounding = 3;
 const floating_panel_edge_fringe = 3;
 const max_swap_pitch = values.CssPx.init(128);
-const max_swap_candidates = 16;
 const tab_parts = 3;
 const tab_indicator_height = values.CssPx.init(6);
 const tab_label_gap = values.CssPx.init(16);
@@ -325,7 +324,7 @@ pub fn minPixels(before: Size, after: Size) usize {
 pub fn mergeSwap(boxes: []Candidate, moves: []const values.Move, before: Image, after: Image, scale: values.Scale) ?usize {
     if (before.width != after.width or before.height != after.height) return null;
     if (moves.len == 1 and boxes.len == 2) return reciprocalMove(boxes, moves[0], before, after);
-    if (moves.len != 0 or boxes.len < 3 or boxes.len > max_swap_candidates) return null;
+    if (moves.len != 0 or boxes.len < 3 or boxes.len > max_regions) return null;
     return positionalSwap(boxes, before, after, scale.devicePixels(max_swap_pitch));
 }
 
@@ -848,16 +847,26 @@ fn positionalSwap(boxes: []Candidate, before: Image, after: Image, max_pitch: f6
     for (boxes) |candidate| {
         const opposite = stationaryBox(candidate.region) orelse return null;
         const pitch = opposite.y - top.y;
-        if (pitch <= top.height or pitch > max_pitch or opposite.x != top.x or
+        if (pitch > max_pitch or opposite.x != top.x or
             opposite.width != top.width or opposite.height != top.height) continue;
         const step: usize = @intFromFloat(pitch);
         const rows = whole.height - pitch;
-        if (rows <= 0 or rows > pitch) continue;
+        if (!inSwapBands(boxes, top.y, opposite.y, rows)) continue;
         if (!exchangedRows(before, after, whole, step, @intFromFloat(rows))) continue;
         boxes[0].region = .{ .before = whole, .after = whole };
         return 1;
     }
     return null;
+}
+
+fn inSwapBands(boxes: []const Candidate, upper: f64, lower: f64, height: f64) bool {
+    if (height <= 0 or upper + height > lower) return false;
+    for (boxes) |candidate| {
+        const box = candidate.region.before orelse return false;
+        const start = if (box.y < lower) upper else lower;
+        if (box.y < start or box.bottom() > start + height) return false;
+    }
+    return true;
 }
 
 fn stationaryBox(region: Region) ?Box {
