@@ -265,50 +265,7 @@ fn addJpegDecoder(b: *Build, module: *Build.Module, target: Build.ResolvedTarget
     const neon = target.result.cpu.arch == .aarch64 and
         std.Target.aarch64.featureSetHas(target.result.cpu.features, .neon);
     const files = b.addWriteFiles();
-    const headers = files.getDirectory();
-
-    // The wrapper always requests native-size 8-bit RGBA or CMYK.
-    _ = files.add("jconfig.h",
-        \\#ifndef UIDIFF_JCONFIG_H
-        \\#define UIDIFF_JCONFIG_H
-        \\#define JPEG_LIB_VERSION 62
-        \\#define MEM_SRCDST_SUPPORTED 1
-        \\#define BITS_IN_JSAMPLE 8
-        \\#ifdef _WIN32
-        \\#ifndef __RPCNDR_H__
-        \\typedef unsigned char boolean;
-        \\#endif
-        \\#define HAVE_BOOLEAN
-        \\#if !defined(_BASETSD_H_) && !defined(_BASETSD_H)
-        \\typedef short INT16;
-        \\typedef signed int INT32;
-        \\#endif
-        \\#define XMD_H
-        \\#endif
-        \\#endif
-    );
-    _ = files.add("jconfigint.h", b.fmt(
-        \\#ifndef UIDIFF_JCONFIGINT_H
-        \\#define UIDIFF_JCONFIGINT_H
-        \\#define BUILD "uidiff"
-        \\#define HIDDEN __attribute__((visibility("hidden")))
-        \\#define INLINE __inline__
-        \\#define THREAD_LOCAL __thread
-        \\#define PACKAGE_NAME "libjpeg-turbo"
-        \\#define VERSION "3.2.1"
-        \\#define SIZEOF_SIZE_T __SIZEOF_SIZE_T__
-        \\#if __SIZEOF_LONG__ == __SIZEOF_SIZE_T__
-        \\#define HAVE_BUILTIN_CTZL
-        \\#endif
-        \\#define FALLTHROUGH __attribute__((fallthrough));
-        \\#define SIMD_ARCHITECTURE {s}
-        \\{s}
-        \\#endif
-    , .{ if (neon) "ARM64" else "NONE", if (neon) "#define WITH_SIMD 1" else "" }));
-    module.addIncludePath(headers);
-    module.addIncludePath(jpeg.path("src"));
-    module.addIncludePath(jpeg.path("simd"));
-    module.addIncludePath(b.path("src/codec"));
+    configureJpeg(b, module, jpeg, files, neon);
     const vendor_flags = std.mem.concat(b.allocator, []const u8, &.{
         &codec_section_flags,                                                                                                                        &fuzz_coverage_flags, flags,
         &.{ "-fvisibility=hidden", "-DNO_GETENV", "-include", b.root.joinString(b.allocator, "src/codec/jpeg_build_config.h") catch @panic("OOM") },
@@ -371,6 +328,24 @@ fn addJpegDecoder(b: *Build, module: *Build.Module, target: Build.ResolvedTarget
 
     // Upstream's x86 paths need NASM. Its Arm64 paths use C intrinsics.
     if (neon) addJpegNeon(b, jpeg, files, module, vendor_flags);
+}
+
+fn configureJpeg(b: *Build, module: *Build.Module, jpeg: *Build.Dependency, files: *Build.Step.WriteFile, neon: bool) void {
+    const source = readDependencySource(b, jpeg, "CMakeLists.txt");
+    const anchor = "\nset(VERSION ";
+    if (std.mem.count(u8, source, anchor) != 1) @panic("pinned JPEG version anchor changed");
+    const begin = std.mem.indexOf(u8, source, anchor).? + anchor.len;
+    const end = std.mem.indexOfScalarPos(u8, source, begin, ')') orelse @panic("pinned JPEG version has no end");
+    const version = source[begin..end];
+    _ = std.SemanticVersion.parse(version) catch @panic("pinned JPEG version is not a version number");
+    module.addCMacro("UIDIFF_JPEG_VERSION", b.fmt("\"{s}\"", .{version}));
+    if (neon) module.addCMacro("UIDIFF_JPEG_NEON", "1");
+    _ = files.add("jconfig.h", "#define UIDIFF_JPEG_PUBLIC_CONFIG 1\n#include \"jpeg_build_config.h\"\n#undef UIDIFF_JPEG_PUBLIC_CONFIG\n");
+    _ = files.add("jconfigint.h", "#define UIDIFF_JPEG_INTERNAL_CONFIG 1\n#include \"jpeg_build_config.h\"\n#undef UIDIFF_JPEG_INTERNAL_CONFIG\n");
+    module.addIncludePath(files.getDirectory());
+    module.addIncludePath(jpeg.path("src"));
+    module.addIncludePath(jpeg.path("simd"));
+    module.addIncludePath(b.path("src/codec"));
 }
 
 fn addJpegNeon(b: *Build, jpeg: *Build.Dependency, files: *Build.Step.WriteFile, module: *Build.Module, flags: []const []const u8) void {
