@@ -11,16 +11,16 @@ You change a UI, or a script does, or an AI agent does, and now you need to know
 
 | | uidiff | Iris | odiff | pixelmatch |
 | --- | ---: | ---: | ---: | ---: |
-| Pairs whose changes come out exactly right | **111 / 115** | 60 / 115 | 49 / 115 | 49 / 115 |
+| Pairs matching the expected region count | **111 / 115** | 60 / 115 | 49 / 115 | 49 / 115 |
 | Boxes on things that did not change | **4** | 46 | 147 | 131 |
 | Moved content found with its offset | **56 / 56** | 56 / 56 | n/a | n/a |
 | What you get | labelled regions, moves, a sheet | a mask | a mask | a mask |
-| CLI time, 2560×1600 pair | **11 ms** | 65 ms | 103 ms | 379 ms |
-| CPU time, same pair | **15 ms** | 80 ms | 127 ms | 419 ms |
-| Peak memory | **35 MB** | 70 MB | 50 MB | 147 MB |
-| Install | **605 KB**, one file | 1.3 MB + Node | 2.4 MB | 0.76 MB + Node |
+| CLI time, 2560×1600 pair | **11.4 ms** | 65 ms | 103 ms | 379 ms |
+| CPU time, same pair | **14.2 ms** | 80 ms | 127 ms | 419 ms |
+| Peak RSS | **35.4 MiB** | 70 MiB | 50 MiB | 147 MiB |
+| Install | **604 KB**, one file | 1.3 MB + Node | 2.4 MB | 0.76 MB + Node |
 
-<sub>Timings are medians from 15 rotated rounds on an Apple M4. Each comparison starts a new process. uidiff writes JSON, and Iris and pixelmatch include Node startup. See the <a href="bench/README.md">benchmark method</a>.</sub>
+<sub>Timings are medians from 15 rotated rounds on Arm64 macOS. The uidiff column was refreshed independently on the same pair. Each comparison starts a new process. uidiff writes JSON, and Iris and pixelmatch include Node startup. See the <a href="bench/README.md">benchmark method</a>.</sub>
 
 ## The sheet
 
