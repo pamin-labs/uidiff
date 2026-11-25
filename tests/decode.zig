@@ -29,6 +29,18 @@ test "PNG, JPEG and WebP decode to opaque RGBA8 through the given allocator" {
     try testing.checkAllAllocationFailures(testing.allocator, decodeSamples, .{});
 }
 
+test "JPEG profile pixels match on scalar and SIMD builds" {
+    for (fixtures.jpeg.profiles) |profile| {
+        errdefer std.debug.print("JPEG profile: {s}\n", .{profile.name});
+        var decoded = try uidiff.decode(testing.allocator, profile.encoded);
+        defer decoded.deinit();
+        try testing.expectEqual(uidiff.Size{ .width = fixtures.jpeg.width, .height = fixtures.jpeg.height }, decoded.image.size());
+        var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash(std.mem.sliceAsBytes(decoded.image.pixels), &digest, .{});
+        try testing.expectEqualStrings(profile.rgba_sha256, &std.fmt.bytesToHex(digest, .lower));
+    }
+}
+
 test "PNG header rejects oversized dimensions before pixel data is needed" {
     const bytes = try sample(.png);
     defer testing.allocator.free(bytes);

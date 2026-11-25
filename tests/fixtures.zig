@@ -25,6 +25,8 @@ pub const claims = cases.claims;
 pub const find = cases.find;
 /// Every file the generator writes, inside the generated directory.
 pub const files = cases.files;
+/// JPEG profiles for decoded-pixel identity and fuzz coverage.
+pub const jpeg = @import("fixtures/jpeg.zig");
 
 test {
     std.testing.refAllDecls(@This());

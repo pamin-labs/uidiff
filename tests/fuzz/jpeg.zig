@@ -1,51 +1,71 @@
-//! Exercises the bounded libjpeg-turbo bridge with preserved frame dimensions.
+//! Exercises JPEG header, scan and colour decoding across the fixture profiles.
 const std = @import("std");
 const uidiff = @import("uidiff");
 const fixtures = @import("fixtures");
 const testing = std.testing;
 
-const Seed = struct { bytes: []const u8, frame_end: usize };
-
-const max_encoded_bytes = 4096;
+const max_fuzz_bytes = 4096;
 const max_mutations = 12;
-const blank = fixtures.find(.identical);
-const frame_marker = "\xff\xc0";
+const scratch_bytes = 256 * 1024;
+const soi_bytes = 2;
+const first_frame = 0xc0;
+const last_frame = 0xc2;
+const frame_marker_prefix = 0xff;
+const segment_length_bytes = @sizeOf(u16);
 
-fn fuzzJpeg(seed: Seed, smith: *testing.Smith) !void {
-    var bytes: [max_encoded_bytes]u8 = undefined;
-    @memcpy(bytes[0..seed.frame_end], seed.bytes[0..seed.frame_end]);
-    // A complete frame keeps the public probe on the JPEG path while the
-    // scan parameters and entropy bytes can vary.
-    const len: usize = if (smith.value(bool)) seeded: {
-        @memcpy(bytes[seed.frame_end..seed.bytes.len], seed.bytes[seed.frame_end..]);
+fn frameFields(bytes: []const u8) struct { start: u16, end: u16 } {
+    // These seeds come from the generator and have exactly one SOF.
+    var offset: u16 = soi_bytes;
+    while (offset + 2 + segment_length_bytes <= bytes.len) {
+        if (bytes[offset] != frame_marker_prefix) break;
+        const marker = bytes[offset + 1];
+        offset += 2;
+        const segment_length = std.mem.readInt(u16, bytes[offset..][0..segment_length_bytes], .big);
+        if (segment_length < segment_length_bytes or segment_length > bytes.len - offset) break;
+        if (marker >= first_frame and marker <= last_frame) return .{ .start = offset, .end = offset + segment_length };
+        offset += segment_length;
+    }
+    @panic("generated JPEG seed has no SOF");
+}
+
+fn fuzzJpeg(_: void, smith: *testing.Smith) !void {
+    const seed = fixtures.jpeg.profiles[smith.valueRangeAtMost(u8, 0, fixtures.jpeg.profiles.len - 1)].encoded;
+    const frame = frameFields(seed);
+    var bytes: [max_fuzz_bytes]u8 = undefined;
+    @memcpy(bytes[0..seed.len], seed);
+    const len: usize = if (smith.value(bool)) frame.end + smith.slice(bytes[frame.end..]) else seeded: {
         for (0..smith.valueRangeAtMost(u8, 0, max_mutations)) |_| {
-            const offset = smith.valueRangeAtMost(u16, @intCast(seed.frame_end), @intCast(seed.bytes.len - 1));
+            const offset = if (smith.value(bool))
+                smith.valueRangeAtMost(u16, frame.start, frame.end - 1)
+            else
+                smith.valueRangeAtMost(u16, soi_bytes, @intCast(seed.len - 1));
             bytes[offset] = smith.value(u8);
         }
         break :seeded if (smith.value(bool))
-            smith.valueRangeAtMost(u16, @intCast(seed.frame_end), @intCast(seed.bytes.len))
+            smith.valueRangeAtMost(u16, soi_bytes, @intCast(seed.len))
         else
-            seed.bytes.len;
-    } else seed.frame_end + smith.slice(bytes[seed.frame_end..]);
-    var decoded = uidiff.decode(testing.allocator, bytes[0..len]) catch |err| switch (err) {
-        error.InvalidImage, error.ImageTooLarge => return,
+            seed.len;
+    };
+
+    // Mutated dimensions may be large. Bound the arena used per fuzz case.
+    var scratch: [scratch_bytes]u8 = undefined;
+    var fixed: std.heap.FixedBufferAllocator = .init(&scratch);
+    var decoded = uidiff.decode(fixed.allocator(), bytes[0..len]) catch |err| switch (err) {
+        error.InvalidImage, error.ImageTooLarge, error.OutOfMemory => return,
         else => return err,
     };
     defer decoded.deinit();
-    const expected: uidiff.Size = .{ .width = blank.width * fixtures.scale, .height = blank.height * fixtures.scale };
-    try testing.expectEqual(expected, decoded.image.size());
+    try testing.expectEqual(decoded.image.size().pixelCount(), decoded.image.pixels.len);
     try testing.expect(decoded.image.isOpaque());
 }
 
 test "fuzz bounded JPEG decoding" {
-    const bytes = try std.Io.Dir.cwd().readFileAlloc(testing.io, blank.path(.before, .jpg), testing.allocator, .limited(max_encoded_bytes));
-    defer testing.allocator.free(bytes);
-    const marker = std.mem.indexOf(u8, bytes, frame_marker) orelse return error.TestUnexpectedResult;
-    const length_at = marker + frame_marker.len;
-    if (bytes.len - length_at < @sizeOf(u16)) return error.TestUnexpectedResult;
-    const frame_end = length_at + std.mem.readInt(u16, bytes[length_at..][0..2], .big);
-    if (frame_end >= bytes.len) return error.TestUnexpectedResult;
-    try testing.fuzz(Seed{ .bytes = bytes, .frame_end = frame_end }, fuzzJpeg, .{});
+    const corpus = comptime blk: {
+        var seeds: [fixtures.jpeg.profiles.len][]const u8 = undefined;
+        for (0..seeds.len) |index| seeds[index] = &.{index};
+        break :blk seeds;
+    };
+    try testing.fuzz({}, fuzzJpeg, .{ .corpus = &corpus });
 }
 
 test {
