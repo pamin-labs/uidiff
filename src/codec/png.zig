@@ -1,5 +1,6 @@
 //! Streams PNG decode and encode through bounded zlib buffers.
 const std = @import("std");
+const builtin = @import("builtin");
 const values = @import("../value.zig");
 const png_format = @import("png_format.zig");
 const stb = @import("stb.zig");
@@ -79,8 +80,10 @@ const Deflater = struct {
         const allocator: *const Allocator = @ptrCast(@alignCast(context));
         const bytes = std.math.mul(usize, items, size) catch return null;
         const total = std.math.add(usize, bytes, header_bytes) catch return null;
-        // zlib-ng initializes its buffers before reading them.
-        const block = allocator.rawAlloc(total, .@"16", @returnAddress()) orelse return null;
+        const block = if (builtin.mode == .debug)
+            (allocator.alignedAlloc(u8, .@"16", total) catch return null).ptr
+        else
+            allocator.rawAlloc(total, .@"16", @returnAddress()) orelse return null;
         std.mem.writeInt(usize, block[0..@sizeOf(usize)], total, .little);
         return block + header_bytes;
     }
@@ -90,7 +93,7 @@ const Deflater = struct {
         const data: [*]align(16) u8 = @ptrCast(@alignCast(address orelse return));
         const base: [*]align(16) u8 = @alignCast(data - header_bytes);
         const bytes = std.mem.readInt(usize, base[0..@sizeOf(usize)], .little);
-        allocator.rawFree(base[0..bytes], .@"16", @returnAddress());
+        if (builtin.mode == .debug) allocator.free(base[0..bytes]) else allocator.rawFree(base[0..bytes], .@"16", @returnAddress());
     }
 };
 
@@ -137,9 +140,7 @@ pub fn streamingHeader(bytes: []const u8) bool {
 
 /// Runs bounded scanline decoding. Null requests the legacy fallback.
 pub fn loadStreaming(allocator: Allocator, bytes: []const u8, header: stb.Header, cap: usize) DecodeError!?[*]values.Pixel {
-    try stb.beginDecode(allocator, header, bytes.len, cap);
-    defer memory.end();
-    return streamPixels(bytes, header.size);
+    return stb.withDecodeBudget(streamPixels, allocator, bytes, header, cap);
 }
 
 /// Encodes a valid image. Allocates the compressor's window and one filtered row.
@@ -327,10 +328,12 @@ fn portableChecksum(kind: *const [4]u8, data: []const u8) u32 {
 }
 
 fn load(allocator: Allocator, bytes: []const u8, header: stb.Header, cap: usize) DecodeError![*]values.Pixel {
-    try stb.beginDecode(allocator, header, bytes.len, cap);
-    defer memory.end();
-    if (try streamPixels(bytes, header.size)) |pixels| return pixels;
-    return stb.loadStb(bytes, header.size);
+    return stb.withDecodeBudget(loadPixels, allocator, bytes, header, cap);
+}
+
+fn loadPixels(bytes: []const u8, size: values.Size) DecodeError![*]values.Pixel {
+    if (try streamPixels(bytes, size)) |pixels| return pixels;
+    return stb.loadStb(bytes, size);
 }
 
 fn streamPixels(bytes: []const u8, dimensions: values.Size) DecodeError!?[*]values.Pixel {

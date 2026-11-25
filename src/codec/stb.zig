@@ -45,9 +45,7 @@ pub fn probe(allocator: Allocator, bytes: []const u8, cap: usize) DecodeError!He
 
 /// Decodes a fallback PNG under the caller's budget.
 pub fn loadLegacy(allocator: Allocator, bytes: []const u8, header: Header, cap: usize) DecodeError![]Pixel {
-    try beginDecode(allocator, header, bytes.len, cap);
-    defer memory.end();
-    const pixels = try loadStb(bytes, header.size);
+    const pixels = try withDecodeBudget(loadStb, allocator, bytes, header, cap);
     return pixels[0 .. header.size.width * header.size.height];
 }
 
@@ -61,11 +59,11 @@ pub fn free(pixel_data: [*]Pixel) void {
     c.stbi_image_free(pixel_data);
 }
 
-/// Begins a PNG allocation scope using the legacy budget as the cap.
-pub noinline fn beginDecode(allocator: Allocator, header: Header, len: usize, cap: usize) DecodeError!void {
-    const limit = budget(header, len) orelse return error.ImageTooLarge;
-    if (limit > cap) return error.ImageTooLarge;
-    memory.begin(allocator, limit);
+/// Runs a byte-and-size decoder within the PNG allocation scope.
+pub fn withDecodeBudget(comptime decodePixels: anytype, allocator: Allocator, bytes: []const u8, header: Header, cap: usize) @typeInfo(@TypeOf(decodePixels)).@"fn".return_type.? {
+    try beginDecode(allocator, header, bytes.len, cap);
+    defer memory.end();
+    return decodePixels(bytes, header.size);
 }
 
 /// Runs the fallback PNG decoder in an active allocation scope.
@@ -79,6 +77,12 @@ pub fn loadStb(bytes: []const u8, expected: Size) DecodeError![*]Pixel {
     const actual = try size(width, height);
     if (actual.width != expected.width or actual.height != expected.height) return error.InvalidImage;
     return pixels;
+}
+
+noinline fn beginDecode(allocator: Allocator, header: Header, len: usize, cap: usize) DecodeError!void {
+    const limit = budget(header, len) orelse return error.ImageTooLarge;
+    if (limit > cap) return error.ImageTooLarge;
+    memory.begin(allocator, limit);
 }
 
 /// Returns the most bytes stb may hold while decoding an image with this

@@ -1167,7 +1167,7 @@ fn tracedOutline(before: Image, after: Image, top: Box, right: Box, bottom: Box,
         rail(before, after, top, bottom, .{ .axis = .vertical, .exterior = .start }, max_rail) and
         rail(before, after, right, lower_right, .{ .axis = .vertical, .exterior = .end }, max_rail)) return true;
 
-    // Collector boxes use whole non-negative coordinates within their before.
+    // Collector boxes use whole non-negative coordinates within the source image.
     const mid_x: usize = @intFromFloat((top.right() + right.x) / 2);
     const mid_y: usize = @intFromFloat((top.bottom() + bottom.y) / 2);
     const top_y: usize = @intFromFloat(top.y);
