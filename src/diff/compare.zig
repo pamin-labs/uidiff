@@ -166,6 +166,7 @@ pub fn compareChecked(allocator: Allocator, before: Image, after: Image, options
     }
     if (collector.len > 1) collector.len = regions.mergeCorners(storage[0..collector.len], before, after, options.scale);
     if (collector.len > 1) collector.len = regions.mergeLogical(storage[0..collector.len], before, after, options.scale, moves.items);
+    collector.len = regions.mergeTabSelection(storage[0..collector.len], before, after, options.scale);
     const out = try allocator.alloc(values.Region, collector.len);
     errdefer allocator.free(out);
     for (out, storage[0..collector.len]) |*region, box| region.* = box.region;
@@ -2845,6 +2846,33 @@ test "separate table cell edits stay separate unless both rows exchange intact" 
     defer independent.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 4), independent.regions.len);
     try std.testing.expect(sample.hasRegion(independent.regions, .after, right + 1, upper + pitch + 1, .changed));
+}
+
+test "a tab transfer groups its indicator and reciprocal label colors" {
+    const before = try sample.Canvas.init(256, 120);
+    defer before.deinit();
+    const after = try sample.Canvas.init(256, 120);
+    defer after.deinit();
+    const active = sample.inkShade(32, 4);
+    const idle = sample.inkShade(112, 4);
+    const indicator = .{ 92, 38, 211, 255 };
+    before.fill(32, 24, 68, 9, active);
+    before.fill(108, 24, 78, 9, idle);
+    before.fill(24, 47, 65, 3, indicator);
+    after.fill(32, 24, 68, 9, idle);
+    after.fill(108, 24, 78, 9, active);
+    after.fill(108, 47, 82, 3, indicator);
+    const transfer = try compareCanvases(before, after, 1);
+    defer transfer.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 1), transfer.regions.len);
+    try std.testing.expect(sample.hasRegion(transfer.regions, .before, 25, 48, .changed));
+    try std.testing.expect(sample.hasRegion(transfer.regions, .after, 185, 48, .changed));
+
+    after.fill(108, 24, 78, 9, .{ 16, 45, 58, 255 });
+    const separate = try compareCanvases(before, after, 1);
+    defer separate.deinit(std.testing.allocator);
+    try std.testing.expect(separate.regions.len > 1);
+    try std.testing.expect(sample.hasRegion(separate.regions, .after, 110, 25, .changed));
 }
 
 test "four corners follow a continuous outline even when its straight edges differ in color" {

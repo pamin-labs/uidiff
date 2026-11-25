@@ -297,6 +297,9 @@ const floating_panel_shadow_rounding = 3;
 const floating_panel_edge_fringe = 3;
 const max_swap_pitch = values.CssPx.init(128);
 const max_swap_candidates = 16;
+const tab_parts = 3;
+const tab_indicator_height = values.CssPx.init(6);
+const tab_label_gap = values.CssPx.init(16);
 const corner_rail_contrast = 36;
 const max_corner_rail_px = 2048;
 const blank_tolerance = 24;
@@ -320,6 +323,41 @@ pub fn mergeSwap(boxes: []Candidate, moves: []const values.Move, before: Image, 
     if (moves.len == 1 and boxes.len == 2) return reciprocalMove(boxes, moves[0], before, after);
     if (moves.len != 0 or boxes.len < 3 or boxes.len > max_swap_candidates) return null;
     return positionalSwap(boxes, before, after, scale.devicePixels(max_swap_pitch));
+}
+
+/// Joins a tab indicator transfer with its reciprocal label restyling.
+pub fn mergeTabSelection(boxes: []Candidate, before: Image, after: Image, scale: values.Scale) usize {
+    if (boxes.len != tab_parts) return boxes.len;
+    var order = [_]usize{ 0, 1, 2 };
+    for (order) |i| _ = stationaryBox(boxes[i].region) orelse return boxes.len;
+    std.sort.insertion(usize, &order, boxes, tabPartAbove);
+    const label = boxes[order[0]].region.before.?;
+    const first = boxes[order[1]].region.before.?;
+    const last = boxes[order[2]].region.before.?;
+    const a, const b = if (first.x < last.x) .{ first, last } else .{ last, first };
+    if (label.height > scale.devicePixels(line_height) or a.y != b.y or a.height != b.height or
+        a.height > scale.devicePixels(tab_indicator_height) or a.y < label.bottom() or
+        a.y - label.bottom() > scale.devicePixels(tab_label_gap) or a.right() >= b.x) return boxes.len;
+    const ax: usize = @intFromFloat(a.x + a.width / 2);
+    const bx: usize = @intFromFloat(b.x + b.width / 2);
+    const y: usize = @intFromFloat(a.y + a.height / 2);
+    const old_indicator = before.row(y)[ax];
+    const new_indicator = after.row(y)[ax];
+    if (pixel.same(old_indicator, new_indicator) or !pixel.same(old_indicator, after.row(y)[bx]) or
+        !pixel.same(new_indicator, before.row(y)[bx])) return boxes.len;
+    const gap: usize = @intFromFloat((a.right() + b.x) / 2);
+    const background = before.row(y)[gap];
+    if (!pixel.same(background, after.row(y)[gap]) or
+        (!pixel.same(background, old_indicator) and !pixel.same(background, new_indicator))) return boxes.len;
+
+    const old_a = labelInk(before, label, a, background);
+    const new_a = labelInk(after, label, a, background);
+    if (pixel.same(old_a, new_a) or pixel.same(old_a, background) or pixel.same(new_a, background)) return boxes.len;
+    if (!pixel.same(old_a, labelInk(after, label, b, background)) or
+        !pixel.same(new_a, labelInk(before, label, b, background))) return boxes.len;
+    const cover = unite(unite(a, b), label);
+    boxes[0].region = .{ .before = cover, .after = cover };
+    return 1;
 }
 
 /// Joins the retained boxes that together describe a single visible edit.
@@ -806,6 +844,28 @@ fn exchangedRows(before: Image, after: Image, bands: Box, pitch: usize, rows: us
 
 fn sameRow(a: []const values.Pixel, b: []const values.Pixel) bool {
     return std.mem.eql(u8, std.mem.sliceAsBytes(a), std.mem.sliceAsBytes(b));
+}
+
+fn tabPartAbove(boxes: []const Candidate, a: usize, b: usize) bool {
+    return boxes[a].region.before.?.y < boxes[b].region.before.?.y;
+}
+
+fn labelInk(image: Image, label: Box, indicator: Box, background: values.Pixel) values.Pixel {
+    const x: usize = @intFromFloat(@max(indicator.x, label.x));
+    const right: usize = @intFromFloat(@min(indicator.right(), label.right()));
+    var ink = background;
+    var contrast: u16 = 0;
+    if (x >= right) return ink;
+    for (@as(usize, @intFromFloat(label.y))..@as(usize, @intFromFloat(label.bottom()))) |y| {
+        for (image.row(y)[x..right]) |p| {
+            const distance = toneDistance(p, background);
+            if (distance > contrast) {
+                contrast = distance;
+                ink = p;
+            }
+        }
+    }
+    return ink;
 }
 
 fn corner(region: Region, limit: f64) ?Box {
