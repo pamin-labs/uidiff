@@ -127,8 +127,26 @@ def finalize(release_version, output):
     assets = [FORMULA_ASSET, "install.sh", "install.ps1"]
     for target in TARGETS:
         assets.extend((target.release_binary(release_version), target.archive(release_version)))
+    write_checksums(output, assets)
+
+
+def write_checksums(output, assets):
     sums = "".join(f"{digest(output / name)}  {name}\n" for name in sorted(assets))
-    (output / "SHA256SUMS").write_text(sums)
+    manifest = output / "SHA256SUMS"
+    manifest.write_text(sums)
+    return manifest
+
+
+def installer_fixture(target, release_version, bin_dir, output):
+    """Stage the same offline release fixture for both installer tests."""
+    tagged = output / "download" / f"v{release_version}"
+    latest = output / "latest" / "download"
+    asset = pack(target, release_version, bin_dir, tagged)
+    sums = write_checksums(tagged, [asset])
+    latest.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(sums, latest / sums.name)
+    checksum, _ = sums.read_text().split()
+    return release_version, asset, checksum
 
 
 def write_manifest(package_dir, manifest):
@@ -180,10 +198,11 @@ def main():
     commands.add_parser("tap")
     validate = commands.add_parser("version")
     validate.add_argument("--tag")
-    package = commands.add_parser("pack")
-    package.add_argument("target", choices=[target.zig for target in TARGETS])
-    package.add_argument("bin_dir", type=Path)
-    package.add_argument("output", type=Path)
+    for command in ("pack", "installer-fixture"):
+        package = commands.add_parser(command)
+        package.add_argument("target", choices=[target.zig for target in TARGETS])
+        package.add_argument("bin_dir", type=Path)
+        package.add_argument("output", type=Path)
     commands.add_parser("finalize").add_argument("output", type=Path)
     npm = commands.add_parser("npm")
     npm.add_argument("binaries", type=Path)
@@ -204,6 +223,8 @@ def main():
         print(release_version)
     elif args.command == "pack":
         print(pack(Target(args.target), release_version, args.bin_dir, args.output))
+    elif args.command == "installer-fixture":
+        print("\t".join(installer_fixture(Target(args.target), release_version, args.bin_dir, args.output)))
     elif args.command == "finalize":
         finalize(release_version, args.output)
     elif args.command == "npm":

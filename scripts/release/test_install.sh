@@ -19,14 +19,13 @@ export FIXTURE_RELEASE="$tmp/release"
 export PATH="$tmp/bin:$PATH"
 unset UIDIFF_VERSION
 
-version=$(python3 scripts/release/package.py version)
+fixture=$(python3 scripts/release/package.py installer-fixture "$target_cpu-$target_os" zig-out/bin "$FIXTURE_RELEASE")
+IFS=$(printf '\t') read -r version asset hash <<EOF
+$fixture
+EOF
 tagged=$FIXTURE_RELEASE/download/v$version
 latest=$FIXTURE_RELEASE/latest/download
-mkdir -p "$tagged" "$latest" "$tmp/bin"
-asset=$(python3 scripts/release/package.py pack "$target_cpu-$target_os" zig-out/bin "$tagged")
-hash=$(shasum -a 256 < "$tagged/$asset")
-printf "%s  %s\n" "${hash%% *}" "$asset" > "$tagged/SHA256SUMS"
-cp "$tagged/SHA256SUMS" "$latest/SHA256SUMS"
+mkdir -p "$tmp/bin"
 
 cat > "$tmp/bin/curl" <<'MOCK'
 #!/bin/sh
@@ -48,7 +47,7 @@ cmp "$installed" zig-out/bin/uidiff
 "$installed" --help > /dev/null
 
 # A valid hash and asset followed by extra fields is not a manifest entry.
-printf "%s  %s  extra\n" "${hash%% *}" "$asset" > "$latest/SHA256SUMS"
+printf "%s  %s  extra\n" "$hash" "$asset" > "$latest/SHA256SUMS"
 if sh install.sh > "$tmp/output" 2> "$tmp/error"; then
     printf "install.sh accepted a malformed checksum entry\n" >&2
     exit 1

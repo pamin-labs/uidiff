@@ -20,18 +20,10 @@ function Invoke-WebRequest {
 }
 
 try {
-    $version = python scripts/release/package.py version
-    if ($LASTEXITCODE -ne 0) { throw "Cannot read the release version" }
-    $tagged = Join-Path $fixtureRelease "download/v$version"
-    $latest = Join-Path $fixtureRelease "latest/download"
-    New-Item -ItemType Directory -Path $tagged, $latest -Force | Out-Null
-    $asset = python scripts/release/package.py pack $target zig-out/bin $tagged
+    $metadata = python scripts/release/package.py installer-fixture $target zig-out/bin $fixtureRelease
     if ($LASTEXITCODE -ne 0) { throw "Cannot build the release fixture" }
-    $fixture = Join-Path $tagged $asset
-    $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $fixture).Hash.ToLowerInvariant()
-    $manifest = Join-Path $tagged 'SHA256SUMS'
-    Set-Content -LiteralPath $manifest "$hash  $asset"
-    Copy-Item -LiteralPath $manifest -Destination $latest
+    $version, $asset, $hash = $metadata -split "`t"
+    $fixture = Join-Path $fixtureRelease "download/v$version/$asset"
 
     $installed = Join-Path $env:LOCALAPPDATA 'Programs/uidiff/uidiff.exe'
     $env:UIDIFF_VERSION = "v$version"
