@@ -153,6 +153,11 @@ pub const Plan = struct {
         allocator.free(self.details);
         allocator.free(self.focuses);
     }
+
+    /// Reports whether both overview sources can be written without alpha.
+    pub fn isOpaque(self: Plan) bool {
+        return self.before.isOpaque() and self.after.isOpaque();
+    }
 };
 
 const detail_label_w = 260;

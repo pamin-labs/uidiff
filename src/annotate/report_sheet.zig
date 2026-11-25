@@ -88,7 +88,7 @@ pub const Rows = struct {
 
     /// Reports whether the encoder can represent this sheet losslessly in RGB.
     pub fn isOpaque(self: Rows) bool {
-        return self.plan.before.image.isOpaque() and self.plan.after.image.isOpaque();
+        return self.plan.isOpaque();
     }
 
     /// Paints one output row into storage supplied by the encoder.

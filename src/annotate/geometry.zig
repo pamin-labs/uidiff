@@ -104,6 +104,11 @@ pub const Pane = struct {
         allocator.free(self.samples);
     }
 
+    /// Reports whether the preview's source has full alpha coverage.
+    pub fn isOpaque(self: Pane) bool {
+        return self.image.isOpaque();
+    }
+
     /// Copies visible pixels from a preview row into caller-owned storage.
     pub fn copy(self: Pane, y: usize, left: usize, dest: []Pixel) void {
         const source = self.image.row(y * self.image.height / self.dimensions.height);
