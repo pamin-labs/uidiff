@@ -74,7 +74,7 @@ const SampledRaster = struct {
 
     inline fn row(self: SampledRaster, y: usize) []const Pixel {
         // The crop fits the source image or the selected repeated row.
-        @setRuntimeSafety(false);
+
         return self.pixels[self.index(self.left, self.top + y)..][0..self.row_len];
     }
 
@@ -84,20 +84,22 @@ const SampledRaster = struct {
 
     inline fn sample(self: SampledRaster, x: usize, y: usize) Pixel {
         // All neighbour lookups are clamped to the source extent.
-        @setRuntimeSafety(false);
+
         return self.pixels[self.index(x, y)];
     }
 
     inline fn index(self: SampledRaster, x: usize, y: usize) usize {
         // Validated coordinates keep the affine index within the selected
         // plane. A zero stride or mask repeats its row or column.
-        return y *% self.stride +% (x & self.x_mask) +% self.offset;
+        return y * self.stride + (x & self.x_mask) + self.offset;
     }
 };
 
 const Point = struct { x: usize, y: usize };
 const EdgePolicy = enum { normal, stationary };
 const LaneBits = @Int(.unsigned, lanes);
+const PixelBlock = [lanes]Pixel;
+const MaskBlock = [lanes]regions.Cell;
 const ColorLanes = @Vector(lanes, f32);
 
 const threshold = 0.01;
@@ -124,40 +126,44 @@ pub fn mask(before: Raster, after: Raster, top: usize, rows: usize, out: []regio
             @memset(output, .clear);
             continue;
         }
-        var x: usize = 0;
-        while (x + lanes <= a.width) : (x += lanes) {
-            // Both validated crops have equal dimensions, the selected rows fit
-            // both, out holds rows * width bytes, and x + lanes <= width.
-            @setRuntimeSafety(false);
-            const pa = pixel.load(old[x..][0..lanes]);
-            const pb: @Vector(lanes, u32) = if (new.len == 1) @splat(@bitCast(new[0])) else pixel.load(new[x..][0..lanes]);
-            const equal = pa == pb;
-            if (@reduce(.And, equal)) {
-                @memset(output[x..][0..lanes], .clear);
-                continue;
-            }
-
-            const fully_opaque = (channelInt(lanes, pa, 3) & channelInt(lanes, pb, 3)) == @as(@Vector(lanes, u32), @splat(255));
-            if (@reduce(.And, selectBool(lanes, equal, fully_opaque))) {
-                const r = channel(lanes, pa, 0) - channel(lanes, pb, 0);
-                const g = channel(lanes, pa, 1) - channel(lanes, pb, 1);
-                const blue = channel(lanes, pa, 2) - channel(lanes, pb, 2);
-                const candidates = yiq(ColorLanes, r, g, blue) > constant(ColorLanes, max_delta);
-                if (@reduce(.And, candidates) and flatBlock(a, old, pa, x, y) and flatBlock(b, new, pb, x, y)) {
-                    @memset(output[x..][0..lanes], .changed);
-                    found = true;
+        const end = output.len - output.len % lanes;
+        const old_blocks = std.mem.bytesAsSlice(PixelBlock, std.mem.sliceAsBytes(old[0..end]));
+        const mask_blocks = std.mem.bytesAsSlice(MaskBlock, std.mem.sliceAsBytes(output[0..end]));
+        if (new.len == 1) {
+            if (maskBackdrop(a, b, old_blocks, mask_blocks, new[0], y, policy)) found = true;
+        } else {
+            const new_blocks = std.mem.bytesAsSlice(PixelBlock, std.mem.sliceAsBytes(new[0..end]));
+            for (old_blocks, new_blocks, mask_blocks, 0..) |*old_block, *new_block, *cells, block| {
+                const x = block * lanes;
+                const pa = pixel.load(old_block);
+                const pb = pixel.load(new_block);
+                const equal = pa == pb;
+                if (@reduce(.And, equal)) {
+                    cells.* = @splat(.clear);
                     continue;
                 }
-                if (writeChangedLanes(a, b, x, y, policy, markChange, laneBits(candidates), output[x..][0..lanes])) found = true;
-            } else {
-                const different = @select(bool, equal, @as(@Vector(lanes, bool), @splat(false)), @as(@Vector(lanes, bool), @splat(true)));
-                if (writeChangedLanes(a, b, x, y, policy, scalarChange, laneBits(different), output[x..][0..lanes])) found = true;
+
+                const fully_opaque = (channelInt(lanes, pa, 3) & channelInt(lanes, pb, 3)) == @as(@Vector(lanes, u32), @splat(255));
+                if (@reduce(.And, selectBool(lanes, equal, fully_opaque))) {
+                    const r = channel(lanes, pa, 0) - channel(lanes, pb, 0);
+                    const g = channel(lanes, pa, 1) - channel(lanes, pb, 1);
+                    const blue = channel(lanes, pa, 2) - channel(lanes, pb, 2);
+                    const candidates = yiq(ColorLanes, r, g, blue) > constant(ColorLanes, max_delta);
+                    if (@reduce(.And, candidates) and flatBlock(a, old, pa, x, y) and flatBlock(b, new, pb, x, y)) {
+                        cells.* = @splat(.changed);
+                        found = true;
+                        continue;
+                    }
+                    if (writeChangedLanes(a, b, x, y, policy, markChange, laneBits(candidates), cells)) found = true;
+                } else {
+                    const different = @select(bool, equal, @as(@Vector(lanes, bool), @splat(false)), @as(@Vector(lanes, bool), @splat(true)));
+                    if (writeChangedLanes(a, b, x, y, policy, scalarChange, laneBits(different), cells)) found = true;
+                }
             }
         }
-        while (x < a.width) : (x += 1) {
-            const cell = scalarChange(a, b, x, y, policy);
-            output[x] = cell;
-            found = found or cell != .clear;
+        for (output[end..], end..) |*cell, x| {
+            cell.* = scalarChange(a, b, x, y, policy);
+            found = found or cell.* != .clear;
         }
     }
     return found;
@@ -190,6 +196,18 @@ pub inline fn aboveThreshold(a: Pixel, b: Pixel, byte_offset: usize) bool {
     if (same(a, b)) return false;
     const d = delta(a, b, byte_offset);
     return yiq(f64, d[0], d[1], d[2]) > max_delta;
+}
+
+noinline fn maskBackdrop(a: SampledRaster, b: SampledRaster, before: []const PixelBlock, out: []MaskBlock, backdrop: Pixel, y: usize, policy: EdgePolicy) bool {
+    const fill: @Vector(lanes, u32) = @splat(@bitCast(backdrop));
+    var found = false;
+    for (before, out, 0..) |*row, *cells, block| {
+        const bits = laneBits(pixel.load(row) != fill);
+        if (bits == 0) {
+            cells.* = @splat(.clear);
+        } else if (writeChangedLanes(a, b, block * lanes, y, policy, scalarChange, bits, cells)) found = true;
+    }
+    return found;
 }
 
 fn laneBits(mask_: @Vector(lanes, bool)) LaneBits {
@@ -363,7 +381,7 @@ fn channel(comptime n: usize, pixels: @Vector(n, u32), comptime index: usize) @V
 
 fn scalarChange(a: SampledRaster, b: SampledRaster, x: usize, y: usize, policy: EdgePolicy) regions.Cell {
     // The mask loop bounds x and y to both rasters and their validated pixel count.
-    @setRuntimeSafety(false);
+
     const byte_offset = ((a.top + y) * a.image.width + a.left + x) * @sizeOf(Pixel);
     if (!aboveThreshold(a.at(x, y), b.at(x, y), byte_offset)) return .clear;
     return markChange(a, b, x, y, policy);
@@ -510,7 +528,6 @@ fn yiq(comptime T: type, r: T, g: T, b: T) T {
 
 // The neighborhood check exits as soon as it rules out anti-aliasing.
 fn antialiased(a: SampledRaster, b: SampledRaster, x: usize, y: usize) bool {
-    @setRuntimeSafety(false); // Both centres and their clipped neighbours are valid pixels.
     const cx = a.left + x;
     const cy = a.top + y;
     const p = a.sample(cx, cy);
@@ -565,7 +582,7 @@ fn lumaDelta(a: Pixel, b: Pixel, index: usize) f64 {
 
 fn siblings(a: SampledRaster, p: Point) bool {
     // The neighbor selected by antialiased is inside both crops; all offsets are clipped.
-    @setRuntimeSafety(false);
+
     const color = a.sample(p.x, p.y);
     const x0 = p.x -| 1;
     const y0 = p.y -| 1;

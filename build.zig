@@ -132,6 +132,8 @@ pub fn build(b: *Build) void {
         .small => .small,
     };
     const optimize = override orelse release orelse shipped_mode;
+    if (optimize == .fast or optimize == .small)
+        std.process.fatal("uidiff requires Debug or ReleaseSafe for Zig code", .{});
     const test_mode = override orelse release orelse .debug;
     const decoders = addDecoders(b, target);
     const lib = libraryOptions(b, target, optimize, decoders);
@@ -619,15 +621,15 @@ fn addDecoders(b: *Build, target: Build.ResolvedTarget) Decoders {
     const jpeg = b.dependency("libjpeg_turbo", .{});
     const jpeg_config = b.addWriteFiles();
     _ = jpeg_config.add("jconfig.h", jpeg_public_config);
-    const jpeg_c = b.addTranslateC(.{ .root_source_file = b.path("src/codec/jpeg.h"), .target = target, .optimize = codec_mode });
+    const jpeg_c = b.addTranslateC(.{ .root_source_file = b.path("src/codec/jpeg.h"), .target = target, .optimize = shipped_mode });
     jpeg_c.addIncludePath(jpeg_config.getDirectory());
     jpeg_c.addIncludePath(jpeg.path("src"));
     jpeg_c.addIncludePath(b.path("src/codec"));
-    const stb_c = b.addTranslateC(.{ .root_source_file = b.path("src/codec/stb.h"), .target = target, .optimize = codec_mode });
+    const stb_c = b.addTranslateC(.{ .root_source_file = b.path("src/codec/stb.h"), .target = target, .optimize = shipped_mode });
     stb_c.addIncludePath(stb.path(""));
     stb_c.defineCMacro("STBI_NO_STDIO", null);
-    const webp_c = b.addTranslateC(.{ .root_source_file = webp.path("src/webp/decode.h"), .target = target, .optimize = codec_mode });
-    const zlib_c = b.addTranslateC(.{ .root_source_file = zlibHeaders(b, target).getDirectory().path(b, "zlib-ng.h"), .target = target, .optimize = codec_mode });
+    const webp_c = b.addTranslateC(.{ .root_source_file = webp.path("src/webp/decode.h"), .target = target, .optimize = shipped_mode });
+    const zlib_c = b.addTranslateC(.{ .root_source_file = zlibHeaders(b, target).getDirectory().path(b, "zlib-ng.h"), .target = target, .optimize = shipped_mode });
     return .{
         .jpeg = jpeg_c.createModule(),
         .stb = stb_c.createModule(),

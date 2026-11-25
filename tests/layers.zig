@@ -194,6 +194,9 @@ fn checkSource(allocator: Allocator, rules: Rules, source: *const Source) !void 
                 const target = try std.zig.string_literal.parseAlloc(allocator, literal);
                 defer allocator.free(target);
                 if (!try allowedImport(allocator, rules, source.path, target)) return error.ForbiddenImport;
+            } else if (std.mem.startsWith(u8, source.path, "src/") and std.mem.eql(u8, name, "@setRuntimeSafety")) {
+                if (params.len != 1 or !std.mem.eql(u8, tree.tokenSlice(tree.nodeMainToken(params[0])), "true"))
+                    return error.RuntimeSafetyOptOut;
             } else if (std.mem.eql(u8, name, "@cImport") or std.mem.eql(u8, name, "@cInclude") or std.mem.eql(u8, name, "@extern")) {
                 return error.ForeignDeclaration;
             }
@@ -304,6 +307,13 @@ test "layout paths come only from the layout section" {
     defer testing.allocator.free(named);
     try testing.expectEqual(@as(usize, 2), named.len);
     try testing.expect(covered(named, "src/a/b.zig") and covered(named, "tests/x.zig") and !covered(named, "tests/y.zig"));
+}
+
+test "source safety check rejects literal and computed opt-outs" {
+    const path = "src/diff.zig";
+    try testing.expectError(error.RuntimeSafetyOptOut, checkWithText(path, "fn f() void { @setRuntimeSafety(false); }"));
+    try testing.expectError(error.RuntimeSafetyOptOut, checkWithText(path, "const enabled = false; fn f() void { @setRuntimeSafety(enabled); }"));
+    try checkWithText(path, "fn f() void { @setRuntimeSafety(true); } // @setRuntimeSafety(false)");
 }
 
 test {
