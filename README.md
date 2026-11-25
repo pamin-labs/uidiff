@@ -55,7 +55,7 @@ All coordinates are device pixels of the input images; divide by `--scale` for l
 
 Inputs are bounded by `max_pixels`, `max_extent`, and `max_encoded_bytes` in `src/value/image.zig`. The default per-image decode cap is `max_decode_bytes` in the same file. The PNG and JPEG budget accounts for the encoded bytes, block-rounded dimensions, sample depth, and workspace in `src/codec/stb.zig`. WebP charges its RGBA output and decoder allocations against the cap. Over-limit images fail with `ImageTooLarge`.
 
-Noninterlaced RGBA8 PNGs use a fixed DEFLATE dictionary and one scanline of decode scratch each. The CLI can overlap two bounded PNG decodes. The comparison holds both decoded images, and the optional sheet is encoded one row at a time. Run `zig build bench` to measure peak RSS on the fixture pairs or your own captures.
+Noninterlaced RGB8 and RGBA8 PNGs use a fixed DEFLATE dictionary and scanline-sized decode scratch. The CLI can overlap two bounded PNG decodes. The comparison holds both decoded images, and the optional sheet is encoded one row at a time. Run `zig build bench` to measure peak RSS on the fixture pairs or your own captures.
 
 ## Library
 

@@ -8,10 +8,8 @@
 /* A larger output span amortizes dictionary updates on Apple silicon. */
 #if defined(__APPLE__) && defined(__aarch64__)
 #define INFLATE_CHUNK_BYTES (64 * 1024)
-#define UIDIFF_RGB8_STREAM 1
 #else
 #define INFLATE_CHUNK_BYTES (32 * 1024)
-#define UIDIFF_RGB8_STREAM 0
 #endif
 
 void *uidiff_stbi_malloc(size_t size);
@@ -21,10 +19,8 @@ typedef struct {
     uint8_t *next;
     uint8_t *partial;
     size_t stride;
-#if UIDIFF_RGB8_STREAM
     size_t input_stride;
     uint8_t *expanded;
-#endif
     size_t used;
     uint32_t remaining;
     const uint8_t *above;
@@ -39,7 +35,7 @@ int uidiff_png_stream_header(const uint8_t *data, size_t len) {
     static const uint8_t header[] = {0x89, 'P', 'N', 'G', 13, 10, 26, 10,
                                      0, 0, 0, 13, 'I', 'H', 'D', 'R'};
     return len >= 29 && memcmp(data, header, sizeof(header)) == 0 &&
-           data[24] == 8 && (data[25] == 6 || (UIDIFF_RGB8_STREAM && data[25] == 2)) && data[26] == 0 &&
+           data[24] == 8 && (data[25] == 6 || data[25] == 2) && data[26] == 0 &&
            data[27] == 0 && data[28] == 0;
 }
 
@@ -199,7 +195,6 @@ static bool unfilter(png_rows *rows, const uint8_t *raw) {
             unfilter_paeth(dst, src, above, size);
             break;
     }
-#if UIDIFF_RGB8_STREAM
     if (rows->expanded) {
         const rgba_block alpha = {0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255};
         size_t i = 0;
@@ -209,14 +204,12 @@ static bool unfilter(png_rows *rows, const uint8_t *raw) {
         }
         for (i += 3; i < size; i += sizeof(rgba8)) dst[i] = 255;
     }
-#endif
     rows->above = dst;
     rows->next += size;
     --rows->remaining;
     return true;
 }
 
-#if UIDIFF_RGB8_STREAM
 /* Insert a spare alpha byte so both profiles share the four-channel filters.
    A PNG predictor never combines channels, so only RGB is retained. */
 static const uint8_t *expand_rgb(png_rows *rows, const uint8_t *raw) {
@@ -239,16 +232,9 @@ static const uint8_t *expand_rgb(png_rows *rows, const uint8_t *raw) {
     rows->expanded[0] = raw[0];
     return rows->expanded;
 }
-#else
-#define expand_rgb(rows, raw) (raw)
-#endif
 
 static bool consume_rows(png_rows *rows, const uint8_t *raw, size_t len) {
-#if UIDIFF_RGB8_STREAM
     const size_t row_size = rows->input_stride + 1;
-#else
-    const size_t row_size = rows->stride + 1;
-#endif
     while (len != 0) {
         if (rows->used == 0 && len >= row_size) {
             if (!unfilter(rows, expand_rgb(rows, raw))) return false;
@@ -339,22 +325,16 @@ int uidiff_png_load(const uint8_t *data, size_t len, uint32_t width,
     const size_t stride = 4 * (size_t)width;
     uint8_t *pixels = uidiff_stbi_malloc(stride * height);
     if (!pixels) return UIDIFF_PNG_ALLOC_FAILED;
-#if UIDIFF_RGB8_STREAM
     const bool rgb = data[25] == 2;
     const size_t input_stride = rgb ? 3 * (size_t)width : stride;
     const size_t extra = rgb ? stride + 1 : 0;
     uint8_t *scratch = uidiff_stbi_malloc(INFLATE_CHUNK_BYTES + input_stride + 1 + extra);
-#else
-    uint8_t *scratch = uidiff_stbi_malloc(INFLATE_CHUNK_BYTES + stride + 1);
-#endif
     if (!scratch) {
         uidiff_stbi_free(pixels);
         return UIDIFF_PNG_ALLOC_FAILED;
     }
     png_rows rows = {pixels, scratch + INFLATE_CHUNK_BYTES, stride,
-#if UIDIFF_RGB8_STREAM
                      input_stride, rgb ? scratch + INFLATE_CHUNK_BYTES + input_stride + 1 : NULL,
-#endif
                      0, height, NULL};
     bool alloc_failed = false;
     const bool ok = inflate_rows(data, first, end, scratch, &rows, &alloc_failed);

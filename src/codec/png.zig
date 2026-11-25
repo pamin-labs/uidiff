@@ -443,6 +443,27 @@ test "PNG filters preserve RGB8 and RGBA8 across streaming and fallback" {
     try checkTestFilters(4, rgba_color, &.{ 3, 0, 5 });
 }
 
+test "RGB8 transparent colour keys use the legacy decoder" {
+    const allocator = std.testing.allocator;
+    const raw = [_]u8{ 0, 23, 57, 91 };
+    var png: Writer.Allocating = .init(allocator);
+    defer png.deinit();
+    try writeTestPng(allocator, &png.writer, .{ .width = 1, .height = 1 }, rgb_color, &raw);
+
+    var keyed: Writer.Allocating = .init(allocator);
+    defer keyed.deinit();
+    const header_end = png_format.header_bytes + @sizeOf(u32); // IHDR checksum.
+    try keyed.writer.writeAll(png.written()[0..header_end]);
+    try chunk(&keyed.writer, "tRNS", &.{ 0, raw[1], 0, raw[2], 0, raw[3] });
+    try keyed.writer.writeAll(png.written()[header_end..]);
+
+    const header = try probe(allocator, keyed.written(), values.max_decode_bytes);
+    try std.testing.expectEqual(@as(?[*]values.Pixel, null), try stb.loadStreaming(allocator, keyed.written(), header, values.max_decode_bytes));
+    const pixels = try stb.load(allocator, keyed.written(), header, values.max_decode_bytes);
+    defer stb.free(pixels);
+    try std.testing.expectEqual(values.Pixel{ raw[1], raw[2], raw[3], 0 }, pixels[0]);
+}
+
 test "fuzz streaming PNG reconstruction" {
     try std.testing.fuzz({}, fuzzStreamingRows, .{});
 }

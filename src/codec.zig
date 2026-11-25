@@ -276,7 +276,7 @@ test "streaming PNG matches procedural RGBA across dictionary wraps" {
     try std.testing.expectEqualSlices(Pixel, pixels, streamed[0 .. header.size.width * header.size.height]);
 }
 
-test "RGB8 streaming or fallback preserves opaque partial rows" {
+test "RGB8 streaming preserves opaque partial rows" {
     const width = 29;
     const height = 1103;
     const allocator = std.testing.allocator;
@@ -288,7 +288,7 @@ test "RGB8 streaming or fallback preserves opaque partial rows" {
     defer output.deinit();
     try encodePng(allocator, .{ .width = width, .height = height, .pixels = &pixels }, &output.writer);
     const probed = try png.probe(allocator, output.written(), values.max_decode_bytes);
-    const streamed = try stb.load(allocator, output.written(), probed, values.max_decode_bytes);
+    const streamed = (try stb.loadStreaming(allocator, output.written(), probed, values.max_decode_bytes)) orelse return error.TestUnexpectedResult;
     const legacy = try stb.loadLegacy(allocator, output.written(), probed, values.max_decode_bytes);
     defer stb.release(allocator, legacy);
     defer stb.free(streamed);
