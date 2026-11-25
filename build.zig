@@ -17,7 +17,7 @@ const Decoders = struct {
 /// How a build compiles the C decoders: in their own measured mode for the
 /// shipped binary, or inside the Zig module, in its mode with UBSan, for
 /// tests and fuzzing (without coverage feedback; see fuzz_coverage_flags).
-const CodecBuild = enum { shipped, shipped_lto, checked };
+const CodecBuild = enum { shipped, shipped_lto, checked, fixture };
 const X86Simd = enum { shipped, baseline, without_ssse3, without_sse4, without_avx2, without_pclmul };
 
 // The shipped Zig binary retains runtime safety checks. The C decoders
@@ -137,7 +137,7 @@ pub fn build(b: *Build) void {
     const decoders = addDecoders(b, target);
     const lib = libraryOptions(b, target, optimize, decoders);
     const uidiff = b.addModule("uidiff", lib);
-    linkShippedCodecs(b, uidiff, target, x86_simd, false);
+    linkShippedCodecs(b, uidiff, target, x86_simd, .shipped);
     // Enable LTO for the measured Linux musl release targets. Windows opts in for benchmarking.
     const os = target.result.os.tag;
     const arch = target.result.cpu.arch;
@@ -147,13 +147,13 @@ pub fn build(b: *Build) void {
     const requested_lto = b.option(bool, "cli-lto", "Override LTO for Linux musl or Windows ReleaseSafe CLIs");
     if (requested_lto == true and !can_lto) @panic("-Dcli-lto=true requires an arm64 or x86-64 Linux musl or Windows ReleaseSafe target");
     // Keep bitcode archives out of the public module consumed by other builds.
-    const use_lto = requested_lto orelse (can_lto and linux_musl);
-    const cli_library = if (use_lto) b.createModule(lib) else uidiff;
-    if (use_lto) linkShippedCodecs(b, cli_library, target, x86_simd, true);
+    const cli_mode: CodecBuild = if (requested_lto orelse (can_lto and linux_musl)) .shipped_lto else .shipped;
+    const cli_library = if (cli_mode == .shipped_lto) b.createModule(lib) else uidiff;
+    if (cli_mode == .shipped_lto) linkShippedCodecs(b, cli_library, target, x86_simd, cli_mode);
 
     const cli = b.addExecutable(.{
         .name = cli_name,
-        .use_lld = if (use_lto) true else null,
+        .use_lld = if (cli_mode == .shipped_lto) true else null,
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/cli.zig"),
             .target = target,
@@ -166,7 +166,7 @@ pub fn build(b: *Build) void {
         }),
     });
     // Keep the Windows Zig and CRT objects native. LLD can still optimize the C archives.
-    if (use_lto and linux_musl) cli.lto = .full;
+    if (cli_mode == .shipped_lto and linux_musl) cli.lto = .full;
     const install_cli = b.addInstallArtifact(cli, .{});
     b.getInstallStep().dependOn(&install_cli.step);
     inline for (.{ "LICENSE", "THIRD_PARTY_NOTICES" }) |notice| b.installFile(notice, "bin/" ++ notice);
@@ -210,13 +210,13 @@ fn addCheckedLibrary(b: *Build, target: Build.ResolvedTarget, optimize: Optimize
     return module;
 }
 
-fn linkShippedCodecs(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, x86_simd: X86Simd, use_lto: bool) void {
+fn linkShippedCodecs(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, x86_simd: X86Simd, mode: CodecBuild) void {
     // Keep unwind metadata in checked builds where codec failures
     // are diagnosed. The shipped C archive uses error returns.
     const codecs = b.createModule(.{ .target = target, .optimize = codec_mode, .link_libc = true, .unwind_tables = .none });
-    addDecoderSources(b, codecs, target, if (use_lto) .shipped_lto else .shipped, x86_simd);
-    const archive = b.addLibrary(.{ .name = "uidiff-codecs", .root_module = codecs, .use_lld = if (use_lto) true else null });
-    if (use_lto) archive.lto = .full;
+    addDecoderSources(b, codecs, target, mode, x86_simd);
+    const archive = b.addLibrary(.{ .name = "uidiff-codecs", .root_module = codecs, .use_lld = if (mode == .shipped_lto) true else null });
+    if (mode == .shipped_lto) archive.lto = .full;
     module.linkLibrary(archive);
 }
 
@@ -226,14 +226,28 @@ fn addDecoderSources(b: *Build, module: *Build.Module, target: Build.ResolvedTar
     // Keep the screenshot path throughput-oriented and compact the other
     // codecs in the shipped binary. Checked builds keep their normal mode.
     const legacy_flags: []const []const u8 = if (mode != .checked) &.{"-Os"} else &.{};
-    addStbDecoder(b, module, target, legacy_flags, x86_simd, mode == .shipped_lto);
+    addStbDecoder(b, module, target, if (mode == .fixture) &.{} else legacy_flags, x86_simd, mode);
     addJpegDecoder(b, module, target, legacy_flags);
     const webp = b.dependency("libwebp", .{});
     module.addIncludePath(webp.path(""));
-    // The binding requests RGBA only.
-    const webp_flags = webpFlags(b, if (mode != .checked) &.{ "-DWEBP_REDUCE_CSP", "-Oz" } else &.{"-DWEBP_REDUCE_CSP"});
-    module.addCSourceFiles(.{ .root = webp.path(""), .files = &(webp_common ++ webp_decoder), .flags = webp_flags });
+    const extra_flags: []const []const u8 = switch (mode) {
+        .fixture => &.{ "-DHAVE_CONFIG_H", "-ffp-contract=off" },
+        .checked => &.{"-DWEBP_REDUCE_CSP"},
+        .shipped, .shipped_lto => &.{ "-DWEBP_REDUCE_CSP", "-Oz" },
+    };
+    const webp_flags = webpFlags(b, extra_flags);
+    const source: []const []const u8 = if (mode == .fixture)
+        &(webp_common ++ webp_decoder ++ webp_encoder)
+    else
+        &(webp_common ++ webp_decoder);
+    module.addCSourceFiles(.{ .root = webp.path(""), .files = source, .flags = webp_flags });
     addWebpAllocator(b, module, webp, webp_flags);
+    if (mode == .fixture) {
+        const config = b.addWriteFiles();
+        _ = config.add("src/webp/config.h", "/* Use the same scalar encoder on every host. */\n");
+        module.addIncludePath(config.getDirectory());
+        return;
+    }
     switch (target.result.cpu.arch) {
         .aarch64, .aarch64_be, .arm, .armeb, .thumb, .thumbeb => module.addCSourceFiles(.{
             .root = webp.path("src/dsp"),
@@ -391,8 +405,8 @@ fn replaceRange(b: *Build, source: []const u8, first: []const u8, last: []const 
     return replaceExactly(b.allocator, source, source[begin..end], replacement, 1);
 }
 
-fn addStbDecoder(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, legacy_flags: []const []const u8, x86_simd: X86Simd, use_lto: bool) void {
-    addZlibNg(b, module, target, x86_simd, use_lto);
+fn addStbDecoder(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, legacy_flags: []const []const u8, x86_simd: X86Simd, mode: CodecBuild) void {
+    addZlibNg(b, module, target, x86_simd, mode);
     module.addIncludePath(b.dependency("stb", .{}).path(""));
     module.addIncludePath(b.path("src/codec"));
     const inflate_flags = [_][]const u8{"-DZLIBNG_NATIVE_API"} ++ codec_section_flags ++ fuzz_coverage_flags;
@@ -491,7 +505,7 @@ fn zlibPngCrc(target: Build.ResolvedTarget) bool {
 }
 
 /// Builds the zlib stream and PNG checksum routines. Only x86 uses runtime dispatch.
-fn addZlibNg(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, x86_simd: X86Simd, use_lto: bool) void {
+fn addZlibNg(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, x86_simd: X86Simd, mode: CodecBuild) void {
     const zlib = b.dependency("zlib_ng", .{});
     const headers = zlibHeaders(b, target).getDirectory();
     module.addIncludePath(headers);
@@ -570,8 +584,8 @@ fn addZlibNg(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, x86
                     part.addIncludePath(headers);
                     part.addIncludePath(zlib.path(""));
                     part.addCSourceFiles(.{ .root = zlib.path(""), .files = level[3], .flags = base });
-                    const archive = b.addLibrary(.{ .name = "zlib-ng-" ++ level[0], .root_module = part, .use_lld = if (use_lto) true else null });
-                    if (use_lto) archive.lto = .full;
+                    const archive = b.addLibrary(.{ .name = "zlib-ng-" ++ level[0], .root_module = part, .use_lld = if (mode == .shipped_lto) true else null });
+                    if (mode == .shipped_lto) archive.lto = .full;
                     module.linkLibrary(archive);
                 }
             }
@@ -792,15 +806,7 @@ fn fixtureGenerator(b: *Build, target: Build.ResolvedTarget, decoders: Decoders)
     const webp_encode = b.addTranslateC(.{ .root_source_file = webp.path("src/webp/encode.h"), .target = target, .optimize = optimize });
     const library = b.createModule(libraryOptions(b, target, optimize, decoders));
     const codecs = b.createModule(.{ .target = target, .optimize = codec_mode, .link_libc = true });
-    addStbDecoder(b, codecs, target, &.{}, .shipped, false);
-    addJpegDecoder(b, codecs, target, &.{"-Os"});
-    codecs.addIncludePath(webp.path(""));
-    const config = b.addWriteFiles();
-    _ = config.add("src/webp/config.h", "/* Use the same scalar encoder on every host. */\n");
-    codecs.addIncludePath(config.getDirectory());
-    const flags = webpFlags(b, &.{ "-DHAVE_CONFIG_H", "-ffp-contract=off" });
-    codecs.addCSourceFiles(.{ .root = webp.path(""), .files = &(webp_common ++ webp_decoder ++ webp_encoder), .flags = flags });
-    addWebpAllocator(b, codecs, webp, flags);
+    addDecoderSources(b, codecs, target, .fixture, .shipped);
     library.linkLibrary(b.addLibrary(.{ .name = "uidiff-fixture-codecs", .root_module = codecs }));
     const module = b.createModule(.{
         .root_source_file = b.path("tests/fixtures/generate.zig"),
