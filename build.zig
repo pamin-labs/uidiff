@@ -25,7 +25,7 @@ const X86Simd = enum { shipped, baseline, without_ssse3, without_sse4, without_a
 const shipped_mode: Optimize = .safe;
 const codec_mode: Optimize = .fast;
 const jpeg_public_config = "#define UIDIFF_JPEG_PUBLIC_CONFIG 1\n#include \"jpeg_build_config.h\"\n#undef UIDIFF_JPEG_PUBLIC_CONFIG\n";
-const png_compression_level = 4;
+const png_compression_level = 3;
 /// The shipped CLI's size budget for every CI target. Run zig build size
 /// with -Dtarget to measure a specific binary.
 const max_cli_bytes = 1_200_000;
