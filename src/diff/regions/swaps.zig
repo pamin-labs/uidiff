@@ -81,16 +81,13 @@ fn exchangedRows(before: Image, after: Image, bands: Box, pitch: usize, rows: us
 }
 
 test "reciprocal row moves are grouped only when both rows exchange intact" {
-    const before = try sample.Canvas.init(256, 160);
-    defer before.deinit();
-    const after = try sample.Canvas.init(256, 160);
-    defer after.deinit();
-    const upper = 40;
-    const pitch = 40;
+    const pair = try sample.RowExchange.init();
+    defer pair.deinit();
+    const before, const after = .{ pair.before, pair.after };
+    const upper, const pitch = .{ sample.RowExchange.upper, sample.RowExchange.pitch };
     before.line(22, 212, upper + 10, 4, 60);
     before.line(22, 212, upper + pitch + 10, 9, 60);
-    after.copyRows(upper, before, upper + pitch, upper + pitch * 2);
-    after.copyRows(upper + pitch, before, upper, upper + pitch);
+    pair.exchange();
     const removed = Box.fromPixels(18, upper + 6, 200, 18);
     const inserted = Box.fromPixels(18, upper + pitch + 6, 200, 18);
     const candidates = [_]pending.Candidate{

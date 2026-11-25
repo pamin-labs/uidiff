@@ -139,6 +139,36 @@ pub const Canvas = struct {
     }
 };
 
+/// A blank pair for exchanging adjacent rows with independent source pixels.
+pub const RowExchange = struct {
+    before: Canvas,
+    after: Canvas,
+
+    /// First of the two row bands.
+    pub const upper = 40;
+    /// Height and displacement of the exchanged bands.
+    pub const pitch = 40;
+
+    /// Allocates both canvases at the same size.
+    pub fn init() !RowExchange {
+        const before = try Canvas.init(256, 160);
+        errdefer before.deinit();
+        return .{ .before = before, .after = try Canvas.init(before.view.width, before.view.height) };
+    }
+
+    /// Releases both canvases.
+    pub fn deinit(self: RowExchange) void {
+        self.before.deinit();
+        self.after.deinit();
+    }
+
+    /// Copies the two source bands to swapped positions.
+    pub fn exchange(self: RowExchange) void {
+        self.after.copyRows(upper, self.before, upper + pitch, upper + pitch * 2);
+        self.after.copyRows(upper + pitch, self.before, upper, upper + pitch);
+    }
+};
+
 /// Side length of a block large enough to report under the default mask.
 pub const block_size = std.math.sqrt(regions.min_region_pixels);
 /// Computes a coverage sample over white paper.

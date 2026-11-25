@@ -5,20 +5,17 @@ const diff = @import("diff_scenarios");
 const sample = diff.test_support;
 
 test "separate table cell edits stay separate unless both rows exchange intact" {
-    const before = try sample.Canvas.init(256, 160);
-    defer before.deinit();
-    const after = try sample.Canvas.init(256, 160);
-    defer after.deinit();
-    const upper = 40;
-    const pitch = 40;
+    const pair = try sample.RowExchange.init();
+    defer pair.deinit();
+    const before, const after = .{ pair.before, pair.after };
+    const upper, const pitch = .{ sample.RowExchange.upper, sample.RowExchange.pitch };
     const left = 24;
     const right = 140;
     for ([_]usize{ left, right }) |x| {
         before.fill(x, upper, 30, 16, sample.inkShade(44, 4));
         before.fill(x, upper + pitch, 30, 16, sample.inkShade(126, 4));
     }
-    after.copyRows(upper, before, upper + pitch, upper + pitch * 2);
-    after.copyRows(upper + pitch, before, upper, upper + pitch);
+    pair.exchange();
     const table = try sample.compareCanvases(before, after, 1);
     defer table.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 1), table.regions.len);
