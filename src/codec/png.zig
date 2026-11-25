@@ -79,16 +79,18 @@ const Deflater = struct {
         const allocator: *const Allocator = @ptrCast(@alignCast(context));
         const bytes = std.math.mul(usize, items, size) catch return null;
         const total = std.math.add(usize, bytes, header_bytes) catch return null;
-        const block = allocator.alignedAlloc(u8, .@"16", total) catch return null;
-        std.mem.writeInt(usize, block[0..@sizeOf(usize)], block.len, .little);
-        return block.ptr + header_bytes;
+        // zlib-ng initializes its buffers before reading them.
+        const block = allocator.rawAlloc(total, .@"16", @returnAddress()) orelse return null;
+        std.mem.writeInt(usize, block[0..@sizeOf(usize)], total, .little);
+        return block + header_bytes;
     }
 
     fn zfree(context: ?*anyopaque, address: ?*anyopaque) callconv(.c) void {
         const allocator: *const Allocator = @ptrCast(@alignCast(context));
         const data: [*]align(16) u8 = @ptrCast(@alignCast(address orelse return));
         const base: [*]align(16) u8 = @alignCast(data - header_bytes);
-        allocator.free(base[0..std.mem.readInt(usize, base[0..@sizeOf(usize)], .little)]);
+        const bytes = std.mem.readInt(usize, base[0..@sizeOf(usize)], .little);
+        allocator.rawFree(base[0..bytes], .@"16", @returnAddress());
     }
 };
 
