@@ -1,6 +1,6 @@
 /* Streams ordinary RGB8 and RGBA8 PNG scanlines through a bounded DEFLATE dictionary.
    The stb_image binding handles all other PNG profiles. */
-#include "stb.h"
+#include "png_stream.h"
 #include "codec_memory.h"
 #include <stdbool.h>
 #include <string.h>

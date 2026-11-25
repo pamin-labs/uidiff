@@ -86,7 +86,7 @@ pub const FileInput = struct {
         if (self.length < png_format.header_bytes or self.length > concurrent_encoded_bytes) return false;
         var prefix: [png_format.header_bytes]u8 = undefined;
         try readBytes(io, self.file, &prefix);
-        return stb.streamingHeader(&prefix);
+        return png.streamingHeader(&prefix);
     }
 
     /// Decodes any supported profile from this handle. The caller owns the pixels.
@@ -103,7 +103,7 @@ pub const FileInput = struct {
         defer values.freeUnfilled(u8, allocator, bytes);
         if (!png.matches(bytes)) return null;
         const probed = try probeFormat(png.probe, allocator, bytes, cap);
-        const pixels = (try stb.loadStreaming(allocator, bytes, probed.header, probed.limit)) orelse return null;
+        const pixels = (try png.loadStreaming(allocator, bytes, probed.header, probed.limit)) orelse return null;
         return owned(probed.size, pixels[0..probed.count], allocator, .png);
     }
 };
@@ -277,7 +277,7 @@ test "streaming PNG matches procedural RGBA across dictionary wraps" {
     defer output.deinit();
     try encodePng(allocator, .{ .width = width, .height = height, .pixels = pixels }, &output.writer);
     const header = try png.probe(allocator, output.written(), values.max_decode_bytes);
-    const streamed = (try stb.loadStreaming(allocator, output.written(), header, values.max_decode_bytes)) orelse return error.TestUnexpectedResult;
+    const streamed = (try png.loadStreaming(allocator, output.written(), header, values.max_decode_bytes)) orelse return error.TestUnexpectedResult;
     defer stb.free(streamed);
     try std.testing.expectEqualSlices(Pixel, pixels, streamed[0 .. header.size.width * header.size.height]);
 }
@@ -294,7 +294,7 @@ test "RGB8 streaming preserves opaque partial rows" {
     defer output.deinit();
     try encodePng(allocator, .{ .width = width, .height = height, .pixels = &pixels }, &output.writer);
     const probed = try png.probe(allocator, output.written(), values.max_decode_bytes);
-    const streamed = (try stb.loadStreaming(allocator, output.written(), probed, values.max_decode_bytes)) orelse return error.TestUnexpectedResult;
+    const streamed = (try png.loadStreaming(allocator, output.written(), probed, values.max_decode_bytes)) orelse return error.TestUnexpectedResult;
     const legacy = try stb.loadLegacy(allocator, output.written(), probed, values.max_decode_bytes);
     defer stb.release(allocator, legacy);
     defer stb.free(streamed);

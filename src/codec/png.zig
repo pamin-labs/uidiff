@@ -1,8 +1,9 @@
-//! Writes PNG images with a bounded zlib stream.
+//! Streams PNG decode and encode through bounded zlib buffers.
 const std = @import("std");
 const values = @import("../value.zig");
 const png_format = @import("png_format.zig");
 const stb = @import("stb.zig");
+const memory = @import("codec_memory");
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
 const zlib = @import("zlib_c");
@@ -124,7 +125,19 @@ pub fn matches(prefix: []const u8) bool {
 
 /// Decodes the probed dimensions through the scanline or legacy decoder.
 pub fn decode(allocator: Allocator, bytes: []const u8, header: stb.Header, cap: usize) stb.DecodeError![]values.Pixel {
-    return (try stb.load(allocator, bytes, header, cap))[0 .. header.size.width * header.size.height];
+    return (try load(allocator, bytes, header, cap))[0 .. header.size.width * header.size.height];
+}
+
+/// Recognizes noninterlaced RGB8 and RGBA8 without decoding the image.
+pub fn streamingHeader(bytes: []const u8) bool {
+    return zlib.uidiff_png_stream_header(bytes.ptr, bytes.len) != 0;
+}
+
+/// Runs bounded scanline decoding. Null requests the legacy fallback.
+pub fn loadStreaming(allocator: Allocator, bytes: []const u8, header: stb.Header, cap: usize) DecodeError!?[*]values.Pixel {
+    try stb.beginDecode(allocator, header, bytes.len, cap);
+    defer memory.end();
+    return streamPixels(bytes, header.size);
 }
 
 /// Encodes a valid image. Allocates the compressor's window and one filtered row.
@@ -311,6 +324,24 @@ fn portableChecksum(kind: *const [4]u8, data: []const u8) u32 {
     return crc.final();
 }
 
+fn load(allocator: Allocator, bytes: []const u8, header: stb.Header, cap: usize) DecodeError![*]values.Pixel {
+    try stb.beginDecode(allocator, header, bytes.len, cap);
+    defer memory.end();
+    if (try streamPixels(bytes, header.size)) |pixels| return pixels;
+    return stb.loadStb(bytes, header.size);
+}
+
+fn streamPixels(bytes: []const u8, dimensions: values.Size) DecodeError!?[*]values.Pixel {
+    const width = std.math.cast(u32, dimensions.width) orelse return error.ImageTooLarge;
+    const height = std.math.cast(u32, dimensions.height) orelse return error.ImageTooLarge;
+    var pixels: [*c]u8 = null;
+    switch (zlib.uidiff_png_load(bytes.ptr, bytes.len, width, height, &pixels)) {
+        zlib.UIDIFF_PNG_DECODED => return if (pixels != null) @ptrCast(pixels) else error.InvalidImage,
+        zlib.UIDIFF_PNG_ALLOC_FAILED => return memory.failure(),
+        else => return null,
+    }
+}
+
 fn encodeOnce(allocator: Allocator, image: Image) !void {
     var out: Writer.Allocating = .init(allocator);
     defer out.deinit();
@@ -369,11 +400,11 @@ fn checkTestFilters(comptime channels: usize, color: u8, filters: []const u8) !v
     try writeTestPng(allocator, &output.writer, size, color, filtered[0 .. filters.len * (1 + row_bytes)]);
     const header = try probe(allocator, output.written(), values.max_decode_bytes);
     for (filters) |filter_byte| if (filter_byte > paeth_filter) {
-        try std.testing.expectEqual(@as(?[*]values.Pixel, null), try stb.loadStreaming(allocator, output.written(), header, values.max_decode_bytes));
-        try std.testing.expectError(error.InvalidImage, stb.load(allocator, output.written(), header, values.max_decode_bytes));
+        try std.testing.expectEqual(@as(?[*]values.Pixel, null), try loadStreaming(allocator, output.written(), header, values.max_decode_bytes));
+        try std.testing.expectError(error.InvalidImage, load(allocator, output.written(), header, values.max_decode_bytes));
         return;
     };
-    const found = try stb.load(allocator, output.written(), header, values.max_decode_bytes);
+    const found = try load(allocator, output.written(), header, values.max_decode_bytes);
     defer stb.free(found);
     const legacy = try stb.loadLegacy(allocator, output.written(), header, values.max_decode_bytes);
     defer stb.release(allocator, legacy);
@@ -402,7 +433,7 @@ fn fuzzStreamingRows(_: void, smith: *std.testing.Smith) !void {
     defer output.deinit();
     try writeTestPng(allocator, &output.writer, size, color, valid[0..length]);
     const header: stb.Header = .{ .size = size, .sample_bytes = 1 };
-    const found = try stb.loadStreaming(allocator, output.written(), header, values.max_decode_bytes) orelse return;
+    const found = try loadStreaming(allocator, output.written(), header, values.max_decode_bytes) orelse return;
     defer stb.free(found);
     const legacy = try stb.loadLegacy(allocator, output.written(), header, values.max_decode_bytes);
     defer stb.release(allocator, legacy);
@@ -461,10 +492,40 @@ test "RGB8 transparent colour keys use the legacy decoder" {
     try keyed.writer.writeAll(png.written()[header_end..]);
 
     const header = try probe(allocator, keyed.written(), values.max_decode_bytes);
-    try std.testing.expectEqual(@as(?[*]values.Pixel, null), try stb.loadStreaming(allocator, keyed.written(), header, values.max_decode_bytes));
-    const pixels = try stb.load(allocator, keyed.written(), header, values.max_decode_bytes);
+    try std.testing.expectEqual(@as(?[*]values.Pixel, null), try loadStreaming(allocator, keyed.written(), header, values.max_decode_bytes));
+    const pixels = try load(allocator, keyed.written(), header, values.max_decode_bytes);
     defer stb.free(pixels);
     try std.testing.expectEqual(values.Pixel{ raw[1], raw[2], raw[3], 0 }, pixels[0]);
+}
+
+test "the C streaming probe agrees with the PNG header layout" {
+    var header: [png_format.header_bytes]u8 = @splat(0);
+    @memcpy(header[0..png_format.header_prefix.len], png_format.header_prefix);
+    const offset = png_format.dimensions_offset;
+    std.mem.writeInt(u32, header[offset..][0..4], 253, .big);
+    std.mem.writeInt(u32, header[offset + 4 ..][0..4], 58, .big);
+    const profile = header[offset + 2 * @sizeOf(u32) ..];
+    const depth, const colour, const interlace = .{ 0, 1, 4 };
+    profile[depth] = 8;
+    profile[colour] = rgba_color;
+    try std.testing.expect(streamingHeader(&header));
+    try std.testing.expect(!streamingHeader(header[0 .. header.len - 1]));
+    profile[colour] = rgb_color;
+    try std.testing.expect(streamingHeader(&header));
+    profile[depth] = 16;
+    try std.testing.expect(!streamingHeader(&header));
+    profile[depth] = 8;
+    profile[interlace] = 1;
+    try std.testing.expect(!streamingHeader(&header));
+    profile[interlace] = 0;
+    profile[colour] = 3;
+    try std.testing.expect(!streamingHeader(&header));
+    profile[colour] = rgba_color;
+    for (0..png_format.header_prefix.len) |i| {
+        header[i] ^= 1;
+        try std.testing.expect(!streamingHeader(&header));
+        header[i] ^= 1;
+    }
 }
 
 test "fuzz streaming PNG reconstruction" {

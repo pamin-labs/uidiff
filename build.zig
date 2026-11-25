@@ -424,9 +424,10 @@ fn zlibHeaders(b: *Build, target: Build.ResolvedTarget) *Build.Step.WriteFile {
     const zlib = b.dependency("zlib_ng", .{});
     const files = b.addWriteFiles();
     const api = replaceExactly(b.allocator, readDependencySource(b, zlib, "zlib-ng.h.in"), "@ZLIB_SYMBOL_PREFIX@", "", 2);
-    _ = files.add("zlib-ng.h", b.fmt("#define UIDIFF_PNG_COMPRESSION_LEVEL {d}\n#define UIDIFF_ZLIB_CRC {d}\n{s}", .{
+    _ = files.add("zlib-ng.h", b.fmt("#define UIDIFF_PNG_COMPRESSION_LEVEL {d}\n#define UIDIFF_ZLIB_CRC {d}\n{s}\n#include \"png_stream.h\"\n", .{
         png_compression_level, @intFromBool(zlibPngCrc(target)), api,
     }));
+    _ = files.addCopyFile(b.path("src/codec/png_stream.h"), "png_stream.h");
     const conf = readDependencySource(b, zlib, "zconf-ng.h.in");
     _ = files.add("zconf-ng.h", if (target.result.os.tag == .windows) conf else replaceExactly(b.allocator, conf, "#ifdef HAVE_UNISTD_H", "#if 1", 1));
     _ = files.add("zlib_name_mangling-ng.h", readDependencySource(b, zlib, "zlib_name_mangling.h.empty"));

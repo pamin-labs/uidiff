@@ -43,58 +43,33 @@ pub fn probe(allocator: Allocator, bytes: []const u8, cap: usize) DecodeError!He
     return .{ .size = try size(width, height), .sample_bytes = if (sixteen) 2 else 1 };
 }
 
-/// Decodes full RGBA8 pixels after a probe. Fails with ImageTooLarge when the
-/// header's budget exceeds the cap or stb asks for more than it.
-/// Releases via free.
-pub fn load(allocator: Allocator, bytes: []const u8, header: Header, cap: usize) DecodeError![*]Pixel {
-    return withBudget(loadPng, allocator, bytes, header, cap);
-}
-
-/// Decodes slices accepted by stb and returns the validated pixel extent.
+/// Decodes a fallback PNG under the caller's budget.
 pub fn loadLegacy(allocator: Allocator, bytes: []const u8, header: Header, cap: usize) DecodeError![]Pixel {
-    const pixels = try withBudget(loadStb, allocator, bytes, header, cap);
+    try beginDecode(allocator, header, bytes.len, cap);
+    defer memory.end();
+    const pixels = try loadStb(bytes, header.size);
     return pixels[0 .. header.size.width * header.size.height];
 }
 
-/// Frees pixels allocated by the bounded stb adapter.
+/// Frees pixels allocated by the bounded PNG allocator.
 pub fn release(_: Allocator, pixels: []const Pixel) void {
     free(@constCast(pixels.ptr));
 }
 
-/// Recognizes ordinary noninterlaced RGB8 and RGBA8 headers.
-pub fn streamingHeader(bytes: []const u8) bool {
-    return c.uidiff_png_stream_header(bytes.ptr, bytes.len) != 0;
-}
-
-/// Attempts to stream a PNG with row-sized scratch. Null requests the
-/// regular decoder. Frees through the same allocator as load.
-pub fn loadStreaming(allocator: Allocator, bytes: []const u8, header: Header, cap: usize) DecodeError!?[*]Pixel {
-    return withBudget(stream, allocator, bytes, header, cap);
-}
-
-/// Releases a pixel buffer returned by load.
+/// Releases a PNG pixel buffer allocated by the codec hooks.
 pub fn free(pixel_data: [*]Pixel) void {
     c.stbi_image_free(pixel_data);
 }
 
-fn withBudget(comptime decodePixels: anytype, allocator: Allocator, bytes: []const u8, header: Header, cap: usize) @typeInfo(@TypeOf(decodePixels)).@"fn".return_type.? {
-    try beginDecode(allocator, header, bytes.len, cap);
-    defer memory.end();
-    return decodePixels(bytes, header.size);
-}
-
-noinline fn beginDecode(allocator: Allocator, header: Header, len: usize, cap: usize) DecodeError!void {
+/// Begins a PNG allocation scope using the legacy budget as the cap.
+pub noinline fn beginDecode(allocator: Allocator, header: Header, len: usize, cap: usize) DecodeError!void {
     const limit = budget(header, len) orelse return error.ImageTooLarge;
     if (limit > cap) return error.ImageTooLarge;
     memory.begin(allocator, limit);
 }
 
-fn loadPng(bytes: []const u8, expected: Size) DecodeError![*]Pixel {
-    if (try stream(bytes, expected)) |pixels| return pixels;
-    return loadStb(bytes, expected);
-}
-
-fn loadStb(bytes: []const u8, expected: Size) DecodeError![*]Pixel {
+/// Runs the fallback PNG decoder in an active allocation scope.
+pub fn loadStb(bytes: []const u8, expected: Size) DecodeError![*]Pixel {
     const len = std.math.cast(c_int, bytes.len) orelse return error.ImageTooLarge;
     var width: c_int = 0;
     var height: c_int = 0;
@@ -104,17 +79,6 @@ fn loadStb(bytes: []const u8, expected: Size) DecodeError![*]Pixel {
     const actual = try size(width, height);
     if (actual.width != expected.width or actual.height != expected.height) return error.InvalidImage;
     return pixels;
-}
-
-fn stream(bytes: []const u8, dimensions: Size) DecodeError!?[*]Pixel {
-    const width = std.math.cast(u32, dimensions.width) orelse return error.ImageTooLarge;
-    const height = std.math.cast(u32, dimensions.height) orelse return error.ImageTooLarge;
-    var pixels: [*c]u8 = null;
-    switch (c.uidiff_png_load(bytes.ptr, bytes.len, width, height, &pixels)) {
-        c.UIDIFF_PNG_DECODED => return if (pixels != null) @ptrCast(pixels) else error.InvalidImage,
-        c.UIDIFF_PNG_ALLOC_FAILED => return memory.failure(),
-        else => return null,
-    }
 }
 
 /// Returns the most bytes stb may hold while decoding an image with this
@@ -158,22 +122,6 @@ test "the largest 8-bit images fit the decode budget and a 16-bit one does not" 
         try std.testing.expect(largest.pixelCount() != null);
         try std.testing.expect(budget(.{ .size = largest, .sample_bytes = 1 }, values.max_encoded_bytes) != null);
         try std.testing.expectEqual(@as(?usize, null), budget(.{ .size = largest, .sample_bytes = 2 }, 0));
-    }
-}
-
-test "the C streaming probe agrees with the PNG header layout" {
-    var header: [png_format.header_bytes]u8 = @splat(0);
-    @memcpy(header[0..png_format.header_prefix.len], png_format.header_prefix);
-    const offset = png_format.dimensions_offset;
-    std.mem.writeInt(u32, header[offset..][0..4], 253, .big);
-    std.mem.writeInt(u32, header[offset + 4 ..][0..4], 58, .big);
-    header[offset + 8 ..][0..2].* = .{ 8, 6 };
-    try std.testing.expect(streamingHeader(&header));
-    try std.testing.expect(!streamingHeader(header[0 .. header.len - 1]));
-    for (0..png_format.header_prefix.len) |i| {
-        header[i] ^= 1;
-        try std.testing.expect(!streamingHeader(&header));
-        header[i] ^= 1;
     }
 }
 
