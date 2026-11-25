@@ -35,20 +35,21 @@ fn placeWithin(mark: Rect, bounds: Rect, diameter: usize, obstacles: []const Rec
 
     for ([_]bool{ false, true }) |clamp_edges| {
         for ([_]bool{ true, false, true, false }, 0..) |vertical, side| {
-            if (vertical) {
-                const at = if (clamp_edges) std.math.clamp(sides_y[side / 2], low_y, max_y) else sides_y[side / 2];
-                for (xs) |along| consider(mark, bounds, diameter, std.math.clamp(along, low_x, max_x), at, obstacles, &best);
-                for (obstacles) |b| {
-                    consider(mark, bounds, diameter, @as(isize, @intCast(b.x)) - d - gap, at, obstacles, &best);
-                    consider(mark, bounds, diameter, @as(isize, @intCast(b.right())) + gap, at, obstacles, &best);
-                }
-            } else {
-                const at = if (clamp_edges) std.math.clamp(sides_x[side / 2], low_x, max_x) else sides_x[side / 2];
-                for (ys) |along| consider(mark, bounds, diameter, at, std.math.clamp(along, low_y, max_y), obstacles, &best);
-                for (obstacles) |b| {
-                    consider(mark, bounds, diameter, at, @as(isize, @intCast(b.y)) - d - gap, obstacles, &best);
-                    consider(mark, bounds, diameter, at, @as(isize, @intCast(b.bottom())) + gap, obstacles, &best);
-                }
+            const low = if (vertical) low_x else low_y;
+            const high = if (vertical) max_x else max_y;
+            const cross_low = if (vertical) low_y else low_x;
+            const cross_high = if (vertical) max_y else max_x;
+            const edge = (if (vertical) sides_y else sides_x)[side / 2];
+            const at = if (clamp_edges) std.math.clamp(edge, cross_low, cross_high) else edge;
+            for (if (vertical) xs else ys) |point| {
+                const along = std.math.clamp(point, low, high);
+                considerAcross(mark, bounds, diameter, vertical, along, at, obstacles, &best);
+            }
+            for (obstacles) |b| {
+                const start: isize = @intCast(if (vertical) b.x else b.y);
+                const end: isize = @intCast(if (vertical) b.right() else b.bottom());
+                considerAcross(mark, bounds, diameter, vertical, start - d - gap, at, obstacles, &best);
+                considerAcross(mark, bounds, diameter, vertical, end + gap, at, obstacles, &best);
             }
         }
         if (best.result != null) return best.result;
@@ -73,6 +74,11 @@ fn axisEdge(obstacles: []const Rect, i: usize, min: isize, max: isize, diameter:
     return std.math.clamp(if (i % 2 == 0) start - diameter else end, min, max);
 }
 
+fn considerAcross(mark: Rect, bounds: Rect, diameter: usize, vertical: bool, along: isize, at: isize, obstacles: []const Rect, best: *Search) void {
+    const x, const y = if (vertical) .{ along, at } else .{ at, along };
+    consider(mark, bounds, diameter, x, y, obstacles, best);
+}
+
 fn consider(mark: Rect, bounds: Rect, diameter: usize, x: isize, y: isize, obstacles: []const Rect, best: *Search) void {
     const left = std.math.cast(usize, x) orelse return;
     const top = std.math.cast(usize, y) orelse return;
@@ -82,6 +88,18 @@ fn consider(mark: Rect, bounds: Rect, diameter: usize, x: isize, y: isize, obsta
     if (distance >= best.distance or candidate.overlaps(mark)) return;
     for (obstacles) |obstacle| if (candidate.overlaps(obstacle)) return;
     best.* = .{ .result = candidate, .distance = distance };
+}
+
+test "badge ties prefer the top, then the left when the top is blocked" {
+    const mark: Rect = .{ .x = 10, .y = 10, .w = 6, .h = 6 };
+    const bounds: Rect = .{ .x = 0, .y = 0, .w = 30, .h = 30 };
+    const diameter = 4;
+    const top: Rect = .{ .x = 10, .y = 0, .w = diameter, .h = diameter };
+    const left: Rect = .{ .x = 0, .y = 10, .w = diameter, .h = diameter };
+    try std.testing.expectEqual(@as(?Rect, top), place(mark, bounds, diameter, &.{}));
+    try std.testing.expectEqual(@as(?Rect, left), place(mark, bounds, diameter, &.{
+        .{ .x = 0, .y = 0, .w = bounds.w, .h = diameter },
+    }));
 }
 
 test {
