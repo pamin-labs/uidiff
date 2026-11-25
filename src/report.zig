@@ -41,13 +41,13 @@ pub const PixelWriteError = WriteError || Wire(usize).CoordinateError;
 pub const version: u32 = 1;
 
 /// Writes the versioned report and a terminating newline.
-pub fn write(allocator: std.mem.Allocator, output: *std.Io.Writer, regions: []const values.Region, canvas: values.Size, moves: []const values.Move) WriteError!void {
-    return writeWith(f64, allocator, output, regions, canvas, moves);
+pub fn write(_: std.mem.Allocator, output: *std.Io.Writer, regions: []const values.Region, canvas: values.Size, moves: []const values.Move) WriteError!void {
+    return writeWith(f64, output, regions, canvas, moves);
 }
 
 /// Writes a comparison's rounded boxes without linking float formatting.
-pub fn writeWholePixels(allocator: std.mem.Allocator, output: *std.Io.Writer, regions: []const values.Region, canvas: values.Size, moves: []const values.Move) PixelWriteError!void {
-    return writeWith(usize, allocator, output, regions, canvas, moves);
+pub fn writeWholePixels(_: std.mem.Allocator, output: *std.Io.Writer, regions: []const values.Region, canvas: values.Size, moves: []const values.Move) PixelWriteError!void {
+    return writeWith(usize, output, regions, canvas, moves);
 }
 
 fn Wire(comptime Coordinate: type) type {
@@ -57,31 +57,60 @@ fn Wire(comptime Coordinate: type) type {
         const Change = struct { number: usize, kind: values.Kind, before: ?Bounds, after: ?Bounds };
         const Envelope = struct { version: u32, regions: []const Change, width: usize, height: usize, moves: []const Move = &.{} };
 
-        fn convert(box: ?values.Box) CoordinateError!?Bounds {
-            const b = box orelse return null;
-            return .{ .x = try coordinate(b.x), .y = try coordinate(b.y), .width = try coordinate(b.width), .height = try coordinate(b.height) };
+        fn validate(box: ?values.Box) CoordinateError!void {
+            const b = box orelse return;
+            const geometry: @Vector(4, f64) = .{ b.x, b.y, b.width, b.height };
+            if (!@reduce(.And, geometry >= @as(@Vector(4, f64), @splat(0))) or
+                !@reduce(.And, geometry <= @as(@Vector(4, f64), @splat(values.max_extent))) or
+                !@reduce(.And, @floor(geometry) == geometry)) return error.InvalidRegionBox;
         }
 
-        fn coordinate(value: f64) CoordinateError!Coordinate {
-            if (Coordinate == f64) return value;
-            if (!(value >= 0 and value <= values.max_extent and @floor(value) == value)) return error.InvalidRegionBox;
-            return @intFromFloat(value);
+        fn convert(box: ?values.Box) ?Bounds {
+            const b = box orelse return null;
+            return .{ .x = coordinate(b.x), .y = coordinate(b.y), .width = coordinate(b.width), .height = coordinate(b.height) };
+        }
+
+        fn coordinate(value: f64) Coordinate {
+            return if (Coordinate == f64) value else @intFromFloat(value);
         }
     };
 }
 
-fn writeWith(comptime Coordinate: type, allocator: std.mem.Allocator, output: *std.Io.Writer, regions: []const values.Region, canvas: values.Size, moves: []const values.Move) (WriteError || Wire(Coordinate).CoordinateError)!void {
+fn writeWith(comptime Coordinate: type, output: *std.Io.Writer, regions: []const values.Region, canvas: values.Size, moves: []const values.Move) (WriteError || Wire(Coordinate).CoordinateError)!void {
     const Format = Wire(Coordinate);
-    const wire = try allocator.alloc(Format.Change, regions.len);
-    defer allocator.free(wire);
-    for (wire, regions) |*out, region| {
-        out.* = .{ .number = region.number, .kind = region.kind, .before = try Format.convert(region.before), .after = try Format.convert(region.after) };
+    if (Coordinate != f64) {
+        // Keep invalid geometry from producing a partial report.
+        for (regions) |region| {
+            try Format.validate(region.before);
+            try Format.validate(region.after);
+        }
     }
-    const wire_moves = try allocator.alloc(Move, moves.len);
-    defer allocator.free(wire_moves);
-    for (wire_moves, moves) |*out, move| out.* = Move.convert(move);
-    const report: Format.Envelope = .{ .version = version, .regions = wire, .width = canvas.width, .height = canvas.height, .moves = wire_moves };
-    try std.json.Stringify.value(report, .{}, output);
+    var json: std.json.Stringify = .{ .writer = output };
+    try json.beginObject();
+    inline for (comptime std.meta.tags(std.meta.FieldEnum(Format.Envelope))) |field| {
+        try json.objectField(@tagName(field));
+        switch (field) {
+            .version => try json.write(version),
+            .width => try json.write(canvas.width),
+            .height => try json.write(canvas.height),
+            .regions => {
+                try json.beginArray();
+                for (regions) |region| try json.write(Format.Change{
+                    .number = region.number,
+                    .kind = region.kind,
+                    .before = Format.convert(region.before),
+                    .after = Format.convert(region.after),
+                });
+                try json.endArray();
+            },
+            .moves => {
+                try json.beginArray();
+                for (moves) |move| try json.write(Move.convert(move));
+                try json.endArray();
+            },
+        }
+    }
+    try json.endObject();
     try output.writeByte('\n');
 }
 
@@ -130,7 +159,9 @@ test "whole-pixel reports retain the version-one geometry" {
 
     var fractional = edits;
     fractional[0].after.?.x += 0.5;
+    const written = rounded.written().len;
     try std.testing.expectError(error.InvalidRegionBox, writeWholePixels(allocator, &rounded.writer, &fractional, canvas, &.{}));
+    try std.testing.expectEqual(written, rounded.written().len);
 }
 
 test "writing releases each allocation on failure" {
