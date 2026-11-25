@@ -61,7 +61,20 @@ zig-out/bin/uidiff tests/fixtures/images/phone-light/before.png tests/fixtures/i
 
 ## Install
 
-On macOS and Linux (x64 or arm64):
+With Homebrew on macOS or Linux:
+
+```sh
+brew install pamin-labs/tap/uidiff
+```
+
+For npm projects, the package picks the right binary for the platform:
+
+```sh
+npm install --save-dev @pamin-labs/uidiff
+npx uidiff before.png after.png
+```
+
+Without a package manager on macOS and Linux (x64 or arm64):
 
 ```sh
 curl -fsSLO https://github.com/pamin-labs/uidiff/releases/latest/download/install.sh
@@ -79,12 +92,8 @@ The installers verify the binary against `SHA256SUMS` and print the installed
 path under `~/.local/bin` or `%LOCALAPPDATA%\Programs\uidiff`. Set
 `UIDIFF_VERSION` to select a specific release, with or without the leading `v`.
 
-For npm projects, run `npm install --save-dev @pamin-labs/uidiff` and use `npx uidiff`.
-npm selects the platform binary through optional dependencies.
-
 The [releases page](https://github.com/pamin-labs/uidiff/releases) also has
-standalone binaries, archives with license notices, checksums and the rendered
-`uidiff.rb` formula for use in a Homebrew tap.
+standalone binaries, archives with license notices and checksums.
 
 ## Use
 
