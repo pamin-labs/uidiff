@@ -10,7 +10,32 @@ const Filter = enum(u8) { none, sub, up, average, paeth };
 const Range = struct { first: usize, end: usize };
 const Pixel = @Vector(4, u8);
 const Wide = @Vector(4, i16);
-const Block = @Vector(16, u8);
+const Block = @Vector(vector_bytes, u8);
+const BlockBytes = [vector_bytes]u8;
+const Words = @Vector(vector_bytes / @sizeOf(u32), u32);
+
+const Paeth = struct {
+    left: Pixel,
+    upper_left: Pixel,
+
+    fn pixels(self: *Paeth, dst: []values.Pixel, src: []const values.Pixel, above: []const values.Pixel) void {
+        for (dst, src, above) |*out, raw, up| {
+            const left = widen(self.left);
+            const upper = widen(up);
+            const diagonal = widen(self.upper_left);
+            const low = @min(left, upper);
+            const high = @max(left, upper);
+            const threshold = @as(Wide, @splat(3)) * diagonal - (left + upper);
+            const middle = @select(i16, high <= threshold, low, diagonal);
+            const prediction = @select(i16, threshold <= low, high, middle);
+            // Paeth selects one of the three input bytes.
+            const delta: Pixel = @truncate(@as(@Vector(4, u16), @bitCast(prediction)));
+            self.left = @as(Pixel, raw) +% delta;
+            self.upper_left = up;
+            out.* = self.left;
+        }
+    }
+};
 
 const Rows = struct {
     pixels: []u8,
@@ -46,8 +71,12 @@ const Rows = struct {
         const rgb = self.expanded.len != 0;
         const dst = self.pixels[self.written..][0..self.stride];
         const above = if (self.written == 0) null else self.pixels[self.written - self.stride ..][0..self.stride];
-        if (rgb) expandRgb(self.expanded, raw[1..]);
-        unfilter(dst, if (rgb) self.expanded else raw[1..], above, filter);
+        const residue = if (rgb) expanded: {
+            const expanded = self.expanded[0..self.stride];
+            expandRgb(expanded, raw[1..]);
+            break :expanded expanded;
+        } else raw[1..][0..self.stride];
+        unfilter(dst, residue, above, filter);
         if (rgb) setOpaque(dst);
         self.written += self.stride;
         return true;
@@ -56,7 +85,8 @@ const Rows = struct {
 
 const channels = @sizeOf(values.Pixel);
 const rgb_channels = 3;
-const block_bytes = @sizeOf(Block);
+const vector_bytes = 16;
+const block_bytes = vector_bytes;
 const rgb_block_bytes = block_bytes / channels * rgb_channels;
 const chunk_overhead = 3 * @sizeOf(u32);
 const chunk_prefix = 2 * @sizeOf(u32);
@@ -198,79 +228,73 @@ fn unfilter(dst: []u8, src: []const u8, above: ?[]const u8, filter: Filter) void
 }
 
 fn sub(dst: []u8, src: []const u8) void {
-    // Rows.write passes equal full rows of whole RGBA pixels.
-    @setRuntimeSafety(false);
-    var left: Pixel = @splat(0);
-    var i: usize = 0;
-    while (dst.len - i >= block_bytes) : (i += block_bytes) {
-        left = prefixAdd(dst[i..][0..block_bytes], src[i..][0..block_bytes], left);
+    const end = dst.len - dst.len % block_bytes;
+    var carry: Block = @splat(0);
+    for (blocks(dst[0..end]), blocks(src[0..end])) |*out, *raw| {
+        carry = prefixAdd(out, raw, carry);
     }
-    while (i < dst.len) : (i += channels) {
-        left +%= src[i..][0..channels].*;
-        dst[i..][0..channels].* = left;
+    var left = firstPixel(carry);
+    for (std.mem.bytesAsSlice(values.Pixel, dst[end..]), std.mem.bytesAsSlice(values.Pixel, src[end..])) |*out, raw| {
+        left +%= raw;
+        out.* = left;
     }
 }
 
 fn addUp(dst: []u8, src: []const u8, up: []const u8) void {
-    // Rows.write passes three equal full-row slices.
-    @setRuntimeSafety(false);
-    var i: usize = 0;
-    while (dst.len - i >= block_bytes) : (i += block_bytes) {
-        const raw: Block = src[i..][0..block_bytes].*;
-        dst[i..][0..block_bytes].* = raw +% up[i..][0..block_bytes].*;
+    const end = dst.len - dst.len % block_bytes;
+    for (blocks(dst[0..end]), blocks(src[0..end]), blocks(up[0..end])) |*out, raw, prev| {
+        out.* = @as(Block, raw) +% prev;
     }
-    for (dst[i..], src[i..], up[i..]) |*out, raw, prev| out.* = raw +% prev;
+    for (dst[end..], src[end..], up[end..]) |*out, raw, prev| out.* = raw +% prev;
 }
 
 fn average(dst: []u8, src: []const u8, above: ?[]const u8) void {
-    // Rows.write passes equal full rows of whole RGBA pixels. The first row repeats zero.
-    @setRuntimeSafety(false);
-    const zero: [channels]u8 = @splat(0);
-    const up = above orelse &zero;
-    const step: usize = if (above == null) 0 else channels;
+    const pixels = std.mem.bytesAsSlice(values.Pixel, dst);
+    const residuals = std.mem.bytesAsSlice(values.Pixel, src);
     var left: Pixel = @splat(0);
-    var j: usize = 0;
-    var i: usize = 0;
-    while (i < dst.len) : ({
-        i += channels;
-        j += step;
-    }) {
-        const prediction = (widen(left) + widen(up[j..][0..channels].*)) >> @splat(1);
-        const raw: Pixel = src[i..][0..channels].*;
-        left = raw +% @as(Pixel, @intCast(prediction));
-        dst[i..][0..channels].* = left;
+    if (above) |prev| {
+        for (pixels, residuals, std.mem.bytesAsSlice(values.Pixel, prev)) |*out, raw, up| {
+            left = averagePixel(left, up, raw);
+            out.* = left;
+        }
+    } else {
+        for (pixels, residuals) |*out, raw| {
+            left = averagePixel(left, @splat(0), raw);
+            out.* = left;
+        }
     }
 }
 
+fn averagePixel(left: Pixel, up: Pixel, raw: Pixel) Pixel {
+    const prediction = (widen(left) + widen(up)) >> @splat(1);
+    return raw +% @as(Pixel, @intCast(prediction));
+}
+
 fn paeth(dst: []u8, src: []const u8, above: []const u8) void {
-    // Rows.write passes three equal nonempty rows of whole RGBA pixels. Predictor arithmetic fits i16.
-    @setRuntimeSafety(false);
-    var upper_left = widen(above[0..channels].*);
-    var left = widen(src[0..channels].*) + upper_left;
-    const mask: Wide = @splat(255);
-    left &= mask;
-    dst[0..channels].* = @as(Pixel, @intCast(left));
-    var i: usize = channels;
-    while (i < dst.len) {
-        if (dst.len - i >= block_bytes) {
-            const up_block: Block = above[i..][0..block_bytes].*;
-            if (@reduce(.And, up_block == repeatPixel(@intCast(upper_left)))) {
-                left = widen(prefixAdd(dst[i..][0..block_bytes], src[i..][0..block_bytes], @intCast(left)));
-                i += block_bytes;
-                continue;
-            }
-        }
-        const up = widen(above[i..][0..channels].*);
-        const low = @min(left, up);
-        const high = @max(left, up);
-        const threshold = @as(Wide, @splat(3)) * upper_left - (left + up);
-        const middle = @select(i16, high <= threshold, low, upper_left);
-        const prediction = @select(i16, threshold <= low, high, middle);
-        left = (widen(src[i..][0..channels].*) + prediction) & mask;
-        dst[i..][0..channels].* = @as(Pixel, @intCast(left));
-        upper_left = up;
-        i += channels;
+    const first_up: Pixel = above[0..channels].*;
+    const first_raw: Pixel = src[0..channels].*;
+    var predictor: Paeth = .{ .left = first_up +% first_raw, .upper_left = first_up };
+    dst[0..channels].* = predictor.left;
+
+    var out = dst[channels..];
+    var raw = src[channels..];
+    var up = above[channels..];
+    while (out.len != 0) {
+        const step: usize = if (out.len >= vector_bytes and @reduce(.And, @as(Block, up[0..vector_bytes].*) == repeatPixel(predictor.upper_left))) flat: {
+            predictor.left = firstPixel(prefixAdd(out[0..vector_bytes], raw[0..vector_bytes], repeatPixel(predictor.left)));
+            break :flat vector_bytes;
+        } else pixel: {
+            predictor.pixels(std.mem.bytesAsSlice(values.Pixel, out[0..channels]), std.mem.bytesAsSlice(values.Pixel, raw[0..channels]), std.mem.bytesAsSlice(values.Pixel, up[0..channels]));
+            break :pixel channels;
+        };
+        out = out[step..];
+        raw = raw[step..];
+        up = up[step..];
     }
+}
+
+fn blocks(bytes: anytype) @TypeOf(std.mem.bytesAsSlice(BlockBytes, bytes)) {
+    return std.mem.bytesAsSlice(BlockBytes, bytes);
 }
 
 fn widen(pixel: Pixel) Wide {
@@ -278,53 +302,43 @@ fn widen(pixel: Pixel) Wide {
 }
 
 fn repeatPixel(pixel: Pixel) Block {
-    return @shuffle(u8, pixel, undefined, @Vector(16, i32){ 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3 });
+    return @bitCast(@as(Words, @splat(@bitCast(pixel))));
 }
 
-fn prefixAdd(dst: *[block_bytes]u8, src: *const [block_bytes]u8, left: Pixel) Pixel {
+fn firstPixel(block: Block) Pixel {
+    return @bitCast(@as(Words, @bitCast(block))[0]);
+}
+
+fn prefixAdd(dst: *BlockBytes, src: *const BlockBytes, carry: Block) Block {
     const zero: Block = @splat(0);
     var v: Block = src.*;
     v +%= @shuffle(u8, zero, v, @Vector(16, i32){ 0, 1, 2, 3, -1, -2, -3, -4, -5, -6, -7, -8, -9, -10, -11, -12 });
     v +%= @shuffle(u8, zero, v, @Vector(16, i32){ 0, 1, 2, 3, 4, 5, 6, 7, -1, -2, -3, -4, -5, -6, -7, -8 });
-    v +%= repeatPixel(left);
+    v +%= carry;
     dst.* = v;
-    return @shuffle(u8, v, undefined, @Vector(4, i32){ 12, 13, 14, 15 });
+    return @bitCast(@as(Words, @splat(@as(Words, @bitCast(v))[3])));
 }
 
 fn expandRgb(dst: []u8, src: []const u8) void {
-    // Rows.write passes complete rows with exactly three input and four output bytes per pixel.
-    @setRuntimeSafety(false);
-    const zero: Block = @splat(0);
-    var i: usize = 0;
-    var j: usize = 0;
-    while (src.len - i >= block_bytes) : ({
-        i += rgb_block_bytes;
-        j += block_bytes;
-    }) {
-        const rgb: Block = src[i..][0..block_bytes].*;
-        dst[j..][0..block_bytes].* = @shuffle(u8, rgb, zero, @Vector(16, i32){
+    const end = src.len - src.len % rgb_block_bytes;
+    const rgb_end = end / rgb_channels * channels;
+    const zero: @Vector(4, u8) = @splat(0);
+    for (blocks(dst[0..rgb_end]), std.mem.bytesAsSlice([rgb_block_bytes]u8, src[0..end])) |*out, raw| {
+        const rgb: @Vector(rgb_block_bytes, u8) = raw;
+        out.* = @shuffle(u8, rgb, zero, @Vector(16, i32){
             0, 1, 2, -1, 3, 4, 5, -1, 6, 7, 8, -1, 9, 10, 11, -1,
         });
     }
-    while (i < src.len) : ({
-        i += rgb_channels;
-        j += channels;
-    }) {
-        dst[j..][0..channels].* = src[i..][0..rgb_channels].* ++ [1]u8{0};
+    for (std.mem.bytesAsSlice(values.Pixel, dst[rgb_end..]), std.mem.bytesAsSlice([rgb_channels]u8, src[end..])) |*out, raw| {
+        out.* = raw ++ [1]u8{0};
     }
 }
 
 fn setOpaque(dst: []u8) void {
-    // Rows.write passes a complete row of whole RGBA pixels.
-    @setRuntimeSafety(false);
     const alpha = repeatPixel(.{ 0, 0, 0, 255 });
-    var i: usize = 0;
-    while (dst.len - i >= block_bytes) : (i += block_bytes) {
-        const v: Block = dst[i..][0..block_bytes].*;
-        dst[i..][0..block_bytes].* = v | alpha;
-    }
-    i += channels - 1;
-    while (i < dst.len) : (i += channels) dst[i] = 255;
+    const end = dst.len - dst.len % block_bytes;
+    for (blocks(dst[0..end])) |*out| out.* = @as(Block, out.*) | alpha;
+    for (std.mem.bytesAsSlice(values.Pixel, dst[end..])) |*out| out[3] = 255;
 }
 
 test {
