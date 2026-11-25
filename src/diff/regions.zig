@@ -1,6 +1,9 @@
 //! Collects and classifies the change regions produced by comparison.
 
 const std = @import("std");
+const values = @import("../value.zig");
+const Allocator = std.mem.Allocator;
+const Image = values.Image;
 const candidate = @import("regions/candidate.zig");
 const grouping = @import("regions/grouping.zig");
 const swaps = @import("regions/swaps.zig");
@@ -36,28 +39,6 @@ pub const max_regions = candidate.max_regions;
 /// Seeds the flood fill keeps at once (4 bytes each); more are found again by
 /// rescanning their rows, so memory stays fixed however large the mask.
 pub const max_fill_seeds = grouping.max_fill_seeds;
-/// The component minimum, reduced to one for captures within single_pixel_area.
-pub const minPixels = grouping.minPixels;
-/// Puts a byte-exact exchange of two adjacent row bands into one delta.
-pub const mergeSwap = swaps.mergeSwap;
-/// Joins a tab indicator transfer with its reciprocal label restyling.
-pub const mergeTabSelection = tabs.mergeTabSelection;
-/// Pairs horizontally reflowed cards and leaves the unmatched card one-sided.
-pub const pairCardGrid = card_grid.pairCardGrid;
-/// Joins the retained boxes that together describe a single visible edit.
-pub const mergeLogical = logical.mergeLogical;
-/// Groups stationary corner changes when the unchanged straight edges connect them.
-pub const mergeCorners = corners.mergeCorners;
-/// Compacts moves to visible runs outside the reported edits.
-pub const keepMoves = moves.keepMoves;
-/// Assigns the affected side when a translucent backdrop and a new opaque
-/// panel explain a full-viewport change.
-pub const classifyOverlay = overlay.classifyOverlay;
-/// Finds a separate colour edit embedded in a flat dimmed margin. The enclosing
-/// region remains available to account for the rest of the changed pixels.
-pub const shadeMarginEdit = margin.shadeMarginEdit;
-/// Sorts by the before box when present, then assigns kinds, numbers and padding.
-pub const finish = ordering.finish;
 /// Adds eight-connected components to the collector. Sparse components can
 /// reach the reporting minimum together. Asserts seeds is not empty.
 pub const group = grouping.group;
@@ -65,6 +46,35 @@ pub const group = grouping.group;
 pub const groupElement = grouping.groupElement;
 /// Finds the next mask state using the standard library's byte search.
 pub const nextCell = grouping.nextCell;
+
+/// Resolves collected evidence into owned, numbered regions and updates the retained moves.
+pub fn resolve(allocator: Allocator, collector: *Collector, movement: *std.ArrayList(values.Move), before: Image, after: Image, scale: values.Scale, scroll_tolerance_px: f64) Allocator.Error![]values.Region {
+    const retained = collector.retain();
+    const storage = retained.buffer;
+    var count = retained.count;
+    if (swaps.mergeSwap(storage[0..count], movement.items, before, after, scale)) |len| {
+        count = len;
+        movement.clearRetainingCapacity();
+    }
+    if (count > 1) count = corners.mergeCorners(storage[0..count], before, after, scale);
+    if (count > 1) count = logical.mergeLogical(storage[0..count], before, after, scale, movement.items);
+    count = tabs.mergeTabSelection(storage[0..count], before, after, scale);
+    if (movement.items.len == 0) card_grid.pairCardGrid(storage[0..count], before, after, scale);
+    if (count == 1 and movement.items.len == 0 and storage.len > 1) {
+        if (margin.shadeMarginEdit(storage[0].region, before, after, scale)) |mark| {
+            // This smaller edit has independent evidence inside the shaded
+            // extent. It must bypass the normal nearby-box merger.
+            storage[1] = mark;
+            count = 2;
+        }
+    }
+    const out = try allocator.alloc(values.Region, count);
+    for (out, storage[0..count]) |*region, box| region.* = box.region;
+    if (movement.items.len != 0) movement.shrinkRetainingCapacity(moves.keepMoves(movement.items, out, scale, scroll_tolerance_px));
+    if (out.len == 1 and movement.items.len == 0) overlay.classifyOverlay(&out[0], before, after, scale);
+    ordering.finish(out, before.size(), after.size(), scale);
+    return out;
+}
 
 test {
     std.testing.refAllDecls(@This());

@@ -2,7 +2,6 @@
 
 const std = @import("std");
 const band_model = @import("band.zig");
-const Allocator = std.mem.Allocator;
 
 const Coordinate = struct { x: u32 = 0, y: u32 = 0 };
 
@@ -10,23 +9,6 @@ const Coordinate = struct { x: u32 = 0, y: u32 = 0 };
 pub const Diagonal = struct { x: u32 = missing, middle: Coordinate = .{} };
 
 const SearchResult = struct { edits: usize, middle: Coordinate };
-
-/// Reuses the frontier, row matches, and frequency map across column alignments.
-pub const Workspace = struct {
-    raw: std.ArrayList(band_model.Match) = .empty,
-    content: std.ArrayList(band_model.Match) = .empty,
-    frontier: std.ArrayList(Diagonal) = .empty,
-    frequencies: std.AutoHashMapUnmanaged(u64, usize) = .empty,
-
-    /// Releases all retained alignment buffers.
-    pub fn deinit(self: *Workspace, allocator: Allocator) void {
-        self.raw.deinit(allocator);
-        self.content.deinit(allocator);
-        self.frontier.deinit(allocator);
-        self.frequencies.deinit(allocator);
-        self.* = .{};
-    }
-};
 
 /// A pair of key sequences with their common prefix removed.
 pub const Problem = struct {

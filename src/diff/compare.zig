@@ -141,12 +141,7 @@ pub fn compareChecked(allocator: Allocator, before: Image, after: Image, options
     const capacity = if (span.width == 0) 1 else Collector.capacity(before.size(), after.size(), @intFromFloat(gap_px));
     const storage = try allocator.alloc(regions.Candidate, capacity);
     defer allocator.free(storage);
-    var collector: Collector = .{
-        .boxes = storage,
-        .gap_px = gap_px,
-        .max_gap_px = max_gap_px,
-        .min_pixels = regions.minPixels(before.size(), after.size()),
-    };
+    var collector = Collector.init(storage, before.size(), after.size(), gap_px, max_gap_px);
     var moves: std.ArrayList(values.Move) = .empty;
     defer moves.deinit(allocator);
     if (span.width != 0) {
@@ -158,29 +153,8 @@ pub fn compareChecked(allocator: Allocator, before: Image, after: Image, options
         const box = Box.fromPixels(overlap_width, 0, width - overlap_width, if (old) before.height else after.height);
         collector.addOn(if (old) .before else .after, box);
     }
-    collector.growGap();
-    if (regions.mergeSwap(storage[0..collector.len], moves.items, before, after, options.scale)) |len| {
-        collector.len = len;
-        moves.clearRetainingCapacity();
-    }
-    if (collector.len > 1) collector.len = regions.mergeCorners(storage[0..collector.len], before, after, options.scale);
-    if (collector.len > 1) collector.len = regions.mergeLogical(storage[0..collector.len], before, after, options.scale, moves.items);
-    collector.len = regions.mergeTabSelection(storage[0..collector.len], before, after, options.scale);
-    if (moves.items.len == 0) regions.pairCardGrid(storage[0..collector.len], before, after, options.scale);
-    if (collector.len == 1 and moves.items.len == 0 and storage.len > 1) {
-        if (regions.shadeMarginEdit(storage[0].region, before, after, options.scale)) |mark| {
-            // This smaller edit has independent evidence inside the shaded
-            // extent. It must bypass the normal nearby-box merger.
-            storage[1] = mark;
-            collector.len = 2;
-        }
-    }
-    const out = try allocator.alloc(values.Region, collector.len);
+    const out = try regions.resolve(allocator, &collector, &moves, before, after, options.scale, options.scale.devicePixels(scroll_shift));
     errdefer allocator.free(out);
-    for (out, storage[0..collector.len]) |*region, box| region.* = box.region;
-    if (moves.items.len != 0) moves.shrinkRetainingCapacity(regions.keepMoves(moves.items, out, options.scale, options.scale.devicePixels(scroll_shift)));
-    if (out.len == 1 and moves.items.len == 0) regions.classifyOverlay(&out[0], before, after, options.scale);
-    regions.finish(out, before.size(), after.size(), options.scale);
     return .{ .regions = out, .moves = try moves.toOwnedSlice(allocator), .width = width, .height = height };
 }
 
@@ -197,7 +171,7 @@ fn spanRegions(allocator: Allocator, collector: *Collector, moves: *std.ArrayLis
 
     var buffers: CompareBuffers = .{};
     defer buffers.deinit(allocator);
-    const local_limit_px: usize = @intFromFloat(@min(collector.max_gap_px, 2 * collector.gap_px));
+    const local_limit_px: usize = collector.localLimit();
     var aligned = try alignSpan(allocator, scope, scroll_limit_px, local_limit_px, keys, bands, filtered, &buffers.alignment);
     const ambiguous = if (aligned) |whole| mixedShifts(whole) else true;
     if (scope.span.width > columns.min_gutter and (ambiguous or hasFlatEdge(scope))) {
@@ -492,7 +466,7 @@ fn compareReplacement(collector: *Collector, scope: Scope, band: row_diff.Band, 
             max_y = @max(max_y, y + 1);
         }
     }
-    if (!inside or pixels_changed < collector.min_pixels) return;
+    if (!inside or !collector.supports(pixels_changed)) return;
     // Edge filtering can leave a thin stroke split into several groups.
     if (evidence == .single_row and max_y - min_y != 1) return;
     collector.add(.{

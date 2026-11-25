@@ -22,6 +22,11 @@ pub const Collector = struct {
     min_pixels: usize = min_region_pixels,
     expanding: bool = false,
 
+    /// Initializes collection over caller-owned storage and validated image dimensions.
+    pub fn init(storage: []pending.Candidate, before: Size, after: Size, gap_px: f64, max_gap_px: f64) Collector {
+        return .{ .boxes = storage, .gap_px = gap_px, .max_gap_px = max_gap_px, .min_pixels = minPixels(before, after) };
+    }
+
     /// Returns scratch capacity for the two validated image sizes.
     pub fn capacity(before: Size, after: Size, gap_px: usize) usize {
         return @min(max_pending_regions, cells(before, gap_px) + cells(after, gap_px));
@@ -40,8 +45,24 @@ pub const Collector = struct {
         });
     }
 
+    /// Returns the maximum row replacement span allowed by the current gap.
+    pub fn localLimit(self: Collector) usize {
+        return @intFromFloat(@min(self.max_gap_px, 2 * self.gap_px));
+    }
+
+    /// Reports whether changed pixels meet the collection threshold.
+    pub fn supports(self: Collector, count: usize) bool {
+        return count >= self.min_pixels;
+    }
+
+    /// Compacts the candidates and lends their storage to the resolution pass.
+    pub fn retain(self: *Collector) struct { buffer: []pending.Candidate, count: usize } {
+        self.growGap();
+        return .{ .buffer = self.boxes, .count = self.len };
+    }
+
     /// Merges nearby evidence, discards noise, and bounds the output count.
-    pub fn growGap(self: *Collector) void {
+    fn growGap(self: *Collector) void {
         self.discardSparse();
         while (self.len > pending.max_regions) self.expand();
     }
@@ -243,12 +264,6 @@ const max_pending_regions = 4096;
 /// rescanning their rows, so memory stays fixed however large the mask.
 pub const max_fill_seeds = 64 * 1024;
 
-/// The component minimum, reduced to one for captures within single_pixel_area.
-pub fn minPixels(before: Size, after: Size) usize {
-    const smallest = @min(before.width * before.height, after.width * after.height);
-    return if (smallest <= single_pixel_area) 1 else min_region_pixels;
-}
-
 /// Adds eight-connected components to the collector. Sparse components can
 /// reach the reporting minimum together. Asserts seeds is not empty.
 pub fn group(collector: *Collector, mask: Mask, seeds: []u32, at: Placement) GroupResult {
@@ -315,6 +330,12 @@ pub inline fn nextCell(cells: []const Cell, start: usize, state: Cell) ?usize {
 
 // Faint specks and weak edges cannot gain evidence just by touching
 // diagonally. Keep the original cardinal support before joining corners.
+// The component minimum is one for small captures.
+fn minPixels(before: Size, after: Size) usize {
+    const smallest = @min(before.width * before.height, after.width * after.height);
+    return if (smallest <= single_pixel_area) 1 else min_region_pixels;
+}
+
 fn discardUnsupported(mask: Mask, minimum: usize) void {
     var start: usize = 0;
     while (nextCell(mask.cells, start, .needs_support)) |index| {

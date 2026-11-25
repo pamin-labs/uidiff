@@ -19,8 +19,6 @@ const Allocator = std.mem.Allocator;
 pub const Band = band_model.Band;
 /// Device-pixel limits for identifying small scrolls and replacements.
 pub const Limits = band_model.Limits;
-/// Reuses the frontier, row matches, and frequency map across column alignments.
-pub const Workspace = search.Workspace;
 /// The most row insertions plus deletions the alignment searches for. Myers'
 /// search costs O((rows + max_edits) * max_edits) time, so this bounds a tall
 /// unrelated pair; past it, rows are compared by position.
@@ -30,6 +28,23 @@ pub const compactInsertion = insertion.compactInsertion;
 /// Places a one-sided element at the best boundary among equivalent row matches.
 pub const refineElements = refinement.refineElements;
 
+/// Reuses the frontier, row matches, and frequency map across column alignments.
+pub const Workspace = struct {
+    raw: std.ArrayList(band_model.Match) = .empty,
+    content: std.ArrayList(band_model.Match) = .empty,
+    frontier: std.ArrayList(search.Diagonal) = .empty,
+    frequencies: std.AutoHashMapUnmanaged(u64, usize) = .empty,
+
+    /// Releases all retained alignment buffers.
+    pub fn deinit(self: *Workspace, allocator: Allocator) void {
+        self.raw.deinit(allocator);
+        self.content.deinit(allocator);
+        self.frontier.deinit(allocator);
+        self.frequencies.deinit(allocator);
+        self.* = .{};
+    }
+};
+
 /// Hashes each row of the column span. Asserts output.len equals the image
 /// height and left + width is at most its width.
 pub fn keys(source: Image, left: usize, width: usize, output: []u64) void {
@@ -37,7 +52,7 @@ pub fn keys(source: Image, left: usize, width: usize, output: []u64) void {
 }
 
 /// Aligns rows into caller-owned bands, or returns null for positional comparison.
-pub fn matchBands(allocator: Allocator, before: band_model.Keys, after: band_model.Keys, limits: band_model.Limits, bands: []band_model.Band, filtered: []u64, scratch: *search.Workspace) Allocator.Error!?[]band_model.Band {
+pub fn matchBands(allocator: Allocator, before: band_model.Keys, after: band_model.Keys, limits: band_model.Limits, bands: []band_model.Band, filtered: []u64, scratch: *Workspace) Allocator.Error!?[]band_model.Band {
     const limit = limits.scroll;
     const main = search.Problem.init(before, after);
     if (@min(main.a.len, main.b.len) == 0) return null;
@@ -198,7 +213,7 @@ test "a gap can replace every row without losing surrounding anchors" {
         @memcpy(after[0..2], before[0..2]);
         @memcpy(after[2..][0..new_rows.len], new_rows);
         @memcpy(after[2 + new_rows.len .. size], before[3..]);
-        var scratch: search.Workspace = .{};
+        var scratch: Workspace = .{};
         defer scratch.deinit(std.testing.allocator);
         const result = try matchBands(std.testing.allocator, &before, after[0..size], .{ .scroll = 2, .replacement = 48 }, &bands, &filtered, &scratch);
         if (new_rows.len == 1) {
@@ -228,7 +243,7 @@ test "a two-row alias does not hide a thirty-row scroll through periodic content
     const after = page[scroll..];
     var storage: [2 * height + 1]band_model.Band = undefined;
     var filtered: [2 * height]u64 = undefined;
-    var scratch: search.Workspace = .{};
+    var scratch: Workspace = .{};
     defer scratch.deinit(std.testing.allocator);
     const bands = (try matchBands(std.testing.allocator, before, after, .{ .scroll = 2, .replacement = 48 }, &storage, &filtered, &scratch)) orelse return error.NoAlignment;
     for (bands) |band| {
@@ -337,7 +352,7 @@ test "inserting and deleting above a divider preserves the deletion" {
     keys(b, limits.left, limits.width, &after);
     var bands: [2 * height + 1]band_model.Band = undefined;
     try std.testing.expect(insertion.panelInsertion(&before, &after, first, limits, &bands) == null);
-    var workspace: search.Workspace = .{};
+    var workspace: Workspace = .{};
     defer workspace.deinit(std.testing.allocator);
     var filtered: [2 * height]u64 = undefined;
     const aligned = (try matchBands(std.testing.allocator, &before, &after, limits, &bands, &filtered, &workspace)) orelse return error.TestUnexpectedResult;
