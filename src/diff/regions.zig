@@ -165,13 +165,24 @@ const Scrim = struct {
     }
 };
 
-const HorizontalExterior = enum { above, below };
+const RailAxis = enum { horizontal, vertical };
+const RailEnd = enum { start, end };
+const RailDirection = struct { axis: RailAxis, exterior: RailEnd };
 
 const PixelRect = struct {
     left: usize,
     right: usize,
     top: usize,
     bottom: usize,
+
+    fn oriented(self: PixelRect, axis: RailAxis) PixelRect {
+        return if (axis == .horizontal) self else .{
+            .left = self.top,
+            .right = self.bottom,
+            .top = self.left,
+            .bottom = self.right,
+        };
+    }
 
     fn fromBox(box: Box) PixelRect {
         return .{ .left = @intFromFloat(box.x), .right = @intFromFloat(box.right()), .top = @intFromFloat(box.y), .bottom = @intFromFloat(box.bottom()) };
@@ -332,7 +343,7 @@ const tab_indicator_height = values.CssPx.init(6);
 const tab_label_gap = values.CssPx.init(16);
 const corner_rail_contrast = 36;
 const corner_join_rounding = 2;
-const max_corner_rail_px = 2048;
+const max_corner_rail = values.CssPx.init(2048);
 const min_grid_slots = 3;
 const max_grid_slots = 4;
 const min_grid_card_extent = values.CssPx.init(32);
@@ -445,11 +456,12 @@ pub noinline fn mergeLogical(boxes: []Candidate, before: Image, after: Image, sc
 pub noinline fn mergeCorners(boxes: []Candidate, before: Image, after: Image, scale: values.Scale) usize {
     var len = boxes.len;
     const limit = scale.devicePixels(line_height);
-    if (len == 2 and croppedCorners(boxes, before, after, limit, scale.devicePixels(padding))) return join(boxes, len, 0, 1);
+    const max_rail = scale.devicePixels(max_corner_rail);
+    if (len == 2 and croppedCorners(boxes, before, after, limit, scale.devicePixels(padding), max_rail)) return join(boxes, len, 0, 1);
     var i: usize = 0;
     while (i + outline_corners <= len) : (i += 1) {
         const first = corner(boxes[i].region, limit) orelse continue;
-        if (outlineCorners(boxes[i + 1 .. len], before, after, first, limit)) |others| {
+        if (outlineCorners(boxes[i + 1 .. len], before, after, first, limit, max_rail)) |others| {
             // The indexes are relative to the suffix and sorted largest first.
             for (others) |j| len = join(boxes, len, i, i + 1 + j);
         }
@@ -986,7 +998,7 @@ fn corner(region: Region, limit: f64) ?Box {
     return if (@max(box.width, box.height) <= limit) box else null;
 }
 
-fn outlineCorners(boxes: []const Candidate, before: Image, after: Image, top: Box, limit: f64) ?[3]usize {
+fn outlineCorners(boxes: []const Candidate, before: Image, after: Image, top: Box, limit: f64, max_rail: f64) ?[3]usize {
     for (boxes, 0..) |tr, j| {
         const right = corner(tr.region, limit) orelse continue;
         if (right.x <= top.right() or !sameRange(top.y, top.bottom(), right.y, right.bottom())) continue;
@@ -997,8 +1009,7 @@ fn outlineCorners(boxes: []const Candidate, before: Image, after: Image, top: Bo
                 const lower_right = corner(br.region, limit) orelse continue;
                 if (!sameRange(bottom.y, bottom.bottom(), lower_right.y, lower_right.bottom()) or
                     !sameRange(right.x, right.right(), lower_right.x, lower_right.right())) continue;
-                if (!visibleOutline(before, top, right, bottom) and
-                    !tracedOutline(before, after, top, right, bottom, lower_right)) continue;
+                if (!tracedOutline(before, after, top, right, bottom, lower_right, max_rail)) continue;
                 var order = [3]usize{ j, k, l };
                 std.sort.insertion(usize, &order, {}, std.sort.desc(usize));
                 return order;
@@ -1008,7 +1019,7 @@ fn outlineCorners(boxes: []const Candidate, before: Image, after: Image, top: Bo
     return null;
 }
 
-fn croppedCorners(boxes: []const Candidate, before: Image, after: Image, limit: f64, clip_slack: f64) bool {
+fn croppedCorners(boxes: []const Candidate, before: Image, after: Image, limit: f64, clip_slack: f64, max_rail: f64) bool {
     if (before.height != after.height or before.width != after.width) return false;
     const a = corner(boxes[0].region, limit) orelse return false;
     const b = corner(boxes[1].region, limit) orelse return false;
@@ -1016,48 +1027,81 @@ fn croppedCorners(boxes: []const Candidate, before: Image, after: Image, limit: 
     const height: f64 = @floatFromInt(before.height);
     if (height - @min(left.bottom(), right.bottom()) > clip_slack or
         !sameRange(left.y, left.bottom(), right.y, right.bottom())) return false;
-    return horizontalRail(before, after, left, right, .above);
+    return rail(before, after, left, right, .{ .axis = .horizontal, .exterior = .start }, max_rail);
 }
 
-fn tracedOutline(before: Image, after: Image, top: Box, right: Box, bottom: Box, lower_right: Box) bool {
-    return horizontalRail(before, after, top, right, .above) and
-        horizontalRail(before, after, bottom, lower_right, .below) and
-        verticalRail(before, after, top, bottom, .left) and
-        verticalRail(before, after, right, lower_right, .right);
-}
+fn tracedOutline(before: Image, after: Image, top: Box, right: Box, bottom: Box, lower_right: Box, max_rail: f64) bool {
+    if (rail(before, after, top, right, .{ .axis = .horizontal, .exterior = .start }, max_rail) and
+        rail(before, after, bottom, lower_right, .{ .axis = .horizontal, .exterior = .end }, max_rail) and
+        rail(before, after, top, bottom, .{ .axis = .vertical, .exterior = .start }, max_rail) and
+        rail(before, after, right, lower_right, .{ .axis = .vertical, .exterior = .end }, max_rail)) return true;
 
-fn horizontalRail(before: Image, after: Image, left: Box, right: Box, exterior: HorizontalExterior) bool {
-    if (left.right() >= right.x or right.x - left.right() > max_corner_rail_px) return false;
-    const first: usize = @intFromFloat(@max(left.y, right.y));
-    const end: usize = @intFromFloat(@min(left.bottom(), right.bottom()));
-    const other_y = switch (exterior) {
-        .above => if (first > 0) first - 1 else return false,
-        .below => if (end < before.height) end else return false,
-    };
-    const x: usize = @intFromFloat(left.right());
-    const x_end: usize = @intFromFloat(right.x);
-    const outside = before.row(other_y)[x..x_end];
-    for (first..end) |y| {
-        const old = before.row(y)[x..x_end];
-        if (!pixel.sameRun(old, after.row(y)[x..x_end])) continue;
-        for (old, outside) |ink, background| {
-            if (toneDistance(ink, background) < corner_rail_contrast) break;
-        } else if ((railTurns(before, left, y, old[0], .left, exterior) and
-            railTurns(before, right, y, old[old.len - 1], .right, exterior)) or
-            (railTurns(after, left, y, old[0], .left, exterior) and
-                railTurns(after, right, y, old[old.len - 1], .right, exterior))) return true;
+    // Collector boxes use whole non-negative coordinates within their before.
+    const mid_x: usize = @intFromFloat((top.right() + right.x) / 2);
+    const mid_y: usize = @intFromFloat((top.bottom() + bottom.y) / 2);
+    const top_y: usize = @intFromFloat(top.y);
+    const top_end: usize = @intFromFloat(top.bottom());
+    const bottom_y: usize = @intFromFloat(bottom.y);
+    const bottom_end: usize = @intFromFloat(bottom.bottom());
+    const row = before.row(mid_y);
+    const left_x: usize = @intFromFloat(top.x);
+    const left_end: usize = @intFromFloat(top.right());
+    const right_x: usize = @intFromFloat(right.x);
+    const right_end: usize = @intFromFloat(right.right());
+    const above = before.row(top_y -| 1)[mid_x];
+    const outside = row[left_x -| 1];
+    for (top_y..top_end) |y| {
+        const ink = before.row(y)[mid_x];
+        if ((pixel.same(ink, above) and pixel.same(ink, outside)) or
+            !hasInk(row[left_x..left_end], ink) or !hasInk(row[right_x..right_end], ink)) continue;
+        for (bottom_y..bottom_end) |end| {
+            if (pixel.same(before.row(end)[mid_x], ink)) return true;
+        }
     }
     return false;
 }
 
-fn railTurns(image: Image, corner_box: Box, y: usize, ink: values.Pixel, side: enum { left, right }, exterior: HorizontalExterior) bool {
+fn rail(before: Image, after: Image, start: Box, end: Box, direction: RailDirection, max_rail: f64) bool {
+    const a = PixelRect.fromBox(start).oriented(direction.axis);
+    const b = PixelRect.fromBox(end).oriented(direction.axis);
+    if (a.right >= b.left or @as(f64, @floatFromInt(b.left - a.right)) > max_rail) return false;
+    const first = @max(a.top, b.top);
+    const last = @min(a.bottom, b.bottom);
+    if (first >= last) return false;
+    const horizontal = direction.axis == .horizontal;
+    const extent = if (horizontal) before.height else before.width;
+    const outside = switch (direction.exterior) {
+        .start => if (first != 0) first - 1 else return false,
+        .end => if (last < extent) last else return false,
+    };
+    const along = if (horizontal) 1 else before.width;
+    const across = if (horizontal) before.width else 1;
+    for (first..last) |line| {
+        for (a.right..b.left) |x| {
+            const index = line * across + x * along;
+            const ink = before.pixels[index];
+            if (!pixel.same(ink, after.pixels[index]) or
+                toneDistance(ink, before.pixels[outside * across + x * along]) < corner_rail_contrast) break;
+        } else {
+            if (!horizontal) return true;
+            const old = before.row(line);
+            if ((railTurns(before, start, line, old[a.right], .left, direction.exterior) and
+                railTurns(before, end, line, old[b.left - 1], .right, direction.exterior)) or
+                (railTurns(after, start, line, old[a.right], .left, direction.exterior) and
+                    railTurns(after, end, line, old[b.left - 1], .right, direction.exterior))) return true;
+        }
+    }
+    return false;
+}
+
+fn railTurns(image: Image, corner_box: Box, y: usize, ink: values.Pixel, side: enum { left, right }, exterior: RailEnd) bool {
     const left: usize = @intFromFloat(corner_box.x);
     const right: usize = @intFromFloat(corner_box.right());
     const outside = switch (side) {
         .left => if (left != 0) left - 1 else return false,
         .right => if (right < image.width) right else return false,
     };
-    const interior_y: usize = @intFromFloat(if (exterior == .above) corner_box.bottom() - 1 else corner_box.y);
+    const interior_y: usize = @intFromFloat(if (exterior == .start) corner_box.bottom() - 1 else corner_box.y);
     const leg_y = @min(y, interior_y) + (@max(y, interior_y) - @min(y, interior_y) + 1) / 2;
     if (leg_y == y) return false;
     const edge = image.row(y);
@@ -1069,53 +1113,8 @@ fn railTurns(image: Image, corner_box: Box, y: usize, ink: values.Pixel, side: e
     return false;
 }
 
-fn verticalRail(before: Image, after: Image, top: Box, bottom: Box, exterior: enum { left, right }) bool {
-    if (top.bottom() >= bottom.y or bottom.y - top.bottom() > max_corner_rail_px) return false;
-    const first: usize = @intFromFloat(top.bottom());
-    const end: usize = @intFromFloat(bottom.y);
-    const x: usize = @intFromFloat(@max(top.x, bottom.x));
-    const x_end: usize = @intFromFloat(@min(top.right(), bottom.right()));
-    const other_x = switch (exterior) {
-        .left => if (x > 0) x - 1 else return false,
-        .right => if (x_end < before.width) x_end else return false,
-    };
-    for (x..x_end) |column| {
-        for (first..end) |y| {
-            const ink = before.row(y)[column];
-            if (!pixel.same(ink, after.row(y)[column]) or toneDistance(ink, before.row(y)[other_x]) < corner_rail_contrast) break;
-        } else return true;
-    }
-    return false;
-}
-
 fn sameRange(a: f64, b: f64, c: f64, d: f64) bool {
     return @min(b, d) - @max(a, c) >= corner_overlap * @max(b - a, d - c);
-}
-
-fn visibleOutline(image: Image, top: Box, right: Box, bottom: Box) bool {
-    // Collector boxes use whole non-negative coordinates within their image.
-    const mid_x: usize = @intFromFloat((top.right() + right.x) / 2);
-    const mid_y: usize = @intFromFloat((top.bottom() + bottom.y) / 2);
-    const top_y: usize = @intFromFloat(top.y);
-    const top_end: usize = @intFromFloat(top.bottom());
-    const bottom_y: usize = @intFromFloat(bottom.y);
-    const bottom_end: usize = @intFromFloat(bottom.bottom());
-    const row = image.row(mid_y);
-    const left_x: usize = @intFromFloat(top.x);
-    const left_end: usize = @intFromFloat(top.right());
-    const right_x: usize = @intFromFloat(right.x);
-    const right_end: usize = @intFromFloat(right.right());
-    const above = image.row(top_y -| 1)[mid_x];
-    const outside = row[left_x -| 1];
-    for (top_y..top_end) |y| {
-        const ink = image.row(y)[mid_x];
-        if ((pixel.same(ink, above) and pixel.same(ink, outside)) or
-            !hasInk(row[left_x..left_end], ink) or !hasInk(row[right_x..right_end], ink)) continue;
-        for (bottom_y..bottom_end) |end| {
-            if (pixel.same(image.row(end)[mid_x], ink)) return true;
-        }
-    }
-    return false;
 }
 
 fn hasInk(row: []const values.Pixel, ink: values.Pixel) bool {
