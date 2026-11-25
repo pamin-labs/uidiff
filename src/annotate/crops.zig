@@ -37,7 +37,13 @@ const detail_zoom_target_px = 120;
 const base_context_px = 20;
 const edge_trim_divisor = 32;
 /// Maximum source-pixel extension to recover a cut line.
-const context_search_px = 24;
+const context_search_px = 48;
+const wide_crop_context_px = 24;
+// Require a band of empty paint: a single blank column can be between letters.
+const text_row_gap_px = 3;
+const text_column_gap_px = 24;
+// Words and list summaries can extend farther sideways than a line is tall.
+const text_column_search_px = max_crop_w;
 
 /// Plans a detail crop with context clipped to the source and slot.
 pub fn crop(image: Image, box: ?SourceRect, x: usize, y: usize, slot: usize, ui: Layout) ?Crop {
@@ -148,31 +154,45 @@ fn cropRow(c: Crop, image: Image, y: usize, output: []Pixel) void {
     }
 }
 
-/// Extends a valid source crop to the first uniform line on each edge.
-fn growContext(image: Image, crop_: SourceRect, reach_px: usize) SourceRect {
-    var grown = crop_;
-    const top = backgroundEdge(.row, .lower, image, grown, grown.y, reach_px);
-    const bottom = backgroundEdge(.row, .higher, image, grown, grown.bottom() - 1, reach_px) + 1;
-    grown.y = top;
-    grown.h = bottom - top;
-    const left = backgroundEdge(.column, .lower, image, grown, grown.x, reach_px);
-    const right = backgroundEdge(.column, .higher, image, grown, grown.right() - 1, reach_px) + 1;
+// Snap to a nearby band of empty paint, extending first and trimming only
+// when the band can be reached without crossing the edited rectangle.
+fn growContext(image: Image, initial: SourceRect, edit: SourceRect, reach: usize, column_reach: usize) SourceRect {
+    var grown = initial;
+    setCropRows(image, &grown, initial, edit, reach);
+    const left = backgroundEdge(.column, .lower, image, grown, initial.x, edit.x, column_reach);
+    const right = backgroundEdge(.column, .higher, image, grown, initial.right() - 1, edit.right() - 1, column_reach) + 1;
     grown.x = left;
     grown.w = right - left;
+    // A newly included column can contain ink on a previously clear edge.
+    if (grown.x != initial.x or grown.w != initial.w) setCropRows(image, &grown, initial, edit, reach);
     return grown;
 }
 
-// Share one scan across the four crop edges to limit code duplication.
-noinline fn backgroundEdge(axis: Axis, direction: Direction, image: Image, cut: SourceRect, near_px: usize, reach_px: usize) usize {
+fn setCropRows(image: Image, crop_: *SourceRect, initial: SourceRect, edit: SourceRect, reach: usize) void {
+    const top = backgroundEdge(.row, .lower, image, crop_.*, initial.y, edit.y, reach);
+    const bottom = backgroundEdge(.row, .higher, image, crop_.*, initial.bottom() - 1, edit.bottom() - 1, reach) + 1;
+    crop_.y = top;
+    crop_.h = bottom - top;
+}
+
+// Share the search between all four edges of the crop.
+noinline fn backgroundEdge(axis: Axis, direction: Direction, image: Image, cut: SourceRect, edge: usize, edit_edge: usize, reach: usize) usize {
     const extent = if (axis == .row) image.height else image.width;
-    const available = if (direction == .lower) near_px else extent - 1 - near_px;
-    const end = @min(reach_px, available);
-    for (0..end + 1) |step| {
-        const at = if (direction == .lower) near_px - step else near_px + step;
-        if (uniformLine(axis, image, cut, at)) return at;
+    const gap: usize = if (axis == .row) text_row_gap_px else text_column_gap_px;
+    const lower = direction == .lower;
+    const available = if (lower) edge else extent - 1 - edge;
+    for ([_]bool{ false, true }) |trim| {
+        const limit = if (trim) (if (lower) edit_edge - edge else edge - edit_edge) else @min(reach, available);
+        const backwards = lower != trim;
+        var clear: usize = 0;
+        for (0..limit + 1) |step| {
+            const at = if (backwards) edge - step else edge + step;
+            clear = if (uniformLine(axis, image, cut, at)) clear + 1 else 0;
+            if (clear == gap) return if (backwards) at + gap - 1 else at - (gap - 1);
+        }
+        if (!trim and limit == available) return if (lower) 0 else extent - 1;
     }
-    // Only grow when an edge is actually found.
-    return near_px;
+    return edge;
 }
 
 fn uniformLine(axis: Axis, image: Image, cut: SourceRect, at: usize) bool {
@@ -191,7 +211,10 @@ fn cropBounds(image: Image, box: SourceRect, ui: Layout) SourceRect {
     var from = box.outset(ui.px(base_context_px));
     from.w = @min(from.w, image.width - from.x);
     from.h = @min(from.h, image.height - from.y);
-    return growContext(image, from, ui.px(context_search_px));
+    // An edit already wider than its slot needs less surrounding paint. Skip a
+    // nearby partial line before it makes the whole crop smaller to read.
+    const search: usize = if (box.w >= ui.px(max_crop_w)) wide_crop_context_px else context_search_px;
+    return growContext(image, from, box, ui.px(search), ui.px(text_column_search_px));
 }
 
 test "close-ups enlarge a tiny edit and average samples when shrinking" {
@@ -244,4 +267,48 @@ test "detail crop clips the height of a one-pixel-wide source" {
     const patch = crop(image, .{ .x = 0, .y = 0, .w = 1, .h = height }, 0, 0, ui.px(max_crop_w), ui).?;
     try std.testing.expectEqual(@as(usize, 1), patch.to.w);
     try std.testing.expectEqual(ui.px(max_crop_h) - 2 * ui.px(detail_inset_px), patch.to.h);
+}
+
+test "close-up edges do not stop in a gap between characters" {
+    const width = 160;
+    const height = 110;
+    var pixels: [width * height]Pixel = @splat(palette.white);
+    for (20..33) |y| {
+        for ([_]usize{ 36, 43, 50, 57, 64, 71 }) |x| @memset(pixels[y * width + x ..][0..5], palette.ink);
+    }
+    const image: Image = .{ .width = width, .height = height, .pixels = &pixels };
+    const initial: SourceRect = .{ .x = 55, .y = 27, .w = 50, .h = 50 };
+    const edit: SourceRect = .{ .x = 75, .y = 48, .w = 12, .h = 8 };
+    const result = growContext(image, initial, edit, context_search_px, text_column_search_px);
+    try std.testing.expect(result.x < 36);
+    try std.testing.expect(result.y < 20);
+}
+
+test "close-up trims an unattainable text edge while retaining the edit" {
+    const width = 120;
+    const height = 180;
+    var pixels: [width * height]Pixel = @splat(palette.white);
+    // The leading edge starts in ink whose start is beyond the outward reach.
+    for (0..64) |y| pixels[y * width + width / 2] = palette.ink;
+    const image: Image = .{ .width = width, .height = height, .pixels = &pixels };
+    const initial: SourceRect = .{ .x = 20, .y = 27, .w = 60, .h = 95 };
+    const edit: SourceRect = .{ .x = 40, .y = 80, .w = 20, .h = 8 };
+    const result = growContext(image, initial, edit, 12, 12);
+    try std.testing.expectEqual(@as(usize, 64), result.y);
+    try std.testing.expect(result.y <= edit.y);
+    try std.testing.expect(result.bottom() >= edit.bottom());
+}
+
+test "a wide close-up keeps a neighbouring partial line out of its context" {
+    const width = 560;
+    const height = 220;
+    var pixels: [width * height]Pixel = @splat(palette.white);
+    for (113..153) |y| pixels[y * width + 180] = palette.ink;
+    const image: Image = .{ .width = width, .height = height, .pixels = &pixels };
+    const ui: Layout = .{ .wide = false, .percent = 100, .numerator = 1, .denominator = 1 };
+    const edit: SourceRect = .{ .x = 30, .y = 50, .w = 380, .h = 50 };
+    const patch = crop(image, edit, 0, 0, max_crop_w, ui).?;
+    try std.testing.expect(patch.from.bottom() >= edit.bottom());
+    try std.testing.expect(patch.from.bottom() <= 113);
+    try std.testing.expect(patch.to.w <= max_crop_w);
 }
