@@ -294,6 +294,7 @@ const floating_panel_width_to_height = 3;
 const floating_panel_min_contrast = 32;
 const floating_panel_inset_divisor = 4;
 const floating_panel_edge_fringe = 3;
+const existing_panel_width_divisor = 2;
 const identity_scrim: Scrim = .{ .transmission = 1, .base = @splat(0) };
 const max_swap_pitch = values.CssPx.init(128);
 const tab_parts = 3;
@@ -659,7 +660,27 @@ fn floatingPanel(before: Image, after: Image, box: Box, max_height: f64, radius:
         const row = after.row(yy);
         if (!pixel.same(row[left], fill) or !pixel.same(row[right - 1], fill)) return false;
     }
-    return panelShadow(before, after, box, Box.fromPixels(left, top, width, height), radius);
+    const panel = Box.fromPixels(left, top, width, height);
+    return !existingPanel(before, box, panel) and panelShadow(before, after, box, panel, radius);
+}
+
+fn existingPanel(before: Image, box: Box, panel: Box) bool {
+    const x: usize = @intFromFloat(box.x);
+    const right: usize = @intFromFloat(box.right());
+    const top: usize = @intFromFloat(panel.y);
+    const bottom: usize = @intFromFloat(panel.bottom());
+    const minimum: usize = @as(usize, @intFromFloat(panel.width)) / existing_panel_width_divisor;
+    var y = top;
+    while (y < bottom) : (y += scrim_sample_pitch) {
+        const row = before.row(y)[x..right];
+        var start: usize = 0;
+        for (row[1..], 1..) |p, i| {
+            if (pixel.same(p, row[start])) continue;
+            if (start != 0 and i - start > minimum and row[start][3] == 255) return true;
+            start = i;
+        }
+    }
+    return false;
 }
 
 fn boxPixelInset(length: usize) usize {

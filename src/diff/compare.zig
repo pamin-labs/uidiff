@@ -2806,6 +2806,24 @@ test "audit: a gray label turning black beside a toast remains two-sided" {
     try std.testing.expectEqual(@as(?Box, bounds), edit.after);
 }
 
+test "audit: growing or replacing a toast retains the old panel" {
+    const before = try sample.Canvas.init(300, 180);
+    defer before.deinit();
+    const after = try sample.Canvas.init(300, 180);
+    defer after.deinit();
+    const bounds = Box.fromPixels(18, 48, 264, 86);
+    before.fill(42, 59, 216, 48, .{ 40, 82, 46, 255 });
+    before.line(60, 180, 76, 1, 218);
+    // Preserve the backdrop at the old panel's extent until it is covered.
+    after.fill(18, 48, 264, 86, .{ 230, 230, 230, 255 });
+    after.fill(30, 54, 240, 72, .{ 122, 36, 45, 255 });
+    after.line(60, 190, 76, 2, 218);
+    var edit: Region = .{ .before = bounds, .after = bounds };
+    regions.classifyOverlay(&edit, before.view, after.view, .one);
+    try std.testing.expectEqual(@as(?Box, bounds), edit.before);
+    try std.testing.expectEqual(@as(?Box, bounds), edit.after);
+}
+
 test "reciprocal row moves are grouped only when both rows exchange intact" {
     const before = try sample.Canvas.init(256, 160);
     defer before.deinit();
