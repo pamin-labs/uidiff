@@ -49,6 +49,13 @@ pub const caption_size = 22;
 pub const caption_padding = 12;
 
 const ascii = @embedFile("font-ascii.bin");
+const atlas_header_bytes = @sizeOf(u16);
+const regular_bytes = @as(usize, std.mem.readInt(u16, ascii[0..atlas_header_bytes], .little));
+const regular_atlas = ascii[atlas_header_bytes..][0..regular_bytes];
+const bold_atlas = ascii[atlas_header_bytes + regular_bytes ..];
+const fallback_index = @sizeOf(u16) * ('?' - ascii_first);
+const regular_fallback = std.mem.readInt(u16, regular_atlas[fallback_index..][0..@sizeOf(u16)], .little);
+const bold_fallback = std.mem.readInt(u16, bold_atlas[fallback_index..][0..@sizeOf(u16)], .little);
 
 /// Measures a report label at the requested font size.
 pub fn textWidth(face: Face, size: usize, label: []const u8) usize {
@@ -65,10 +72,9 @@ pub fn glyph(face: Face, c: u8) []const u8 {
 
 fn findGlyph(face: Face, c: u8) ?[]const u8 {
     if (c < ascii_first or c > ascii_last) return null;
-    const regular_bytes = std.mem.readInt(u16, ascii[0..2], .little);
-    const table = if (face == .bold) ascii[2 + @as(usize, regular_bytes) ..] else ascii[2..][0..regular_bytes];
+    const table = if (face == .bold) bold_atlas else regular_atlas;
+    const fallback = if (face == .bold) bold_fallback else regular_fallback;
     const index = @as(usize, c) - ascii_first;
-    const fallback = std.mem.readInt(u16, table[2 * ('?' - ascii_first) ..][0..2], .little);
     const offset = std.mem.readInt(u16, table[2 * index ..][0..2], .little);
     if (offset == fallback and c != '?') return null;
     const found = table[font_index_bytes + @as(usize, offset) ..];
