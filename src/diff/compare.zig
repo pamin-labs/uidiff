@@ -431,7 +431,7 @@ fn compareSpan(allocator: Allocator, collector: *Collector, scope: Scope, aligne
                 const changed = mask[0 .. width * paired];
                 if (moved) yiq.clearMovedCoverage(a, b, top, changed);
                 const cells: regions.Mask = .{ .cells = changed, .width = width };
-                grouped = regions.group(collector, cells, seeds, .{ .left = left, .before_y = band.before, .after_y = band.after }) == .kept;
+                grouped = regions.group(collector, cells, seeds, .{ .left = left, .rows = .{ .paired = .{ .before = band.before, .after = band.after } } }) == .kept;
             }
             if (band.mode == .replacement) compareReplacement(collector, scope, band, if (grouped) .single_row else .unreported);
         }
@@ -559,8 +559,7 @@ fn unpaired(collector: *Collector, scope: Scope, scratch: Scratch, rows: Unpaire
     const mask = scratch.mask[0 .. width * rows.count];
     const at: regions.Placement = .{
         .left = left,
-        .before_y = if (rows.side == .before) y else null,
-        .after_y = if (rows.side == .after) y else null,
+        .rows = if (rows.side == .before) .{ .before = y } else .{ .after = y },
     };
     if (yiq.mask(a, b, 0, rows.count, mask)) {
         const cells: regions.Mask = .{ .cells = mask, .width = width };

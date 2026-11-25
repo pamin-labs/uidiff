@@ -136,7 +136,25 @@ pub const Mask = struct {
 
 /// Where a band's mask sits in device pixels: its first column, and its first
 /// row on each side that shows it.
-pub const Placement = struct { left: usize, before_y: ?usize, after_y: ?usize };
+pub const Placement = struct {
+    left: usize,
+    rows: union(enum) { paired: struct { before: usize, after: usize }, before: usize, after: usize },
+
+    fn stationary(self: Placement) bool {
+        return switch (self.rows) {
+            .paired => |rows| rows.before == rows.after,
+            else => false,
+        };
+    }
+
+    fn place(self: Placement, box: Box) Region {
+        return switch (self.rows) {
+            .paired => |rows| .{ .before = translated(box, rows.before), .after = translated(box, rows.after) },
+            .before => |y| .{ .before = translated(box, y) },
+            .after => |y| .{ .after = translated(box, y) },
+        };
+    }
+};
 
 const Scrim = struct {
     transmission: f32,
@@ -511,7 +529,7 @@ pub fn finish(output: []Region, before: Size, after: Size, scale: values.Scale) 
 /// reach the reporting minimum together. Asserts seeds is not empty.
 pub fn group(collector: *Collector, mask: Mask, seeds: []u32, at: Placement) GroupResult {
     std.debug.assert(seeds.len > 0);
-    if (at.before_y != null and at.before_y == at.after_y) discardUnsupported(mask, collector.min_pixels);
+    if (at.stationary()) discardUnsupported(mask, collector.min_pixels);
     var result: GroupResult = .empty;
     var fill: Fill = .{ .mask = mask, .seeds = seeds };
     var next: usize = 0;
@@ -534,7 +552,7 @@ pub fn group(collector: *Collector, mask: Mask, seeds: []u32, at: Placement) Gro
             max_y = @max(max_y, y);
         }
         const box = Box.fromPixels(at.left + min_x, min_y, max_x - min_x, max_y - min_y + 1);
-        if (collector.addPixels(.{ .before = translated(box, at.before_y), .after = translated(box, at.after_y) }, count)) {
+        if (collector.addPixels(at.place(box), count)) {
             result = .kept;
         } else if (result == .empty) {
             result = .sparse;
@@ -562,7 +580,7 @@ pub fn groupElement(collector: *Collector, mask: Mask, at: Placement) bool {
     }
     if (count < collector.min_pixels) return false;
     const box = Box.fromPixels(at.left + left, top, right - left, bottom - top);
-    collector.add(.{ .before = translated(box, at.before_y), .after = translated(box, at.after_y) });
+    collector.add(at.place(box));
     return true;
 }
 
@@ -1305,9 +1323,9 @@ fn widen(range: ?RowRange, more: RowRange) RowRange {
     return .{ .first = @min(known.first, more.first), .last = @max(known.last, more.last) };
 }
 
-fn translated(box: Box, top: ?usize) ?Box {
+fn translated(box: Box, top: usize) Box {
     var adjusted = box;
-    adjusted.y += @floatFromInt(top orelse return null);
+    adjusted.y += @floatFromInt(top);
     return adjusted;
 }
 
@@ -1347,7 +1365,7 @@ test "a serpentine larger than the seed stack is one component" {
     var storage: [4]Candidate = undefined;
     var collector: Collector = .{ .boxes = &storage, .gap_px = 0, .max_gap_px = width };
     var seeds: [2]u32 = undefined;
-    try std.testing.expectEqual(GroupResult.kept, group(&collector, .{ .cells = &cells, .width = width }, &seeds, .{ .left = 3, .before_y = 5, .after_y = null }));
+    try std.testing.expectEqual(GroupResult.kept, group(&collector, .{ .cells = &cells, .width = width }, &seeds, .{ .left = 3, .rows = .{ .before = 5 } }));
     try std.testing.expectEqual(@as(usize, 1), collector.len);
     try std.testing.expectEqual(@as(?Box, Box.fromPixels(3, 5, width, height)), collector.boxes[0].region.before);
     try std.testing.expectEqual(@as(?Box, null), collector.boxes[0].region.after);
