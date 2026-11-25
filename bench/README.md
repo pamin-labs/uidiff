@@ -34,3 +34,18 @@ reproducible fixtures for the uidiff benchmark. Run `zig build bench` to
 measure decode, compare, sheet rendering, the file pipeline and peak RSS.
 Use `-Dbench-before=before.png -Dbench-after=after.png` for a local pair,
 adding `-Dbench-scale=2` if it was captured at 2×.
+
+## README sheets
+
+Build the CLI in ReleaseSafe and pass a corpus directory plus the four pair
+directory names. Each pair contains `before.png` and `after.png` at 2× scale.
+The renderer writes the sheets under `docs/images/` and runs lossless
+`oxipng -o max` on each.
+
+```sh
+zig build -Doptimize=safe
+python3 scripts/readme-images.py render "$PAIRS_DIR" \
+  --desktop-dark "$DESKTOP_PAIR" --phone-insert "$INSERT_PAIR" \
+  --phone-settings "$SETTINGS_PAIR" --phone-list "$LIST_PAIR"
+python3 scripts/readme-images.py check
+```

@@ -95,6 +95,7 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 scripts/generate-font.py --check
+      - run: python3 scripts/readme-images.py check
 
   fuzz:
     if: github.event_name == 'pull_request'

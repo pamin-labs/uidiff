@@ -3,6 +3,11 @@
 <p align="center"><b>What changed between two screenshots, at a glance.</b><br>
 Compare two captures and get a sheet with detected changes boxed, numbered and labelled.</p>
 
+<p align="center">
+  <img src="docs/images/desktop-dark.png" alt="Dark desktop chat comparison with one inserted message, one changed message, and a block shifted down" width="100%"><br>
+  <sub>One message inserted, one changed, and one block shifted down.</sub>
+</p>
+
 You change a UI, or a script does, or an AI agent does, and now you need to know what actually changed. A pixel diff tells you which pixels differ, so one inserted row paints everything below it. uidiff tells you what changed: it lines up rows that only moved, boxes each real edit, labels it **changed**, **inserted** or **removed**, and reports how far the rest moved. It reads nothing but the two images, so the same command works for websites, iOS and Android apps, desktop apps, games, canvas and mini programs. It earns its keep wherever a UI is iterated on, and most of all in vibe coding, where the screen changes every few minutes and you need to see what the agent really did.
 
 ## Why uidiff
@@ -25,6 +30,23 @@ You change a UI, or a script does, or an AI agent does, and now you need to know
 ## The sheet
 
 `--annotate sheet.png` draws before and after panes, with numbered boxes in amber for changed regions, green for insertions and red for removals. The gutter shows stationary and shifted rows. Numbered close-ups appear below the panes. Panoramic captures use stacked overview strips.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/phone-insert.png" alt="Phone chat sheet showing one inserted message and a downward shift"></td>
+    <td width="50%"><img src="docs/images/phone-settings.png" alt="Phone settings sheet showing one changed label with a close-up"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>One message inserted. The alignment gutter shows the thread moving down.</sub></td>
+    <td align="center"><sub>One settings label changed in place.</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/images/phone-list.png" alt="Phone chat-list sheet showing two changed regions, one inserted row, and a block moved down" width="100%"></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><sub>Two changed regions and one inserted row. A block of rows shifted down.</sub></td>
+  </tr>
+</table>
 
 Render the procedural phone fixture with a local build.
 
