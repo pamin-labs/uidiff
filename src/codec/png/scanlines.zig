@@ -1,8 +1,8 @@
 //! Reconstructs bounded RGB8 and RGBA8 PNG scanlines with zlib-ng.
 const std = @import("std");
 const builtin = @import("builtin");
-const values = @import("../value.zig");
-const format = @import("png_format.zig");
+const values = @import("../../value.zig");
+const format = @import("../png_format.zig");
 const memory = @import("codec_memory");
 const zlib = @import("zlib_c");
 

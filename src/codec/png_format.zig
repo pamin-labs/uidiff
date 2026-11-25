@@ -25,6 +25,15 @@ pub const rgb_color = 2;
 /// PNG colour type with red, green, blue and alpha channels.
 pub const rgba_color = 6;
 
+/// Up uses the previous scanline as its predictor.
+pub const up_filter = 2;
+
+/// Sub uses the preceding pixel as its predictor.
+pub const sub_filter = 1;
+
+/// Paeth chooses the nearest of three neighbouring samples.
+pub const paeth_filter = 4;
+
 test {
     std.testing.refAllDecls(@This());
 }

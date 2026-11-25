@@ -21,7 +21,7 @@ Follow the public pamin-labs/skills engineering rules in [core](.agents/skills/p
 
 - `src/root.zig` exposes the public library. It imports only module roots: the files beside each layer directory.
 - `src/value.zig` and `src/value/` hold shared values and the image and memory bounds. Value modules depend only on other values and the standard library.
-- `src/codec.zig` and `src/codec/` handle format detection, bounded file reads, dimension and memory-budget checks, decoding and PNG encoding. Only `src/codec/stb.zig` imports the translated stb_image header, only `src/codec/jpeg.zig` the translated libjpeg-turbo bridge, and only `src/codec/webp.zig` the translated libwebp decoder header; the encoder headers are translated separately for the fixture generator, so the shipped library never includes them.
+- `src/codec.zig` and `src/codec/` handle format detection, bounded file reads, dimension and memory-budget checks, decoding and PNG encoding. Only `src/codec/stb.zig` imports the translated stb_image header, only `src/codec/jpeg.zig` the translated libjpeg-turbo bridge, and only `src/codec/webp.zig` the translated libwebp decoder header; the encoder headers are translated separately for the fixture generator, so the shipped library never includes them. `src/codec/png.zig` exposes PNG registration, decoding and encoding through the bounded streams in `src/codec/png/`.
 - `src/diff.zig` and `src/diff/` compare pixels, align rows, and produce regions. `src/diff/regions.zig` is the facade for the grouping, visible edit rules, and final ordering in `src/diff/regions/`. `src/diff/rows.zig` coordinates the band search, chrome detection, and refinement in `src/diff/rows/`. `src/annotate.zig` and `src/annotate/` number and place labels and draw the annotated sheet. `src/annotate/badges.zig` places badges and exposes the routing and painting in `src/annotate/badges/`. `src/annotate/crops.zig` owns close-up geometry and sampling, and `src/annotate/report_sheet.zig` composes the overview and the detail rows. `src/report.zig` owns the versioned JSON report.
 - `src/files.zig` is the file pipeline: it checks the options once, decodes both files, compares them and writes the sheet atomically. The CLI calls it and only translates.
 - `src/cli.zig` is the CLI entry and `src/cli/` its argument syntax and usage text.
@@ -56,10 +56,10 @@ Named build modules, and the only files that may import them. The `export` row n
 | `jpeg_encode_c` | `tests/fixtures/jpeg_generate.zig` |
 | `jpeg_c` | `src/codec/jpeg.zig` |
 | `webp_c` | `src/codec/webp.zig` |
-| `zlib_c` | `src/codec/png.zig` `src/codec/png_scanlines.zig` |
+| `zlib_c` | `src/codec/png/deflate.zig` `src/codec/png/scanlines.zig` |
 | `stb_write_c` | `tests/fixtures/encode.zig` |
 | `webp_encode_c` | `tests/fixtures/encode.zig` |
-| `codec_memory` | `src/codec.zig` `src/codec/png.zig` `src/codec/png_scanlines.zig` `src/codec/stb.zig` `src/codec/jpeg.zig` `src/codec/webp.zig` `tests/fixtures/encode.zig` |
+| `codec_memory` | `src/codec.zig` `src/codec/png/deflate.zig` `src/codec/png/scanlines.zig` `src/codec/stb.zig` `src/codec/jpeg.zig` `src/codec/webp.zig` `tests/fixtures/encode.zig` |
 | `diff_scenarios` | `tests/diff/` |
 | `fixtures` | `tests/e2e.zig` `tests/decode.zig` `tests/fuzz/` |
 | `e2e_options` | `tests/e2e.zig` |
@@ -74,6 +74,7 @@ Only a submodule's facade and implementation files may import its implementation
 | `src/diff/regions.zig` | `src/diff/regions/` |
 | `src/diff/rows.zig` | `src/diff/rows/` |
 | `src/annotate/badges.zig` | `src/annotate/badges/` |
+| `src/codec/png.zig` | `src/codec/png/` |
 | `tests/diff.zig` | `tests/diff/` |
 
 ## Decoders
