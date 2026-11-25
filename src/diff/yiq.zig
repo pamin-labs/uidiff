@@ -589,20 +589,25 @@ fn lumaDelta(a: Pixel, b: Pixel, index: usize) f64 {
 }
 
 fn siblings(a: SampledRaster, p: Point) bool {
-    // The neighbor selected by antialiased is inside both crops; all offsets are clipped.
-
     const color = a.sample(p.x, p.y);
     const x0 = p.x -| 1;
     const y0 = p.y -| 1;
-    const x2 = @min(p.x + 1, a.image.width - 1);
-    const y2 = @min(p.y + 1, a.image.height - 1);
-    var count: usize = @intFromBool(p.x == x0 or p.x == x2 or p.y == y0 or p.y == y2);
-    for (x0..x2 + 1) |x| {
-        for (y0..y2 + 1) |y| {
-            if (x == p.x and y == p.y) continue;
-            count += @intFromBool(same(color, a.sample(x, y)));
-            if (count > 2) return true;
+    const x1 = @min(p.x + 2, a.image.width);
+    const y1 = @min(p.y + 2, a.image.height);
+    const width = x1 - x0;
+    const repeated = a.x_mask == 0;
+    const row_len = if (repeated) 1 else width;
+    const weight = if (repeated) width else 1;
+    // At an image edge, one missing neighbour counts as a match. Include
+    // the centre in the scan and use one more than the neighbour threshold.
+    const required: usize = if (width == 3 and y1 - y0 == 3) 4 else 3;
+    var count: usize = 0;
+    for (y0..y1) |y| {
+        const row = a.pixels[a.index(x0, y)..][0..row_len];
+        for (row) |sample| {
+            count += @intFromBool(same(color, sample));
         }
+        if (count * weight >= required) return true;
     }
     return false;
 }
@@ -734,6 +739,59 @@ test "repeated rows and repeated columns agree across vector blocks and the tail
     var columns: [pixels.len]regions.Cell = undefined;
     try std.testing.expect(mask(a, b, 0, height, &columns));
     try std.testing.expectEqualSlices(regions.Cell, &rows, &columns);
+}
+
+test "sibling count includes a clipped edge and repeats virtual backdrop columns" {
+    const white: Pixel = @splat(255);
+    const ink: Pixel = .{ 0, 0, 0, 255 };
+    const width = 3;
+    var pixels: [width * width]Pixel = @splat(white);
+    var raster: Raster = .{
+        .image = .{ .width = width, .height = width, .pixels = &pixels },
+        .left = 0,
+        .top = 0,
+        .width = width,
+        .height = width,
+    };
+    const center: Point = .{ .x = 1, .y = 1 };
+    pixels[0] = ink;
+    pixels[2] = ink;
+    pixels[4] = ink;
+    try std.testing.expect(!siblings(SampledRaster.init(raster), center));
+    try std.testing.expect(!siblings(SampledRaster.init(raster), .{ .x = 0, .y = 0 }));
+    pixels[3] = ink;
+    try std.testing.expect(siblings(SampledRaster.init(raster), center));
+    try std.testing.expect(siblings(SampledRaster.init(raster), .{ .x = 0, .y = 0 }));
+
+    raster.background = .margin;
+    pixels[0] = white;
+    try std.testing.expect(!siblings(SampledRaster.init(raster), center));
+    pixels[0] = ink;
+    try std.testing.expect(siblings(SampledRaster.init(raster), center));
+}
+
+test "antialiasing retains the first equally bright extremum" {
+    const width = 5;
+    const black: Pixel = .{ 0, 0, 0, 255 };
+    var pixels: [width * width]Pixel = undefined;
+    for (&pixels, 0..) |*sample, index| {
+        const level: u8 = @intCast(40 + index * 4);
+        sample.* = .{ level, level, level, 255 };
+    }
+    pixels[width + 1] = black;
+    pixels[width + 3] = black;
+    pixels[3 * width + 2] = @splat(255);
+    for (0..3) |y| pixels[y * width + width - 1] = black;
+    const raster = SampledRaster.init(.{
+        .image = .{ .width = width, .height = width, .pixels = &pixels },
+        .left = 0,
+        .top = 0,
+        .width = width,
+        .height = width,
+    });
+    try std.testing.expect(!antialiased(raster, raster, 2, 2));
+    for (0..width) |y| std.mem.reverse(Pixel, pixels[y * width ..][0..width]);
+    try std.testing.expect(antialiased(raster, raster, 2, 2));
 }
 
 test {
