@@ -9,7 +9,7 @@ import tarfile
 from tempfile import TemporaryDirectory
 import zipfile
 
-from package import NOTICES, NPM_PACKAGE, ROOT, TARGETS, digest, finalize, npm_packages, pack, version
+from package import FORMULA_ASSET, NOTICES, NPM_PACKAGE, REPOSITORY, ROOT, TARGETS, digest, finalize, npm_packages, pack, version
 
 
 def check_launcher(launcher, binary):
@@ -32,8 +32,14 @@ def check_assets(release, release_version):
     assert {name: checksum for checksum, name in lines} == {
         asset.name: digest(asset) for asset in release.iterdir() if asset != sums
     }
+    formula = release / FORMULA_ASSET
+    content = formula.read_text()
+    assert f'version "{release_version}"' in content
     for target in TARGETS:
         archive = release / target.archive(release_version)
+        if target.os != "windows":
+            assert f'url "{REPOSITORY}/releases/download/v{release_version}/{archive.name}"' in content
+            assert f'sha256 "{digest(archive)}"' in content
         if target.os == "windows":
             with zipfile.ZipFile(archive) as bundle:
                 names = bundle.namelist()
@@ -64,6 +70,8 @@ def main():
             pack(target, release_version, bin_dir, release)
         finalize(release_version, release)
         check_assets(release, release_version)
+        if shutil.which("ruby"):
+            subprocess.run(["ruby", "-c", release / FORMULA_ASSET], check=True)
         publish_order = npm_packages(release_version, release, packages)
         assert publish_order == [*(packages / target.npm_name for target in TARGETS), packages / NPM_PACKAGE]
 

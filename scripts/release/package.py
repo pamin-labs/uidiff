@@ -18,6 +18,9 @@ NOTICES = ("LICENSE", "THIRD_PARTY_NOTICES")
 NATIVE_ENTRY = "./native"
 NPM_SCOPE = "@pamin-labs"
 NPM_PACKAGE = f"{NPM_SCOPE}/uidiff"
+TAP_REPOSITORY = "pamin-labs/homebrew-tap"
+TAP_FORMULA = "Formula/uidiff.rb"
+FORMULA_ASSET = Path(TAP_FORMULA).name
 
 
 @dataclass(frozen=True)
@@ -118,10 +121,10 @@ def finalize(release_version, output):
     formula = template.substitute(
         version=release_version, repository=REPOSITORY, platforms=formula_platforms(release_version, output)
     )
-    (output / "uidiff.rb").write_text(formula)
+    (output / FORMULA_ASSET).write_text(formula)
     for installer in ("install.sh", "install.ps1"):
         shutil.copy2(ROOT / installer, output / installer)
-    assets = ["uidiff.rb", "install.sh", "install.ps1"]
+    assets = [FORMULA_ASSET, "install.sh", "install.ps1"]
     for target in TARGETS:
         assets.extend((target.release_binary(release_version), target.archive(release_version)))
     sums = "".join(f"{digest(output / name)}  {name}\n" for name in sorted(assets))
@@ -174,6 +177,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("matrix")
+    commands.add_parser("tap")
     validate = commands.add_parser("version")
     validate.add_argument("--tag")
     package = commands.add_parser("pack")
@@ -189,6 +193,11 @@ def main():
 
     if args.command == "matrix":
         print(json.dumps([target.zig for target in TARGETS]))
+    elif args.command == "tap":
+        print(f"repository={TAP_REPOSITORY}")
+        print(f"formula={TAP_FORMULA}")
+        print(f"asset={FORMULA_ASSET}")
+        print(f"version={release_version}")
     elif args.command == "version":
         if args.tag is not None and args.tag != f"v{release_version}":
             parser.error(f"tag {args.tag} does not match build.zig.zon (v{release_version})")
