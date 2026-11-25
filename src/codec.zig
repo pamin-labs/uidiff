@@ -149,28 +149,28 @@ pub fn decodeFileCapped(io: Io, allocator: Allocator, path: []const u8, cap: usi
 
 /// Reads the dimensions of a bounded encoded file without decoding pixels.
 pub fn probeFile(io: Io, allocator: Allocator, path: []const u8, cap: usize) (ReadError || DecodeError)!Size {
-    var file = try Io.Dir.cwd().openFile(io, path, .{ .allow_directory = false });
-    defer file.close(io);
-    const length = try encodedLength(io, file);
+    const input = try FileInput.open(io, path);
+    defer input.close(io);
+    const length = input.length;
     var prefix: [probe_prefix_bytes]u8 = undefined;
     const header = prefix[0..@min(length, prefix.len)];
-    try readBytes(io, file, header);
+    try readBytes(io, input.file, header);
     if (probeSize(allocator, header, cap)) |size| {
         return size;
     } else |err| {
         // JPEG metadata and WebP chunks can put dimensions past the prefix.
         if (err != error.InvalidImage or header.len == length) return err;
     }
-    const bytes = try readEncoded(io, allocator, file, length);
+    const bytes = try readEncoded(io, allocator, input.file, length);
     defer values.freeUnfilled(u8, allocator, bytes);
     return probeSize(allocator, bytes, cap);
 }
 
 /// Reads a file of at most max_encoded_bytes. The caller owns the returned bytes.
 pub fn readFile(io: Io, allocator: Allocator, path: []const u8) ReadError![]u8 {
-    var file = try Io.Dir.cwd().openFile(io, path, .{ .allow_directory = false });
-    defer file.close(io);
-    return readEncoded(io, allocator, file, try encodedLength(io, file));
+    const input = try FileInput.open(io, path);
+    defer input.close(io);
+    return readEncoded(io, allocator, input.file, input.length);
 }
 
 fn Probed(comptime probe: anytype) type {
