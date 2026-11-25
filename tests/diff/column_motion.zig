@@ -10,6 +10,25 @@ const Kind = values.Kind;
 const region_padding = diff.region_padding;
 const min_region_pixels = sample.min_region_pixels;
 
+fn sidebarPage() !sample.Canvas {
+    const before = try sample.Canvas.init(320, 400);
+    before.text(4, 56, 6, 100, 30);
+    before.text(96, 316, 6, 0, 30);
+    return before;
+}
+
+fn growMainColumn(before: sample.Canvas) !sample.Canvas {
+    const width = before.view.width;
+    const height = before.view.height;
+    const inserted = 60;
+    const after = try sample.Canvas.init(width, height + inserted);
+    after.copyColumns(before, 0, 60, 0, height, 0);
+    after.copyColumns(before, 96, width, 0, 40, 0);
+    after.copyColumns(before, 96, width, 40, height, 40 + inserted);
+    after.fill(100, 44, 200, 50, .{ 200, 220, 240, 255 });
+    return after;
+}
+
 test "card corner edits never align their narrow border columns as moves" {
     const before = try sample.Canvas.init(800, 600);
     defer before.deinit();
@@ -115,30 +134,16 @@ test "wider viewport aligns rows and shows only the added strip" {
 }
 
 test "a growing main column aligns beside a static sidebar" {
-    const width = 320;
-    const height = 400;
-    const inserted = 60;
-    const before = try sample.Canvas.init(width, height);
+    const before = try sidebarPage();
     defer before.deinit();
-    before.text(4, 56, 6, 100, 30);
-    before.text(96, 316, 6, 0, 30);
-    const after = try sample.Canvas.init(width, height + inserted);
+    const after = try growMainColumn(before);
     defer after.deinit();
-    after.copyColumns(before, 0, 60, 0, height, 0);
-    after.copyColumns(before, 96, width, 0, 40, 0);
-    after.copyColumns(before, 96, width, 40, height, 40 + inserted);
-    after.fill(100, 44, 200, 50, .{ 200, 220, 240, 255 });
     try sample.check(before, after, 1, &.{.{ .after = sample.paddedBox(100, 44, 200, 50) }});
 }
 
 test "growing and shrinking columns keep their insertion and independent edits" {
-    const width = 320;
-    const height = 400;
-    const inserted = 60;
-    const before = try sample.Canvas.init(width, height);
+    const before = try sidebarPage();
     defer before.deinit();
-    before.text(4, 56, 6, 100, 30);
-    before.text(96, 316, 6, 0, 30);
     const cases = [_]struct { x: usize, y: usize, width: usize, height: usize, kind: Kind, tone: u8 = 30 }{
         .{ .x = 200, .y = 300, .width = 3, .height = 6, .kind = .changed },
         .{ .x = 20, .y = 300, .width = 3, .height = 6, .kind = .changed },
@@ -153,12 +158,8 @@ test "growing and shrinking columns keep their insertion and independent edits" 
         .{ .x = 150, .y = 440, .width = 3, .height = 6, .kind = .changed },
     };
     for (cases) |edit| {
-        const after = try sample.Canvas.init(width, height + inserted);
+        const after = try growMainColumn(before);
         defer after.deinit();
-        after.copyColumns(before, 0, 60, 0, height, 0);
-        after.copyColumns(before, 96, width, 0, 40, 0);
-        after.copyColumns(before, 96, width, 40, height, 40 + inserted);
-        after.fill(100, 44, 200, 50, .{ 200, 220, 240, 255 });
         after.fill(edit.x, edit.y, edit.width, edit.height, sample.inkShade(edit.tone, 4));
         const result = try sample.compareCanvases(before, after, 1);
         defer result.deinit(std.testing.allocator);
@@ -177,10 +178,8 @@ test "growing and shrinking columns keep their insertion and independent edits" 
 
 test "both moving columns preserve a two-sided edit in each" {
     const height = 400;
-    const before = try sample.Canvas.init(320, height);
+    const before = try sidebarPage();
     defer before.deinit();
-    before.text(4, 56, 6, 100, 30);
-    before.text(96, 316, 6, 0, 30);
     const after = try sample.Canvas.init(320, height);
     defer after.deinit();
     after.copyColumns(before, 0, 60, 0, 30, 0);
@@ -200,10 +199,8 @@ test "both moving columns preserve a two-sided edit in each" {
 
 test "sparse marks and real extensions survive independent column alignment" {
     const height = 400;
-    const before = try sample.Canvas.init(320, height);
+    const before = try sidebarPage();
     defer before.deinit();
-    before.text(4, 56, 6, 100, 30);
-    before.text(96, 316, 6, 0, 30);
     const after = try sample.Canvas.init(320, height + 60);
     defer after.deinit();
     after.copyColumns(before, 0, 60, 0, height, 0);

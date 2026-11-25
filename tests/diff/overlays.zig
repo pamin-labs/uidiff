@@ -6,16 +6,22 @@ const sample = diff.test_support;
 const values = sample.values;
 const Kind = values.Kind;
 
-test "a dimmed viewport with a new opaque center pane is an inserted overlay" {
+fn dimmedPage() !struct { sample.Canvas, sample.Canvas } {
     const before = try sample.Canvas.init(192, 160);
-    defer before.deinit();
+    errdefer before.deinit();
     const after = try sample.Canvas.init(192, 160);
-    defer after.deinit();
     before.fill(0, 0, 50, 160, sample.inkShade(192, 4));
     before.fill(50, 0, 142, 42, sample.inkShade(220, 4));
     for (before.pixels, after.pixels) |ink, *shade| {
         shade.* = .{ ink[0] / 2, ink[1] / 2, ink[2] / 2, 255 };
     }
+    return .{ before, after };
+}
+
+test "a dimmed viewport with a new opaque center pane is an inserted overlay" {
+    const before, const after = try dimmedPage();
+    defer before.deinit();
+    defer after.deinit();
     const dimmed = try sample.compareCanvases(before, after, 1);
     defer dimmed.deinit(std.testing.allocator);
     try std.testing.expectEqual(Kind.changed, dimmed.regions[0].kind);
@@ -122,15 +128,9 @@ test "audit: growing or replacing a toast retains the old panel" {
 }
 
 test "a modal does not hide a changed page behind its scrim" {
-    const before = try sample.Canvas.init(192, 160);
+    const before, const after = try dimmedPage();
     defer before.deinit();
-    const after = try sample.Canvas.init(192, 160);
     defer after.deinit();
-    before.fill(0, 0, 50, 160, sample.inkShade(192, 4));
-    before.fill(50, 0, 142, 42, sample.inkShade(220, 4));
-    for (before.pixels, after.pixels) |ink, *shade| {
-        shade.* = .{ ink[0] / 2, ink[1] / 2, ink[2] / 2, 255 };
-    }
     after.fill(52, 52, 88, 56, sample.inkShade(216, 4));
     after.fill(12, 20, 24, 16, sample.inkShade(58, 4));
     const result = try sample.compareCanvases(before, after, 1);

@@ -2,19 +2,17 @@
 //! PNG round trip of the sheet.
 const std = @import("std");
 const uidiff = @import("uidiff");
+const rgba = @import("fixtures/rgba.zig");
 const testing = std.testing;
-const Image = uidiff.Image;
-const Pixel = uidiff.Pixel;
 const Region = uidiff.Region;
 
-const max_extent = 16;
 const max_regions = 2;
 
 fn fuzzSheet(_: void, smith: *testing.Smith) !void {
-    var before_pixels: [max_extent * max_extent]Pixel = undefined;
-    var after_pixels: [max_extent * max_extent]Pixel = undefined;
-    const before = image(smith, &before_pixels);
-    const after = image(smith, &after_pixels);
+    var before_pixels: rgba.Storage = undefined;
+    var after_pixels: rgba.Storage = undefined;
+    const before = rgba.image(smith, &before_pixels);
+    const after = rgba.image(smith, &after_pixels);
     var storage: [max_regions]Region = undefined;
     const regions = storage[0..smith.valueRangeAtMost(u8, 0, max_regions)];
     for (regions, 1..) |*region, number| {
@@ -36,14 +34,6 @@ fn fuzzSheet(_: void, smith: *testing.Smith) !void {
     var decoded = try uidiff.decode(testing.allocator, encoded.written());
     defer decoded.deinit();
     try testing.expect(decoded.image.valid());
-}
-
-fn image(smith: *testing.Smith, storage: *[max_extent * max_extent]Pixel) Image {
-    const width = smith.valueRangeAtMost(u8, 1, max_extent);
-    const height = smith.valueRangeAtMost(u8, 1, max_extent);
-    const data = storage[0 .. @as(usize, width) * height];
-    smith.bytes(std.mem.sliceAsBytes(data));
-    return .{ .width = width, .height = height, .pixels = data };
 }
 
 /// A box inside the image, edges in whole and half pixels.

@@ -1,21 +1,19 @@
 //! Fuzzes the comparison with small RGBA pairs, half of them sharing shifted rows.
 const std = @import("std");
 const uidiff = @import("uidiff");
+const rgba = @import("fixtures/rgba.zig");
 const testing = std.testing;
-const Image = uidiff.Image;
-const Pixel = uidiff.Pixel;
 
-const max_extent = 16;
 /// Scales are drawn as quarters from 1/4 to 4.
 const max_scale_quarters = 16;
 
 fn fuzzCompare(_: void, smith: *testing.Smith) !void {
-    var before_pixels: [max_extent * max_extent]Pixel = undefined;
-    var after_pixels: [max_extent * max_extent]Pixel = undefined;
-    const before = image(smith, &before_pixels);
-    const after = image(smith, &after_pixels);
+    var before_pixels: rgba.Storage = undefined;
+    var after_pixels: rgba.Storage = undefined;
+    const before = rgba.image(smith, &before_pixels);
+    const after = rgba.image(smith, &after_pixels);
     if (smith.value(bool)) {
-        const shift = smith.valueRangeAtMost(u8, 0, max_extent);
+        const shift = smith.valueRangeAtMost(u8, 0, rgba.extent);
         const shared_width = @min(before.width, after.width);
         for (shift..@max(shift, @min(after.height, before.height + shift))) |y| {
             const start = y * after.width;
@@ -34,14 +32,6 @@ fn fuzzCompare(_: void, smith: *testing.Smith) !void {
         if (region.before) |box| try checkBounds(box, before.size());
         if (region.after) |box| try checkBounds(box, after.size());
     }
-}
-
-fn image(smith: *testing.Smith, storage: *[max_extent * max_extent]Pixel) Image {
-    const width = smith.valueRangeAtMost(u8, 1, max_extent);
-    const height = smith.valueRangeAtMost(u8, 1, max_extent);
-    const data = storage[0 .. @as(usize, width) * height];
-    smith.bytes(std.mem.sliceAsBytes(data));
-    return .{ .width = width, .height = height, .pixels = data };
 }
 
 fn checkBounds(box: uidiff.Box, size: uidiff.Size) !void {

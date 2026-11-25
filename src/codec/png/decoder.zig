@@ -12,6 +12,9 @@ const Writer = std.Io.Writer;
 /// Malformed PNG bytes, a decode past the memory budget, or allocation failure.
 pub const DecodeError = stb.DecodeError;
 
+const single_rgb_header: stb.Header = .{ .size = .{ .width = 1, .height = 1 }, .sample_bytes = 1 };
+const single_rgb_pixel: values.Pixel = .{ 23, 57, 91, 255 };
+
 /// Decodes the probed dimensions through the scanline or legacy decoder.
 pub fn decode(allocator: Allocator, bytes: []const u8, header: stb.Header, cap: usize) stb.DecodeError![]values.Pixel {
     return load(allocator, bytes, header, cap);
@@ -29,6 +32,14 @@ fn load(allocator: Allocator, bytes: []const u8, header: stb.Header, cap: usize)
 fn loadPixels(bytes: []const u8, size: values.Size) DecodeError![]values.Pixel {
     if (try scanlines.decode(bytes, size)) |pixels| return pixels;
     return stb.loadStb(bytes, size);
+}
+
+fn singleRgbPng(allocator: Allocator) deflate.EncodeError!Writer.Allocating {
+    var encoded: Writer.Allocating = .init(allocator);
+    errdefer encoded.deinit();
+    const r, const g, const b, _ = single_rgb_pixel;
+    try writeTestPng(allocator, &encoded.writer, single_rgb_header.size, png_format.rgb_color, &.{ 0, r, g, b });
+    return encoded;
 }
 
 fn writeTestPng(allocator: Allocator, out: *Writer, size: values.Size, color: u8, filtered_rows: []const u8) deflate.EncodeError!void {
@@ -172,11 +183,8 @@ test "PNG filters preserve RGB8 and RGBA8 across streaming and fallback" {
 
 test "RGB8 accepts every legal IDAT split and refuses a truncated DEFLATE body" {
     const allocator = std.testing.allocator;
-    const size: values.Size = .{ .width = 1, .height = 1 };
-    const header: stb.Header = .{ .size = size, .sample_bytes = 1 };
-    var encoded: Writer.Allocating = .init(allocator);
+    var encoded = try singleRgbPng(allocator);
     defer encoded.deinit();
-    try writeTestPng(allocator, &encoded.writer, size, png_format.rgb_color, &.{ 0, 23, 57, 91 });
     const payload = firstTestIdat(encoded.written());
 
     var rebuilt: Writer.Allocating = .init(allocator);
@@ -184,23 +192,20 @@ test "RGB8 accepts every legal IDAT split and refuses a truncated DEFLATE body" 
     for (0..payload.len + 1) |at| {
         rebuilt.clearRetainingCapacity();
         try splitTestIdat(&rebuilt.writer, encoded.written(), payload, at);
-        const found = try load(allocator, rebuilt.written(), header, values.max_decode_bytes);
+        const found = try load(allocator, rebuilt.written(), single_rgb_header, values.max_decode_bytes);
         defer stb.release(allocator, found);
-        try std.testing.expectEqual(values.Pixel{ 23, 57, 91, 255 }, found[0]);
+        try std.testing.expectEqual(single_rgb_pixel, found[0]);
     }
     rebuilt.clearRetainingCapacity();
     try splitTestIdat(&rebuilt.writer, encoded.written(), payload[0..3], 1);
-    try std.testing.expectError(error.InvalidImage, load(allocator, rebuilt.written(), header, values.max_decode_bytes));
-    try std.testing.expectError(error.ImageTooLarge, load(allocator, encoded.written(), header, @sizeOf(values.Pixel)));
+    try std.testing.expectError(error.InvalidImage, load(allocator, rebuilt.written(), single_rgb_header, values.max_decode_bytes));
+    try std.testing.expectError(error.ImageTooLarge, load(allocator, encoded.written(), single_rgb_header, @sizeOf(values.Pixel)));
 }
 
 test "RGB8 preserves legacy checksum tolerance" {
     const allocator = std.testing.allocator;
-    const size: values.Size = .{ .width = 1, .height = 1 };
-    const header: stb.Header = .{ .size = size, .sample_bytes = 1 };
-    var encoded: Writer.Allocating = .init(allocator);
+    var encoded = try singleRgbPng(allocator);
     defer encoded.deinit();
-    try writeTestPng(allocator, &encoded.writer, size, png_format.rgb_color, &.{ 0, 23, 57, 91 });
     const idat = png_format.header_bytes + @sizeOf(u32);
     const len = firstTestIdat(encoded.written()).len;
     const changed = try allocator.dupe(u8, encoded.written());
@@ -208,9 +213,9 @@ test "RGB8 preserves legacy checksum tolerance" {
     // Alter both the zlib checksum payload and the following PNG CRC.
     changed[idat + 8 + len - 1] ^= 1;
     changed[idat + 8 + len] ^= 1;
-    const found = try load(allocator, changed, header, values.max_decode_bytes);
+    const found = try load(allocator, changed, single_rgb_header, values.max_decode_bytes);
     defer stb.release(allocator, found);
-    try std.testing.expectEqual(values.Pixel{ 23, 57, 91, 255 }, found[0]);
+    try std.testing.expectEqual(single_rgb_pixel, found[0]);
 }
 
 test "RGB8 transparent colour keys use the legacy decoder" {
