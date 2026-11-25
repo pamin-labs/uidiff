@@ -1,6 +1,6 @@
 class Uidiff < Formula
   desc "Align moved screenshot content and box visual changes"
-  homepage "https://github.com/pamin-labs/uidiff"
+  homepage "$repository"
   version "$version"
   license "MIT"
 

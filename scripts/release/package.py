@@ -34,12 +34,15 @@ class Target:
     def binary(self):
         return "uidiff.exe" if self.os == "windows" else "uidiff"
 
+    def asset_stem(self, version):
+        return f"uidiff-{version}-{self.os}-{self.arch}"
+
     def release_binary(self, version):
-        return f"uidiff-{version}-{self.os}-{self.arch}" + self.binary.removeprefix("uidiff")
+        return self.asset_stem(version) + self.binary.removeprefix("uidiff")
 
     def archive(self, version):
         extension = ".zip" if self.os == "windows" else ".tar.gz"
-        return f"uidiff-{version}-{self.os}-{self.arch}{extension}"
+        return self.asset_stem(version) + extension
 
     @property
     def npm_os(self):
@@ -68,17 +71,20 @@ def digest(path):
 
 def pack(target, release_version, bin_dir, output):
     output.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(bin_dir / target.binary, output / target.release_binary(release_version))
+    binary = bin_dir / target.binary
+    standalone = target.release_binary(release_version)
+    shutil.copy2(binary, output / standalone)
     archive = output / target.archive(release_version)
-    entries = (target.binary, *NOTICES)
+    entries = (binary, *(ROOT / name for name in NOTICES))
     if target.os == "windows":
         with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
-            for name in entries:
-                bundle.write(bin_dir / name, name)
+            for source in entries:
+                bundle.write(source, source.name)
     else:
         with tarfile.open(archive, "w:gz") as bundle:
-            for name in entries:
-                bundle.add(bin_dir / name, arcname=name)
+            for source in entries:
+                bundle.add(source, arcname=source.name)
+    return standalone
 
 
 def formula_platforms(release_version, output):
@@ -104,7 +110,7 @@ def formula_platforms(release_version, output):
 def finalize(release_version, output):
     template = Template(Path(__file__).with_name("uidiff.rb.in").read_text())
     formula = template.substitute(
-        version=release_version, platforms=formula_platforms(release_version, output)
+        version=release_version, repository=REPOSITORY, platforms=formula_platforms(release_version, output)
     )
     (output / "uidiff.rb").write_text(formula)
     for installer in ("install.sh", "install.ps1"):
@@ -178,7 +184,7 @@ def main():
             parser.error(f"tag {args.tag} does not match build.zig.zon (v{release_version})")
         print(release_version)
     elif args.command == "pack":
-        pack(Target(args.target), release_version, args.bin_dir, args.output)
+        print(pack(Target(args.target), release_version, args.bin_dir, args.output))
     elif args.command == "finalize":
         finalize(release_version, args.output)
     elif args.command == "npm":

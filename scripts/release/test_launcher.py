@@ -58,8 +58,6 @@ def main():
         release = temp / "release"
         packages = temp / "node_modules"
         binary = ROOT / "zig-out/bin" / host.binary
-        for name in NOTICES:
-            shutil.copy2(ROOT / name, bin_dir / name)
         # Only the host package is executed. The other archives exercise the artifact layout.
         for target in TARGETS:
             shutil.copy2(binary, bin_dir / target.binary)

@@ -2,13 +2,13 @@
 set -eu
 
 case "$(uname -s)" in
-    Darwin) os=macos ;;
-    Linux) os=linux ;;
+    Darwin) target_os=macos ;;
+    Linux) target_os=linux-musl ;;
     *) exit 1 ;;
 esac
 case "$(uname -m)" in
-    arm64|aarch64) arch=arm64 ;;
-    x86_64|amd64) arch=x64 ;;
+    arm64|aarch64) target_cpu=aarch64 ;;
+    x86_64|amd64) target_cpu=x86_64 ;;
     *) exit 1 ;;
 esac
 
@@ -19,12 +19,11 @@ export FIXTURE_RELEASE="$tmp/release"
 export PATH="$tmp/bin:$PATH"
 unset UIDIFF_VERSION
 
-version=1.2.3
-asset=uidiff-$version-$os-$arch
+version=$(python3 scripts/release/package.py version)
 tagged=$FIXTURE_RELEASE/download/v$version
 latest=$FIXTURE_RELEASE/latest/download
 mkdir -p "$tagged" "$latest" "$tmp/bin"
-cp zig-out/bin/uidiff "$tagged/$asset"
+asset=$(python3 scripts/release/package.py pack "$target_cpu-$target_os" zig-out/bin "$tagged")
 hash=$(shasum -a 256 < "$tagged/$asset")
 printf "%s  %s\n" "${hash%% *}" "$asset" > "$tagged/SHA256SUMS"
 cp "$tagged/SHA256SUMS" "$latest/SHA256SUMS"

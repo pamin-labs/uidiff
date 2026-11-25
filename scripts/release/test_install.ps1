@@ -1,8 +1,8 @@
 $ErrorActionPreference = 'Stop'
 
-$arch = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) {
-    X64 { 'x64' }
-    Arm64 { 'arm64' }
+$target = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) {
+    X64 { 'x86_64-windows' }
+    Arm64 { 'aarch64-windows' }
     default { throw 'Unsupported test architecture' }
 }
 $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString())
@@ -20,13 +20,14 @@ function Invoke-WebRequest {
 }
 
 try {
-    $version = '1.2.3'
-    $asset = "uidiff-$version-windows-$arch.exe"
+    $version = python scripts/release/package.py version
+    if ($LASTEXITCODE -ne 0) { throw "Cannot read the release version" }
     $tagged = Join-Path $fixtureRelease "download/v$version"
-    $latest = Join-Path $fixtureRelease 'latest/download'
+    $latest = Join-Path $fixtureRelease "latest/download"
     New-Item -ItemType Directory -Path $tagged, $latest -Force | Out-Null
+    $asset = python scripts/release/package.py pack $target zig-out/bin $tagged
+    if ($LASTEXITCODE -ne 0) { throw "Cannot build the release fixture" }
     $fixture = Join-Path $tagged $asset
-    Copy-Item -LiteralPath 'zig-out/bin/uidiff.exe' -Destination $fixture
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $fixture).Hash.ToLowerInvariant()
     $manifest = Join-Path $tagged 'SHA256SUMS'
     Set-Content -LiteralPath $manifest "$hash  $asset"
