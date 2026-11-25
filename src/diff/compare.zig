@@ -164,7 +164,7 @@ pub fn compareChecked(allocator: Allocator, before: Image, after: Image, options
         collector.len = len;
         moves.clearRetainingCapacity();
     }
-    if (collector.len >= regions.outline_corners) collector.len = regions.mergeCorners(storage[0..collector.len], before, options.scale);
+    if (collector.len > 1) collector.len = regions.mergeCorners(storage[0..collector.len], before, after, options.scale);
     if (collector.len > 1) collector.len = regions.mergeLogical(storage[0..collector.len], before, after, options.scale, moves.items);
     const out = try allocator.alloc(values.Region, collector.len);
     errdefer allocator.free(out);
@@ -2845,6 +2845,63 @@ test "separate table cell edits stay separate unless both rows exchange intact" 
     defer independent.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 4), independent.regions.len);
     try std.testing.expect(sample.hasRegion(independent.regions, .after, right + 1, upper + pitch + 1, .changed));
+}
+
+test "four corners follow a continuous outline even when its straight edges differ in color" {
+    const before = try sample.Canvas.init(250, 150);
+    defer before.deinit();
+    const after = try sample.Canvas.init(250, 150);
+    defer after.deinit();
+    const boxes = [_]Box{
+        Box.fromPixels(32, 26, 14, 14),
+        Box.fromPixels(202, 26, 14, 14),
+        Box.fromPixels(32, 116, 14, 14),
+        Box.fromPixels(202, 116, 14, 14),
+    };
+    var edits: [boxes.len]regions.Candidate = undefined;
+    for ([_]sample.Canvas{ before, after }) |canvas| {
+        canvas.fill(32, 28, 184, 3, .{ 60, 90, 150, 255 });
+        canvas.fill(32, 124, 184, 3, .{ 120, 90, 62, 255 });
+        canvas.fill(35, 40, 4, 76, sample.inkShade(75, 4));
+        canvas.fill(210, 40, 4, 76, sample.inkShade(75, 4));
+    }
+    for (boxes, &edits) |box, *edit| {
+        const x: usize = @intFromFloat(box.x);
+        const y: usize = @intFromFloat(box.y);
+        before.fill(x + 2, y + 3, 8, 6, sample.inkShade(80, 4));
+        after.fill(x + 3, y + 4, 6, 4, sample.inkShade(80, 4));
+        edit.* = .{ .region = .{ .before = box, .after = box }, .pixels = 8 };
+    }
+    var candidates = edits;
+    try std.testing.expectEqual(@as(usize, 1), regions.mergeCorners(&candidates, before.view, after.view, .one));
+    for ([_]sample.Canvas{ before, after }) |canvas| canvas.fill(104, 20, 16, 115, sample.inkShade(255, 4));
+    candidates = edits;
+    try std.testing.expectEqual(edits.len, regions.mergeCorners(&candidates, before.view, after.view, .one));
+    try std.testing.expectEqualDeep(edits, candidates);
+}
+
+test "viewport clipped corners join only across a continuous straight edge" {
+    const before = try sample.Canvas.init(250, 64);
+    defer before.deinit();
+    const after = try sample.Canvas.init(250, 64);
+    defer after.deinit();
+    const a = Box.fromPixels(32, 45, 14, 19);
+    const b = Box.fromPixels(202, 45, 14, 19);
+    const edits = [_]regions.Candidate{
+        .{ .region = .{ .before = a, .after = a }, .pixels = 8 },
+        .{ .region = .{ .before = b, .after = b }, .pixels = 8 },
+    };
+    for ([_]sample.Canvas{ before, after }, [_]usize{ 8, 4 }) |canvas, shape| {
+        canvas.fill(46, 48, 156, 5, sample.inkShade(88, 4));
+        canvas.fill(34, 55, shape, 9, sample.inkShade(68, 4));
+        canvas.fill(205, 55, shape, 9, sample.inkShade(68, 4));
+    }
+    var candidates = edits;
+    try std.testing.expectEqual(@as(usize, 1), regions.mergeCorners(&candidates, before.view, after.view, .one));
+    for ([_]sample.Canvas{ before, after }) |canvas| canvas.fill(116, 44, 18, 20, sample.inkShade(255, 4));
+    candidates = edits;
+    try std.testing.expectEqual(edits.len, regions.mergeCorners(&candidates, before.view, after.view, .one));
+    try std.testing.expectEqualDeep(edits, candidates);
 }
 
 test "a modal does not hide a changed page behind its scrim" {

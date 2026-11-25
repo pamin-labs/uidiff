@@ -256,7 +256,7 @@ pub const max_regions = 8;
 // Bound the initial list and its quadratic merge work on highly fragmented images.
 const max_pending_regions = 4096;
 /// A complete rectangular outline has a mark at each of its corners.
-pub const outline_corners = 4;
+const outline_corners = 4;
 const corner_overlap = 0.75;
 const line_overlap = 0.7;
 const stack_overlap = 0.5;
@@ -297,6 +297,8 @@ const floating_panel_shadow_rounding = 3;
 const floating_panel_edge_fringe = 3;
 const max_swap_pitch = values.CssPx.init(128);
 const max_swap_candidates = 16;
+const corner_rail_contrast = 36;
+const max_corner_rail_px = 2048;
 const blank_tolerance = 24;
 const max_sideways_shift = 256;
 const shift_samples = 9;
@@ -356,12 +358,14 @@ pub noinline fn mergeLogical(boxes: []Candidate, before: Image, after: Image, sc
 }
 
 /// Groups stationary corner changes when the unchanged straight edges connect them.
-pub noinline fn mergeCorners(boxes: []Candidate, image: Image, scale: values.Scale) usize {
+pub noinline fn mergeCorners(boxes: []Candidate, before: Image, after: Image, scale: values.Scale) usize {
     var len = boxes.len;
+    const limit = scale.devicePixels(line_height);
+    if (len == 2 and croppedCorners(boxes, before, after, limit, scale.devicePixels(padding))) return join(boxes, len, 0, 1);
     var i: usize = 0;
     while (i + outline_corners <= len) : (i += 1) {
-        const first = corner(boxes[i].region, scale.devicePixels(line_height)) orelse continue;
-        if (outlineCorners(boxes[i + 1 .. len], image, first, scale.devicePixels(line_height))) |others| {
+        const first = corner(boxes[i].region, limit) orelse continue;
+        if (outlineCorners(boxes[i + 1 .. len], before, after, first, limit)) |others| {
             // The indexes are relative to the suffix and sorted largest first.
             for (others) |j| len = join(boxes, len, i, i + 1 + j);
         }
@@ -811,7 +815,7 @@ fn corner(region: Region, limit: f64) ?Box {
     return p;
 }
 
-fn outlineCorners(boxes: []const Candidate, image: Image, top: Box, limit: f64) ?[3]usize {
+fn outlineCorners(boxes: []const Candidate, before: Image, after: Image, top: Box, limit: f64) ?[3]usize {
     for (boxes, 0..) |tr, j| {
         const right = corner(tr.region, limit) orelse continue;
         if (right.x <= top.right() or !sameRange(top.y, top.bottom(), right.y, right.bottom())) continue;
@@ -822,7 +826,8 @@ fn outlineCorners(boxes: []const Candidate, image: Image, top: Box, limit: f64) 
                 const lower_right = corner(br.region, limit) orelse continue;
                 if (!sameRange(bottom.y, bottom.bottom(), lower_right.y, lower_right.bottom()) or
                     !sameRange(right.x, right.right(), lower_right.x, lower_right.right())) continue;
-                if (!visibleOutline(image, top, right, bottom)) continue;
+                if (!visibleOutline(before, top, right, bottom) and
+                    !tracedOutline(before, after, top, right, bottom, lower_right)) continue;
                 var order = [3]usize{ j, k, l };
                 std.sort.insertion(usize, &order, {}, std.sort.desc(usize));
                 return order;
@@ -830,6 +835,64 @@ fn outlineCorners(boxes: []const Candidate, image: Image, top: Box, limit: f64) 
         }
     }
     return null;
+}
+
+fn croppedCorners(boxes: []const Candidate, before: Image, after: Image, limit: f64, clip_slack: f64) bool {
+    if (before.height != after.height or before.width != after.width) return false;
+    const a = corner(boxes[0].region, limit) orelse return false;
+    const b = corner(boxes[1].region, limit) orelse return false;
+    const left, const right = if (a.x < b.x) .{ a, b } else .{ b, a };
+    const height: f64 = @floatFromInt(before.height);
+    if (height - @min(left.bottom(), right.bottom()) > clip_slack or
+        !sameRange(left.y, left.bottom(), right.y, right.bottom())) return false;
+    return horizontalRail(before, after, left, right, .above);
+}
+
+fn tracedOutline(before: Image, after: Image, top: Box, right: Box, bottom: Box, lower_right: Box) bool {
+    return horizontalRail(before, after, top, right, .above) and
+        horizontalRail(before, after, bottom, lower_right, .below) and
+        verticalRail(before, after, top, bottom, .left) and
+        verticalRail(before, after, right, lower_right, .right);
+}
+
+fn horizontalRail(before: Image, after: Image, left: Box, right: Box, exterior: enum { above, below }) bool {
+    if (left.right() >= right.x or right.x - left.right() > max_corner_rail_px) return false;
+    const first: usize = @intFromFloat(@max(left.y, right.y));
+    const end: usize = @intFromFloat(@min(left.bottom(), right.bottom()));
+    const other_y = switch (exterior) {
+        .above => if (first > 0) first - 1 else return false,
+        .below => if (end < before.height) end else return false,
+    };
+    const x: usize = @intFromFloat(left.right());
+    const x_end: usize = @intFromFloat(right.x);
+    const outside = before.row(other_y)[x..x_end];
+    for (first..end) |y| {
+        const old = before.row(y)[x..x_end];
+        if (!sameRow(old, after.row(y)[x..x_end])) continue;
+        for (old, outside) |ink, background| {
+            if (toneDistance(ink, background) < corner_rail_contrast) break;
+        } else return true;
+    }
+    return false;
+}
+
+fn verticalRail(before: Image, after: Image, top: Box, bottom: Box, exterior: enum { left, right }) bool {
+    if (top.bottom() >= bottom.y or bottom.y - top.bottom() > max_corner_rail_px) return false;
+    const first: usize = @intFromFloat(top.bottom());
+    const end: usize = @intFromFloat(bottom.y);
+    const x: usize = @intFromFloat(@max(top.x, bottom.x));
+    const x_end: usize = @intFromFloat(@min(top.right(), bottom.right()));
+    const other_x = switch (exterior) {
+        .left => if (x > 0) x - 1 else return false,
+        .right => if (x_end < before.width) x_end else return false,
+    };
+    for (x..x_end) |column| {
+        for (first..end) |y| {
+            const ink = before.row(y)[column];
+            if (!pixel.same(ink, after.row(y)[column]) or toneDistance(ink, before.row(y)[other_x]) < corner_rail_contrast) break;
+        } else return true;
+    }
+    return false;
 }
 
 fn sameRange(a: f64, b: f64, c: f64, d: f64) bool {
