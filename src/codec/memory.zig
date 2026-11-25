@@ -47,7 +47,7 @@ pub fn failure() Error {
     };
 }
 
-// Allocation hooks shared by the C PNG and JPEG decoders.
+// Allocation hooks shared by the C codecs.
 export fn uidiff_codec_malloc(len: usize) callconv(.c) ?*anyopaque {
     return allocate(current orelse return null, len);
 }
@@ -81,19 +81,11 @@ export fn uidiff_codec_free(data: ?*anyopaque) callconv(.c) void {
 
 // libwebp uses the same hooks for decoder scratch and fixture encoder
 // allocations. Both callers install a budget before invoking the codec.
-export fn uidiff_webp_malloc(len: usize) callconv(.c) ?*anyopaque {
-    return allocate(current orelse return null, len);
-}
-
-export fn uidiff_webp_calloc(count: usize, size: usize) callconv(.c) ?*anyopaque {
+export fn uidiff_codec_calloc(count: usize, size: usize) callconv(.c) ?*anyopaque {
     const len = std.math.mul(usize, count, size) catch return refuse(.over_budget);
-    const block: [*]u8 = @ptrCast(uidiff_webp_malloc(len) orelse return null);
+    const block: [*]u8 = @ptrCast(uidiff_codec_malloc(len) orelse return null);
     @memset(block[0..len], 0);
     return block;
-}
-
-export fn uidiff_webp_free(data: ?*anyopaque) callconv(.c) void {
-    uidiff_codec_free(data);
 }
 
 fn refuse(reason: Refusal) ?*anyopaque {
@@ -107,10 +99,10 @@ fn refuse(reason: Refusal) ?*anyopaque {
 // libjpeg release scratch and pixels through their original allocator even
 // when warning recovery unwinds the decode.
 fn allocate(allocator: Allocator, len: usize) ?*anyopaque {
-    if (current != null and len > remaining) return refuse(.over_budget);
+    if (len > remaining) return refuse(.over_budget);
     const total = std.math.add(usize, prefix_size, len) catch return refuse(.over_budget);
     const block = allocator.rawAlloc(total, block_alignment, @returnAddress()) orelse return refuse(.exhausted);
-    if (current != null) remaining -= len;
+    remaining -= len;
     prefixOf(block).* = .{ .allocator = allocator, .len = len };
     return block + prefix_size;
 }

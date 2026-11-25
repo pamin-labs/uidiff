@@ -1,6 +1,7 @@
 /* Streams ordinary RGB8 and RGBA8 PNG scanlines through a bounded DEFLATE dictionary.
    The stb_image binding handles all other PNG profiles. */
 #include "stb.h"
+#include "codec_memory.h"
 #include <stdbool.h>
 #include <string.h>
 #include "zlib-ng.h"
@@ -11,9 +12,6 @@
 #else
 #define INFLATE_CHUNK_BYTES (32 * 1024)
 #endif
-
-void *uidiff_codec_malloc(size_t size);
-void uidiff_codec_free(void *block);
 
 typedef struct {
     uint8_t *next;

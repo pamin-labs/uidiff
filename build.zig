@@ -612,7 +612,7 @@ fn webpFlags(b: *Build, extra: []const []const u8) []const []const u8 {
 fn addWebpAllocator(b: *Build, module: *Build.Module, webp: *Build.Dependency, flags: []const []const u8) void {
     module.addCSourceFile(.{
         .file = webp.path("src/utils/utils.c"),
-        .flags = std.mem.concat(b.allocator, []const u8, &.{ flags, &.{ "-Dmalloc=uidiff_webp_malloc", "-Dcalloc=uidiff_webp_calloc", "-Dfree=uidiff_webp_free" } }) catch @panic("OOM"),
+        .flags = std.mem.concat(b.allocator, []const u8, &.{ flags, &.{ "-Dmalloc=uidiff_codec_malloc", "-Dcalloc=uidiff_codec_calloc", "-Dfree=uidiff_codec_free" } }) catch @panic("OOM"),
     });
 }
 
