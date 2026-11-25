@@ -123,6 +123,9 @@ jobs:
           dist_tag=latest
           if [[ "$TAG" == *-* ]]; then dist_tag=next; fi
           while IFS= read -r package; do
+            # A rerun skips versions an earlier attempt already published.
+            spec=$(node -p 'const p = require(require("path").resolve(process.argv[1])); p.name + "@" + p.version' "./$package/package.json")
+            if npm view "$spec" version >/dev/null 2>&1; then continue; fi
             npm publish "./$package" --access public --provenance --tag "$dist_tag"
           done <stage/npm-order.txt
         env:
