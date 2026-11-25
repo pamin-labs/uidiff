@@ -96,6 +96,11 @@ def main():
         result = subprocess.run(["node", launcher, "--help"], capture_output=True, text=True)
         assert result.returncode == 2 and host.npm_name in result.stderr, result.stderr
 
+        del manifest["uidiffNative"]
+        launcher.with_name("package.json").write_text(json.dumps(manifest))
+        result = subprocess.run(["node", launcher, "--help"], capture_output=True, text=True)
+        assert result.returncode == 2 and "unsupported platform" in result.stderr, result.stderr
+
 
 if __name__ == "__main__":
     main()

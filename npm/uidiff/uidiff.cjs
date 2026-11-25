@@ -6,7 +6,7 @@ const { uidiffNative } = require("./package.json");
 const nativePlatform = `${platform}-${arch}`;
 
 function main() {
-  const name = uidiffNative[nativePlatform];
+  const name = uidiffNative?.[nativePlatform];
   if (typeof name !== "string") {
     console.error(`uidiff: unsupported platform ${nativePlatform}.`);
     return 2;
