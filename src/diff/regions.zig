@@ -289,6 +289,12 @@ const scrim_shadow_radius = values.CssPx.init(24);
 const max_scrim_shadow_radius = 72;
 const scrim_min_shadow_transmission = 0.82;
 const scrim_window_contrast = 12.0;
+const floating_panel_height = values.CssPx.init(96);
+const floating_panel_width_to_height = 3;
+const floating_panel_min_contrast = 32;
+const floating_panel_inset_divisor = 4;
+const floating_panel_shadow_rounding = 3;
+const floating_panel_edge_fringe = 3;
 const blank_tolerance = 24;
 const max_sideways_shift = 256;
 const shift_samples = 9;
@@ -373,7 +379,14 @@ pub fn keepMoves(moves: []values.Move, edits: []const Region, scale: values.Scal
 pub fn classifyOverlay(region: *Region, before: Image, after: Image, scale: values.Scale) void {
     if (before.width != after.width or before.height != after.height) return;
     const viewport = Box.fromPixels(0, 0, before.width, before.height);
-    if (!std.meta.eql(region.before orelse return, viewport) or !std.meta.eql(region.after orelse return, viewport)) return;
+    const old = region.before orelse return;
+    const new = region.after orelse return;
+    if (!std.meta.eql(old, new)) return;
+    if (!std.meta.eql(old, viewport)) {
+        const max_height = scale.devicePixels(floating_panel_height);
+        if (floatingPanel(before, after, new, max_height)) region.before = null else if (floatingPanel(after, before, old, max_height)) region.after = null;
+        return;
+    }
     const radius: usize = @intFromFloat(@min(scale.devicePixels(scrim_shadow_radius), max_scrim_shadow_radius));
     if (overlaid(before, after, radius)) region.before = null else if (overlaid(after, before, radius)) region.after = null;
 }
@@ -519,6 +532,89 @@ fn containsMove(box: Box, rows: values.RowRange, move: values.Move, slack: f64, 
         return 2 * overlap > bottom - top;
     }
     return top >= box.y - slack and bottom <= box.bottom() + slack;
+}
+
+fn floatingPanel(before: Image, after: Image, box: Box, max_height: f64) bool {
+    if (box.height > max_height or box.width < @max(floating_panel_inset_divisor, floating_panel_width_to_height * box.height)) return false;
+    const x: usize = @intFromFloat(box.x);
+    const y: usize = @intFromFloat(box.y);
+    const x_end: usize = @intFromFloat(box.right());
+    const y_end: usize = @intFromFloat(box.bottom());
+    const px = x_end - boxPixelInset(x_end - x);
+    const py = y + (y_end - y) / 2;
+    const fill = after.row(py)[px];
+    if (fill[3] != 255) return false;
+    var top = py;
+    while (top > y and pixel.same(after.row(top - 1)[px], fill)) top -= 1;
+    var bottom = py + 1;
+    while (bottom < y_end and pixel.same(after.row(bottom)[px], fill)) bottom += 1;
+    const height = bottom - top;
+    if (height < (y_end - y) / 2 or top == 0 or bottom + floating_panel_edge_fringe >= y_end) return false;
+    if (toneDistance(fill, before.row(top)[px]) < 3 * floating_panel_min_contrast and
+        toneDistance(fill, before.row(bottom - 1)[px]) < 3 * floating_panel_min_contrast) return false;
+
+    const inner = after.row(top + boxPixelInset(height));
+    var left = px;
+    while (left > x and pixel.same(inner[left - 1], fill)) left -= 1;
+    var right = px + 1;
+    while (right < x_end and pixel.same(inner[right], fill)) right += 1;
+    const width = right - left;
+    if (width < (x_end - x) - boxPixelInset(x_end - x) or left == 0 or right >= after.width) return false;
+    // A replacement fill also has straight sides. Require a new shadow beside
+    // the rectangle and check the rest of the box for other changes.
+    const shadow_y = bottom + floating_panel_edge_fringe;
+    if (pixel.same(before.row(shadow_y)[px], after.row(shadow_y)[px])) return false;
+    const inset = boxPixelInset(width);
+    if (inset == 0) return false;
+    for ([_]usize{ top, bottom - 1 }) |yy| {
+        for (after.row(yy)[left + inset .. right - inset]) |p| if (!pixel.same(p, fill)) return false;
+    }
+    for (top + boxPixelInset(height)..bottom - boxPixelInset(height)) |yy| {
+        const row = after.row(yy);
+        if (!pixel.same(row[left], fill) or !pixel.same(row[right - 1], fill)) return false;
+    }
+    return panelShadow(before, after, box, Box.fromPixels(left, top, width, height));
+}
+
+fn boxPixelInset(length: usize) usize {
+    return length / floating_panel_inset_divisor;
+}
+
+fn toneDistance(a: values.Pixel, b: values.Pixel) u16 {
+    return @abs(@as(i16, a[0]) - b[0]) + @abs(@as(i16, a[1]) - b[1]) + @abs(@as(i16, a[2]) - b[2]);
+}
+
+fn panelShadow(before: Image, after: Image, box: Box, panel: Box) bool {
+    const left: usize = @intFromFloat(panel.x);
+    const right: usize = @intFromFloat(panel.right());
+    const top: usize = @intFromFloat(panel.y);
+    const bottom: usize = @intFromFloat(panel.bottom());
+    const x_start: usize = @intFromFloat(box.x);
+    const x_end: usize = @intFromFloat(box.right());
+    const y_end: usize = @intFromFloat(box.bottom());
+    for (@as(usize, @intFromFloat(box.y))..y_end) |y| {
+        const old = before.row(y);
+        const new = after.row(y);
+        for (x_start..x_end) |x| {
+            if (y >= top -| floating_panel_edge_fringe and y < bottom + floating_panel_edge_fringe and
+                x >= left -| floating_panel_edge_fringe and x < right + floating_panel_edge_fringe) continue;
+            if (!shadowPixel(old[x], new[x])) return false;
+        }
+    }
+    return true;
+}
+
+fn shadowPixel(old: values.Pixel, new: values.Pixel) bool {
+    if (pixel.same(old, new)) return true;
+    if (old[3] != 255 or new[3] != 255) return false;
+    const max_old = @max(old[0], old[1], old[2]);
+    const max_new = @max(new[0], new[1], new[2]);
+    if (max_new > max_old +| floating_panel_shadow_rounding) return false;
+    for (0..3) |c| {
+        if (@abs(@as(i32, old[c]) * max_new - @as(i32, new[c]) * max_old) >
+            @as(u32, floating_panel_shadow_rounding) * max_old) return false;
+    }
+    return true;
 }
 
 fn overlaid(before: Image, after: Image, radius: usize) bool {

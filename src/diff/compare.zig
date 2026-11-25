@@ -2755,6 +2755,35 @@ test "a dimmed viewport with a new opaque center pane is an inserted overlay" {
     try std.testing.expectEqual(Kind.removed, hidden.regions[0].kind);
 }
 
+test "a local opaque panel with a new shadow is inserted over existing content" {
+    const before = try sample.Canvas.init(256, 144);
+    defer before.deinit();
+    const after = try sample.Canvas.init(256, 144);
+    defer after.deinit();
+    before.line(54, 160, 62, 1, 64);
+    after.fill(22, 50, 196, 46, sample.inkShade(220, 4));
+    after.fill(28, 54, 184, 32, sample.inkShade(36, 4));
+    after.line(48, 145, 64, 2, 210);
+    const result = try compareCanvases(before, after, 1);
+    defer result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 1), result.regions.len);
+    try std.testing.expectEqual(Kind.inserted, result.regions[0].kind);
+}
+
+test "a colored edit next to a floating panel remains visible on both sides" {
+    const before = try sample.Canvas.init(256, 144);
+    defer before.deinit();
+    const after = try sample.Canvas.init(256, 144);
+    defer after.deinit();
+    before.line(54, 160, 62, 1, 64);
+    after.fill(22, 50, 196, 46, sample.inkShade(220, 4));
+    after.fill(28, 54, 184, 32, sample.inkShade(36, 4));
+    after.fill(22, 50, 18, 4, .{ 168, 31, 48, 255 });
+    const result = try compareCanvases(before, after, 1);
+    defer result.deinit(std.testing.allocator);
+    try std.testing.expect(sample.hasRegion(result.regions, .before, 26, 52, .changed));
+}
+
 test "a modal does not hide a changed page behind its scrim" {
     const before = try sample.Canvas.init(192, 160);
     defer before.deinit();
