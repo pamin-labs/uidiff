@@ -302,6 +302,10 @@ const tab_indicator_height = values.CssPx.init(6);
 const tab_label_gap = values.CssPx.init(16);
 const corner_rail_contrast = 36;
 const max_corner_rail_px = 2048;
+const min_grid_slots = 3;
+const max_grid_slots = 4;
+const min_grid_card_extent = values.CssPx.init(32);
+const max_grid_gutter = values.CssPx.init(48);
 const blank_tolerance = 24;
 const max_sideways_shift = 256;
 const shift_samples = 9;
@@ -358,6 +362,37 @@ pub fn mergeTabSelection(boxes: []Candidate, before: Image, after: Image, scale:
     const cover = unite(unite(a, b), label);
     boxes[0].region = .{ .before = cover, .after = cover };
     return 1;
+}
+
+/// Pairs horizontally reflowed cards and leaves the unmatched card one-sided.
+pub fn pairCardGrid(boxes: []Candidate, before: Image, after: Image, scale: values.Scale) void {
+    if (boxes.len < min_grid_slots or boxes.len > max_grid_slots) return;
+    var slots: [max_grid_slots]Box = undefined;
+    const row = slots[0..boxes.len];
+    for (boxes, row) |candidate, *slot| slot.* = stationaryBox(candidate.region) orelse return;
+    std.sort.insertion(Box, row, {}, boxLeftOf);
+    const first = row[0];
+    const pitch = row[1].x - first.x;
+    const gutter = pitch - first.width;
+    const min_extent = scale.devicePixels(min_grid_card_extent);
+    if (gutter <= 0 or gutter > scale.devicePixels(max_grid_gutter) or first.width < min_extent) return;
+    const slack = scale.devicePixels(padding);
+    var top = first.y;
+    var bottom = first.bottom();
+    for (row, 0..) |slot, index| {
+        if (slot.x != first.x + pitch * @as(f64, @floatFromInt(index)) or slot.width != first.width or
+            slot.height < min_extent or @abs(slot.y - first.y) > slack or @abs(slot.bottom() - first.bottom()) > slack) return;
+        top = @min(top, slot.y);
+        bottom = @max(bottom, slot.bottom());
+    }
+    const old_to_left = shiftedGrid(before, after, row, @intFromFloat(top), @intFromFloat(bottom));
+    if (!old_to_left and !shiftedGrid(after, before, row, @intFromFloat(top), @intFromFloat(bottom))) return;
+    // Each translated slot has an exact counterpart. The only unpaired
+    // slot is the card at the start of the row, in either direction.
+    boxes[0].region = if (old_to_left) .{ .before = first } else .{ .after = first };
+    for (boxes[1..], row[1..], row[0 .. row.len - 1]) |*candidate, from, to| {
+        candidate.region = if (old_to_left) .{ .before = from, .after = to } else .{ .before = to, .after = from };
+    }
 }
 
 /// Joins the retained boxes that together describe a single visible edit.
@@ -866,6 +901,27 @@ fn labelInk(image: Image, label: Box, indicator: Box, background: values.Pixel) 
         }
     }
     return ink;
+}
+
+fn boxLeftOf(_: void, a: Box, b: Box) bool {
+    return a.x < b.x;
+}
+
+fn shiftedGrid(before: Image, after: Image, slots: []const Box, top: usize, bottom: usize) bool {
+    const width: usize = @intFromFloat(slots[0].width);
+    const last: usize = @intFromFloat(slots[slots.len - 1].x);
+    const background = after.row(top)[last];
+    for (top..bottom) |y| {
+        for (after.row(y)[last..][0..width]) |p| if (!pixel.same(p, background)) return false;
+    }
+    for (slots[1..], slots[0 .. slots.len - 1]) |old, new| {
+        const from: usize = @intFromFloat(old.x);
+        const to: usize = @intFromFloat(new.x);
+        for (top..bottom) |y| {
+            if (!sameRow(before.row(y)[from..][0..width], after.row(y)[to..][0..width])) return false;
+        }
+    }
+    return true;
 }
 
 fn corner(region: Region, limit: f64) ?Box {

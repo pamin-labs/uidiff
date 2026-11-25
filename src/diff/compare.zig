@@ -167,6 +167,7 @@ pub fn compareChecked(allocator: Allocator, before: Image, after: Image, options
     if (collector.len > 1) collector.len = regions.mergeCorners(storage[0..collector.len], before, after, options.scale);
     if (collector.len > 1) collector.len = regions.mergeLogical(storage[0..collector.len], before, after, options.scale, moves.items);
     collector.len = regions.mergeTabSelection(storage[0..collector.len], before, after, options.scale);
+    if (moves.items.len == 0) regions.pairCardGrid(storage[0..collector.len], before, after, options.scale);
     const out = try allocator.alloc(values.Region, collector.len);
     errdefer allocator.free(out);
     for (out, storage[0..collector.len]) |*region, box| region.* = box.region;
@@ -2930,6 +2931,34 @@ test "viewport clipped corners join only across a continuous straight edge" {
     candidates = edits;
     try std.testing.expectEqual(edits.len, regions.mergeCorners(&candidates, before.view, after.view, .one));
     try std.testing.expectEqualDeep(edits, candidates);
+}
+
+test "a card grid pairs translated cards across the gutter only when their pixels agree" {
+    const before = try sample.Canvas.init(340, 130);
+    defer before.deinit();
+    const after = try sample.Canvas.init(340, 130);
+    defer after.deinit();
+    const x = 24;
+    const pitch = 100;
+    const top = 30;
+    const height = 64;
+    const width = 80;
+    for ([_]u8{ 105, 155, 205 }, 0..) |ink, slot| {
+        before.fill(x + pitch * slot, top, width, height, sample.inkShade(ink, 4));
+        if (slot > 0) after.fill(x + pitch * (slot - 1), top, width, height, sample.inkShade(ink, 4));
+    }
+    const shifted = try compareCanvases(before, after, 1);
+    defer shifted.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 3), shifted.regions.len);
+    try std.testing.expect(sample.hasRegion(shifted.regions, .before, x + 1, top + 1, .removed));
+    try std.testing.expectEqual(@as(f64, @floatFromInt(pitch)), shifted.regions[1].before.?.x - shifted.regions[1].after.?.x);
+    try std.testing.expectEqual(@as(f64, @floatFromInt(pitch)), shifted.regions[2].before.?.x - shifted.regions[2].after.?.x);
+
+    after.fill(x + 10, top + 11, 12, 8, .{ 230, 59, 110, 255 });
+    const edited = try compareCanvases(before, after, 1);
+    defer edited.deinit(std.testing.allocator);
+    try std.testing.expect(sample.hasRegion(edited.regions, .before, x + 11, top + 12, .changed));
+    try std.testing.expect(sample.hasRegion(edited.regions, .after, x + 11, top + 12, .changed));
 }
 
 test "a modal does not hide a changed page behind its scrim" {
