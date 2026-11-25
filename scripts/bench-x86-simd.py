@@ -10,6 +10,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from binary_sections import measure
+
 VARIANTS = (
     "baseline",
     "without_ssse3",
@@ -40,10 +42,13 @@ def build(step, variant="baseline", *options):
 
 def bench_simd():
     sizes = {}
-    for variant in VARIANTS:
-        print(f"{variant} size", flush=True)
-        size = re.search(r": (\d+) bytes, budget ", build("size", variant))
-        sizes[variant] = int(size[1])
+    executable = "uidiff.exe" if platform.system() == "Windows" else "uidiff"
+    with tempfile.TemporaryDirectory(prefix="uidiff-simd-") as scratch:
+        for variant in VARIANTS:
+            print(f"{variant} size", flush=True)
+            prefix = Path(scratch) / variant
+            build("install", variant, "size", "--prefix", str(prefix))
+            sizes[variant] = measure(prefix / "bin" / executable)
 
     samples = {}
     for start in range(len(VARIANTS)):
@@ -60,8 +65,8 @@ def bench_simd():
 
 def print_summary(sizes, samples):
     rows = [
-        "| Variant | Workload | Clock | Binary bytes | Decode ms | Sheet ms | Pipeline ms |",
-        "|---|---|---|---:|---:|---:|---:|",
+        "| Variant | Workload | Clock | File bytes | Code bytes | Data bytes | Decode ms | Sheet ms | Pipeline ms |",
+        "|---|---|---|---:|---:|---:|---:|---:|---:|",
     ]
     for variant in VARIANTS:
         keys = sorted(key for key in samples if key[0] == variant)
@@ -73,7 +78,7 @@ def print_summary(sizes, samples):
             if len(runs) != len(VARIANTS):
                 raise RuntimeError(f"Incomplete samples for {variant} {workload}")
             decode, sheet, pipeline = (statistics.median(column) for column in zip(*runs))
-            rows.append(f"| {variant} | {workload} | {clock} | {sizes[variant]} | {decode:.3f} | {sheet:.3f} | {pipeline:.3f} |")
+            rows.append(f"| {variant} | {workload} | {clock} | {sizes[variant].file_bytes} | {sizes[variant].code_bytes} | {sizes[variant].data_bytes} | {decode:.3f} | {sheet:.3f} | {pipeline:.3f} |")
     table = "\n".join(rows) + "\n"
     publish(table)
 
@@ -97,9 +102,10 @@ def bench_lto():
             build("install", "baseline", target, f"-Dcli-lto={arm}", "--prefix", str(prefix))
             binaries[arm] = prefix / "bin" / "uidiff"
 
+        sizes = {arm: measure(binary) for arm, binary in binaries.items()}
         rows = [
-            "| Workload | Output | LTO | Binary bytes | Wall ms | CPU ms | Peak RSS MiB |",
-            "|---|---|---|---:|---:|---:|---:|",
+            "| Workload | Output | LTO | File bytes | Code bytes | Data bytes | Wall ms | CPU ms | Peak RSS MiB |",
+            "|---|---|---|---:|---:|---:|---:|---:|---:|",
         ]
         for name, before, after, scale in workloads:
             for output in ("JSON", "JSON + sheet"):
@@ -127,7 +133,7 @@ def bench_lto():
                         samples[arm].append(time_cli(commands[arm], outputs[arm][0]))
                 for arm, values in samples.items():
                     wall, cpu, rss = (statistics.median(column) for column in zip(*values))
-                    rows.append(f"| {name} | {output} | {arm} | {binaries[arm].stat().st_size} | {wall:.3f} | {cpu:.3f} | {rss:.3f} |")
+                    rows.append(f"| {name} | {output} | {arm} | {sizes[arm].file_bytes} | {sizes[arm].code_bytes} | {sizes[arm].data_bytes} | {wall:.3f} | {cpu:.3f} | {rss:.3f} |")
         publish("\n".join(rows) + "\n")
 
 
