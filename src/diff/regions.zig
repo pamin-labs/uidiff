@@ -293,8 +293,8 @@ const floating_panel_height = values.CssPx.init(96);
 const floating_panel_width_to_height = 3;
 const floating_panel_min_contrast = 32;
 const floating_panel_inset_divisor = 4;
-const floating_panel_shadow_rounding = 3;
 const floating_panel_edge_fringe = 3;
+const identity_scrim: Scrim = .{ .transmission = 1, .base = @splat(0) };
 const max_swap_pitch = values.CssPx.init(128);
 const tab_parts = 3;
 const tab_indicator_height = values.CssPx.init(6);
@@ -468,12 +468,12 @@ pub fn classifyOverlay(region: *Region, before: Image, after: Image, scale: valu
     const old = region.before orelse return;
     const new = region.after orelse return;
     if (!std.meta.eql(old, new)) return;
+    const radius: usize = @intFromFloat(@min(scale.devicePixels(scrim_shadow_radius), max_scrim_shadow_radius));
     if (!std.meta.eql(old, viewport)) {
         const max_height = scale.devicePixels(floating_panel_height);
-        if (floatingPanel(before, after, new, max_height)) region.before = null else if (floatingPanel(after, before, old, max_height)) region.after = null;
+        if (floatingPanel(before, after, new, max_height, radius)) region.before = null else if (floatingPanel(after, before, old, max_height, radius)) region.after = null;
         return;
     }
-    const radius: usize = @intFromFloat(@min(scale.devicePixels(scrim_shadow_radius), max_scrim_shadow_radius));
     if (overlaid(before, after, radius)) region.before = null else if (overlaid(after, before, radius)) region.after = null;
 }
 
@@ -620,7 +620,7 @@ fn containsMove(box: Box, rows: values.RowRange, move: values.Move, slack: f64, 
     return top >= box.y - slack and bottom <= box.bottom() + slack;
 }
 
-fn floatingPanel(before: Image, after: Image, box: Box, max_height: f64) bool {
+fn floatingPanel(before: Image, after: Image, box: Box, max_height: f64, radius: usize) bool {
     if (box.height > max_height or box.width < @max(floating_panel_inset_divisor, floating_panel_width_to_height * box.height)) return false;
     const x: usize = @intFromFloat(box.x);
     const y: usize = @intFromFloat(box.y);
@@ -659,7 +659,7 @@ fn floatingPanel(before: Image, after: Image, box: Box, max_height: f64) bool {
         const row = after.row(yy);
         if (!pixel.same(row[left], fill) or !pixel.same(row[right - 1], fill)) return false;
     }
-    return panelShadow(before, after, box, Box.fromPixels(left, top, width, height));
+    return panelShadow(before, after, box, Box.fromPixels(left, top, width, height), radius);
 }
 
 fn boxPixelInset(length: usize) usize {
@@ -670,7 +670,7 @@ fn toneDistance(a: values.Pixel, b: values.Pixel) u16 {
     return @abs(@as(i16, a[0]) - b[0]) + @abs(@as(i16, a[1]) - b[1]) + @abs(@as(i16, a[2]) - b[2]);
 }
 
-fn panelShadow(before: Image, after: Image, box: Box, panel: Box) bool {
+fn panelShadow(before: Image, after: Image, box: Box, panel: Box, radius: usize) bool {
     const left: usize = @intFromFloat(panel.x);
     const right: usize = @intFromFloat(panel.right());
     const top: usize = @intFromFloat(panel.y);
@@ -682,23 +682,11 @@ fn panelShadow(before: Image, after: Image, box: Box, panel: Box) bool {
         const old = before.row(y);
         const new = after.row(y);
         for (x_start..x_end) |x| {
-            if (y >= top -| floating_panel_edge_fringe and y < bottom + floating_panel_edge_fringe and
-                x >= left -| floating_panel_edge_fringe and x < right + floating_panel_edge_fringe) continue;
-            if (!shadowPixel(old[x], new[x])) return false;
+            if (y >= top and y < bottom and x >= left and x < right) continue;
+            if (pixel.same(old[x], new[x])) continue;
+            if (y < top -| radius or y >= bottom + radius or x < left -| radius or x >= right + radius or
+                !identity_scrim.shadow(old[x], new[x])) return false;
         }
-    }
-    return true;
-}
-
-fn shadowPixel(old: values.Pixel, new: values.Pixel) bool {
-    if (pixel.same(old, new)) return true;
-    if (old[3] != 255 or new[3] != 255) return false;
-    const max_old = @max(old[0], old[1], old[2]);
-    const max_new = @max(new[0], new[1], new[2]);
-    if (max_new > max_old +| floating_panel_shadow_rounding) return false;
-    for (0..3) |c| {
-        if (@abs(@as(i32, old[c]) * max_new - @as(i32, new[c]) * max_old) >
-            @as(u32, floating_panel_shadow_rounding) * max_old) return false;
     }
     return true;
 }

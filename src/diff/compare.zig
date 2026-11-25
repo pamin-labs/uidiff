@@ -2790,6 +2790,22 @@ test "a colored edit next to a floating panel remains visible on both sides" {
     try std.testing.expect(sample.hasRegion(result.regions, .before, 26, 52, .changed));
 }
 
+test "audit: a gray label turning black beside a toast remains two-sided" {
+    const before = try sample.Canvas.init(256, 144);
+    defer before.deinit();
+    const after = try sample.Canvas.init(256, 144);
+    defer after.deinit();
+    const bounds = Box.fromPixels(22, 50, 196, 46);
+    before.fill(28, 88, 18, 5, .{ 136, 136, 136, 255 });
+    after.fill(22, 50, 196, 46, .{ 220, 220, 220, 255 });
+    after.fill(28, 54, 184, 32, .{ 36, 36, 36, 255 });
+    after.fill(28, 88, 18, 5, .{ 0, 0, 0, 255 });
+    var edit: Region = .{ .before = bounds, .after = bounds };
+    regions.classifyOverlay(&edit, before.view, after.view, .one);
+    try std.testing.expectEqual(@as(?Box, bounds), edit.before);
+    try std.testing.expectEqual(@as(?Box, bounds), edit.after);
+}
+
 test "reciprocal row moves are grouped only when both rows exchange intact" {
     const before = try sample.Canvas.init(256, 160);
     defer before.deinit();
