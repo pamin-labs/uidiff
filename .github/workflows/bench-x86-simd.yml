@@ -23,6 +23,8 @@ jobs:
           - name: macos
             runner: '["macos-15-intel"]'
     runs-on: ${{ fromJSON(matrix.runner) }}
+    env:
+      BENCH_PYTHON: ${{ matrix.name == 'windows' && 'python' || 'python3' }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -33,17 +35,9 @@ jobs:
       - name: Measure zlib-ng dispatch variants
         shell: bash
         run: |
-          if [[ "$RUNNER_OS" == Windows ]]; then
-            python scripts/bench-x86-simd.py
-          else
-            python3 scripts/bench-x86-simd.py
-          fi
+          "$BENCH_PYTHON" scripts/bench-x86-simd.py
       - name: Measure native CLI with and without LTO
         if: runner.os == 'Linux' || runner.os == 'Windows'
         shell: bash
         run: |
-          if [[ "$RUNNER_OS" == Windows ]]; then
-            python scripts/bench-x86-simd.py --lto
-          else
-            python3 scripts/bench-x86-simd.py --lto
-          fi
+          "$BENCH_PYTHON" scripts/bench-x86-simd.py --lto
