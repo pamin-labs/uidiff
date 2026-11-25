@@ -19,8 +19,9 @@ pub const Header = struct {
 /// Malformed bytes, a decode past its memory budget, or an allocation failure.
 pub const DecodeError = values.Image.Invalid || Allocator.Error || error{ImageTooLarge};
 
-/// Full-image buffers stb holds at once, each RGBA at the source sample depth.
-const live_images = 4;
+/// The peak for PNG is Adam7's inflated data, destination and current pass.
+/// Charge each as a full RGBA image at the source sample depth.
+const png_image_buffers = 3;
 /// Round the budget's image dimensions up to a conservative block boundary.
 const block_pixels = 32;
 /// Headroom for the decoder context and per-row scratch.
@@ -122,7 +123,7 @@ fn budget(header: Header, encoded_len: usize) ?usize {
     const width = std.math.add(usize, header.size.width, block_pixels - 1) catch return null;
     const height = std.math.add(usize, header.size.height, block_pixels - 1) catch return null;
     const blocks = std.math.mul(usize, width / block_pixels, height / block_pixels) catch return null;
-    const image = std.math.mul(usize, blocks, block_pixels * block_pixels * @sizeOf(Pixel) * live_images) catch return null;
+    const image = std.math.mul(usize, blocks, block_pixels * block_pixels * @sizeOf(Pixel) * png_image_buffers) catch return null;
     const scaled = std.math.mul(usize, image, header.sample_bytes) catch return null;
     const total = std.math.add(usize, scaled, encoded_len +| fixed_bytes) catch return null;
     return if (total <= values.max_decode_bytes) total else null;

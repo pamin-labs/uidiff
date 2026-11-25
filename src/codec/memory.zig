@@ -101,14 +101,11 @@ fn refuse(reason: Refusal) ?*anyopaque {
     return null;
 }
 
-// The hooks use the allocator's raw calls, which skip the safe mode's fill of
-// new and freed memory with 0xaa. That is a safety opt-out: a read of memory
-// stb never wrote would see stale bytes instead of 0xaa. stb writes each
-// output byte before reading it back, the checked test and fuzz builds run
-// the decoders under UBSan, and the fill touched every page of a buffer a
-// malformed image never reaches. The test "blocks handed to
-// stb are freed through the allocator that made them" runs the raw paths
-// under the leak-checking allocator.
+// Raw allocation avoids touching every page of output the decoder will write.
+// Libjpeg initializes its own scratch pools as needed, and the bridge returns
+// pixels only after libjpeg has written every scanline. The stored prefix lets
+// libjpeg release scratch and pixels through their original allocator even
+// when warning recovery unwinds the decode.
 fn allocate(allocator: Allocator, len: usize) ?*anyopaque {
     if (current != null and len > remaining) return refuse(.over_budget);
     const total = std.math.add(usize, prefix_size, len) catch return refuse(.over_budget);
@@ -129,7 +126,7 @@ fn blockOf(data: *anyopaque) struct { prefix: Prefix, block: []u8 } {
     return .{ .prefix = prefix, .block = start[0 .. prefix_size + prefix.len] };
 }
 
-test "blocks handed to stb are freed through the allocator that made them" {
+test "codec blocks retain their owning allocator and restore the decode budget" {
     // Refusing every remap makes realloc move the block to a fresh one.
     var moving: std.testing.FailingAllocator = .init(std.testing.allocator, .{ .resize_fail_index = 0 });
     begin(moving.allocator(), 64);
