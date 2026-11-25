@@ -49,7 +49,7 @@ Named build modules, and the only files that may import them. The `export` row n
 | `stb_c` | `src/codec/stb.zig` |
 | `jpeg_c` | `src/codec/jpeg.zig` |
 | `webp_c` | `src/codec/webp.zig` |
-| `zlib_c` | `src/codec/png.zig` |
+| `zlib_c` | `src/codec/png.zig` (zlib-ng and the PNG scanline bridge) |
 | `stb_write_c` | `tests/fixtures/encode.zig` |
 | `webp_encode_c` | `tests/fixtures/encode.zig` |
 | `codec_memory` | `src/codec.zig` `src/codec/png.zig` `src/codec/stb.zig` `src/codec/jpeg.zig` `src/codec/webp.zig` `tests/fixtures/encode.zig` |
@@ -76,7 +76,7 @@ The noninterlaced RGB8 and RGBA8 PNG path uses zlib-ng to inflate scanlines into
 - `zig build bench`
 - `zig build size`
 - `python3 scripts/generate-font.py --check` (offline, checked against the pinned atlas digest)
-- `zig build -Doptimize=safe` from an empty dependency and global cache
+- `zig build -Doptimize=safe` and `zig build test` from an empty dependency and global cache
 - `zig build -Doptimize=safe -Dtarget=<target>` for each target in `.github/workflows/ci.yml`
 
 `zig build test` fails when the committed fixtures differ from a fresh generation. `zig build fixtures` regenerates them on the host. `zig build fixture-generator -Dtarget=<target>` builds the generator for a target without running it.

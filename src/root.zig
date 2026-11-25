@@ -99,6 +99,7 @@ test "required test selection" {
     const filter = @import("required_test_options").filter;
     if (filter.len == 0) return;
     for (@import("builtin").test_functions) |entry| {
+        if (std.mem.endsWith(u8, entry.name, ".test.required test selection")) continue;
         if (std.mem.indexOf(u8, entry.name, filter) != null) return;
     }
     return error.NoSelectedTests;
