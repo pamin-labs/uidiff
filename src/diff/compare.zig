@@ -2928,10 +2928,13 @@ test "a tab transfer groups its indicator and reciprocal label colors" {
     try std.testing.expect(sample.hasRegion(transfer.regions, .before, 25, 48, .changed));
     try std.testing.expect(sample.hasRegion(transfer.regions, .after, 185, 48, .changed));
 
-    after.fill(108, 24, 78, 9, .{ 16, 45, 58, 255 });
+    // Rename the right-hand label at the same time as moving the indicator.
+    after.fill(108, 24, 78, 9, .{ 255, 255, 255, 255 });
+    after.line(108, 186, 24, 7, 48);
     const separate = try compareCanvases(before, after, 1);
     defer separate.deinit(std.testing.allocator);
     try std.testing.expect(separate.regions.len > 1);
+    try std.testing.expect(sample.hasRegion(separate.regions, .before, 110, 25, .changed));
     try std.testing.expect(sample.hasRegion(separate.regions, .after, 110, 25, .changed));
 }
 
@@ -3039,6 +3042,15 @@ test "a card grid pairs translated cards across the gutter only when their pixel
     try std.testing.expect(sample.hasRegion(shifted.regions, .before, x + 1, top + 1, .removed));
     try std.testing.expectEqual(@as(f64, @floatFromInt(pitch)), shifted.regions[1].before.?.x - shifted.regions[1].after.?.x);
     try std.testing.expectEqual(@as(f64, @floatFromInt(pitch)), shifted.regions[2].before.?.x - shifted.regions[2].after.?.x);
+
+    const inserted = try compareCanvases(after, before, 1);
+    defer inserted.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 3), inserted.regions.len);
+    try std.testing.expect(sample.hasRegion(inserted.regions, .after, x + 1, top + 1, .inserted));
+    for (inserted.regions) |edit| {
+        if (edit.kind == .changed)
+            try std.testing.expectEqual(@as(f64, @floatFromInt(pitch)), edit.after.?.x - edit.before.?.x);
+    }
 
     after.fill(x + 10, top + 11, 12, 8, .{ 230, 59, 110, 255 });
     const edited = try compareCanvases(before, after, 1);
