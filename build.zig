@@ -756,6 +756,10 @@ fn addE2e(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, uidiff: *
 }
 
 fn addBenchmark(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, uidiff: *Build.Module) void {
+    const variants = std.json.Stringify.valueAlloc(b.allocator, std.meta.tags(X86Simd), .{}) catch @panic("OOM");
+    const manifest = b.addWriteFiles().add("x86-simd-variants.json", variants);
+    const install_variants = b.addInstallFile(manifest, "x86-simd-variants.json");
+    b.step("bench-variants", "Write the selectable x86 SIMD variants").dependOn(&install_variants.step);
     const bench = b.addExecutable(.{
         .name = "uidiff-bench",
         .root_module = b.createModule(.{

@@ -80,3 +80,5 @@ The noninterlaced RGB8 and RGBA8 PNG path uses zlib-ng to inflate scanlines into
 - `zig build -Doptimize=safe -Dtarget=<target>` for each target in `.github/workflows/ci.yml`
 
 `zig build test` fails when the committed fixtures differ from a fresh generation. `zig build fixtures` regenerates them on the host. `zig build fixture-generator -Dtarget=<target>` builds the generator for a target without running it.
+
+Run `python3 scripts/binary_sections.py <binary>` to record file bytes and code and data section sizes for a release build.

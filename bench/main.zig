@@ -17,6 +17,18 @@ const Stages = struct {
     sheet_bytes: usize = 0,
 };
 
+const Measurement = struct {
+    workload: []const u8,
+    clock: enum { cpu, wall },
+    rounds: usize,
+    decode_ms: f64,
+    compare_ms: f64,
+    sheet_ms: f64,
+    sheet_bytes: usize,
+    pipeline_ms: f64,
+    peak_rss_bytes: ?usize,
+};
+
 const rounds = 15;
 
 /// Runs one pair in its own process so measurements have independent peak RSS.
@@ -48,14 +60,18 @@ pub fn main(init: std.process.Init) BenchError!void {
 
     var buffer: [256]u8 = undefined;
     var stdout = Io.File.stdout().writerStreaming(io, &buffer);
-    try stdout.interface.print("{s} ({d} runs, {s}): decode {d:.3} ms, compare {d:.3} ms, sheet {d:.3} ms, sheet size {d:.1} KiB, file pipeline {d:.3} ms, peak RSS ", .{
-        args[1],                                            rounds,                  if (clock == .cpu_process) "CPU" else "wall",
-        median(&stages.decode),                             median(&stages.compare), median(&stages.sheet),
-        @as(f64, @floatFromInt(stages.sheet_bytes)) / 1024, median(&pipeline_ms),
-    });
-    if (peakRss()) |bytes| {
-        try stdout.interface.print("{d:.2} MiB\n", .{@as(f64, @floatFromInt(bytes)) / (1024 * 1024)});
-    } else try stdout.interface.writeAll("unavailable\n");
+    try std.json.Stringify.value(Measurement{
+        .workload = args[1],
+        .clock = if (clock == .cpu_process) .cpu else .wall,
+        .rounds = rounds,
+        .decode_ms = median(&stages.decode),
+        .compare_ms = median(&stages.compare),
+        .sheet_ms = median(&stages.sheet),
+        .sheet_bytes = stages.sheet_bytes,
+        .pipeline_ms = median(&pipeline_ms),
+        .peak_rss_bytes = peakRss(),
+    }, .{}, &stdout.interface);
+    try stdout.interface.writeByte('\n');
     try stdout.interface.flush();
 }
 

@@ -1,9 +1,9 @@
 """Measure x86-64 zlib-ng dispatch variants or native CLI link-time optimization."""
 
 import argparse
+import json
 import os
 import platform
-import re
 import statistics
 import subprocess
 import tempfile
@@ -12,20 +12,14 @@ from pathlib import Path
 
 from binary_sections import measure
 
-VARIANTS = (
-    "shipped",
-    "baseline",
-    "without_ssse3",
-    "without_sse4",
-    "without_avx2",
-    "without_pclmul",
-)
 CLI_ROUNDS = 25
-BENCHMARK = re.compile(
-    r"^(\S+) \(\d+ runs, (CPU|wall)\): decode ([\d.]+) ms, compare [\d.]+ ms, "
-    r"sheet ([\d.]+) ms, sheet size [\d.]+ KiB, file pipeline ([\d.]+) ms, peak RSS .+$",
-    re.MULTILINE,
-)
+
+
+def rotated_runs(arms, count):
+    for run in range(count):
+        offset = run % len(arms)
+        for arm in arms[offset:] + arms[:offset]:
+            yield run, arm
 
 
 def build(step, variant="baseline", *options):
@@ -45,38 +39,43 @@ def bench_simd():
     sizes = {}
     executable = "uidiff.exe" if platform.system() == "Windows" else "uidiff"
     with tempfile.TemporaryDirectory(prefix="uidiff-simd-") as scratch:
-        for variant in VARIANTS:
+        build("bench-variants", "shipped", "--prefix", scratch)
+        variants = tuple(json.loads((Path(scratch) / "x86-simd-variants.json").read_text()))
+        if not variants:
+            raise RuntimeError("Build has no x86 SIMD variants")
+        for variant in variants:
             print(f"{variant} size", flush=True)
             prefix = Path(scratch) / variant
             build("install", variant, "size", "--prefix", str(prefix))
             sizes[variant] = measure(prefix / "bin" / executable)
 
     samples = {}
-    for start in range(len(VARIANTS)):
-        for variant in VARIANTS[start:] + VARIANTS[:start]:
-            print(f"{variant} run {start + 1}", flush=True)
-            output = build("bench", variant)
-            for workload, clock, decode, sheet, pipeline in BENCHMARK.findall(output):
-                samples.setdefault((variant, workload, clock), []).append(
-                    (float(decode), float(sheet), float(pipeline))
-                )
+    for run, variant in rotated_runs(variants, len(variants)):
+        print(f"{variant} run {run + 1}", flush=True)
+        output = build("bench", variant)
+        for line in output.splitlines():
+            if not line.startswith("{"):
+                continue
+            sample = json.loads(line)
+            key = variant, sample["workload"], sample["clock"]
+            samples.setdefault(key, []).append((sample["decode_ms"], sample["sheet_ms"], sample["pipeline_ms"]))
 
-    print_summary(sizes, samples)
+    print_summary(variants, sizes, samples)
 
 
-def print_summary(sizes, samples):
+def print_summary(variants, sizes, samples):
     rows = [
         "| Variant | Workload | Clock | File bytes | Code bytes | Data bytes | Decode ms | Sheet ms | Pipeline ms |",
         "|---|---|---|---:|---:|---:|---:|---:|---:|",
     ]
-    for variant in VARIANTS:
+    for variant in variants:
         keys = sorted(key for key in samples if key[0] == variant)
         if not keys:
             raise RuntimeError(f"No benchmark output for {variant}")
         for key in keys:
             _, workload, clock = key
             runs = samples[key]
-            if len(runs) != len(VARIANTS):
+            if len(runs) != len(variants):
                 raise RuntimeError(f"Incomplete samples for {variant} {workload}")
             decode, sheet, pipeline = (statistics.median(column) for column in zip(*runs))
             rows.append(f"| {variant} | {workload} | {clock} | {sizes[variant].file_bytes} | {sizes[variant].code_bytes} | {sizes[variant].data_bytes} | {decode:.3f} | {sheet:.3f} | {pipeline:.3f} |")
@@ -134,10 +133,8 @@ def bench_lto():
 
                 samples = {arm: [] for arm in commands}
                 arms = tuple(commands)
-                for i in range(CLI_ROUNDS):
-                    offset = i % len(arms)
-                    for arm in arms[offset:] + arms[:offset]:
-                        samples[arm].append(time_cli(timed_process, commands[arm], outputs[arm][0]))
+                for _, arm in rotated_runs(arms, CLI_ROUNDS):
+                    samples[arm].append(time_cli(timed_process, commands[arm], outputs[arm][0]))
                 for arm, values in samples.items():
                     wall, cpu, rss = (distribution(column) for column in zip(*values))
                     rows.append(f"| {name} | {output} | {arm} | {sizes[arm].file_bytes} | {sizes[arm].code_bytes} | {sizes[arm].data_bytes} | {wall} | {cpu} | {rss} |")
