@@ -68,8 +68,7 @@ pub fn positionalPaintBands(before: band_model.Keys, after: band_model.Keys, fir
 pub fn localEditCost(before: band_model.Keys, after: band_model.Keys, first: usize, limits: band_model.Limits) ?struct { cost: usize, end: usize, limit: usize } {
     if (first == 0) return null;
     const limit = if (limits.narrow_edit) @max(narrow_paint_rows, limits.replacement) else limits.replacement;
-    var end = before.len;
-    while (end > first and before[end - 1] == after[end - 1]) end -= 1;
+    const end = band_model.changedEnd(before, after, first, before.len);
     if (end == before.len or end - first > limit) return null;
     var replaced: usize = 0;
     for (before[first..end], after[first..end]) |old, new| replaced += @intFromBool(old != new);
@@ -116,8 +115,8 @@ fn flatChanges(images: [2]Image, span: columns.Span, top: usize, bottom: usize) 
     var old_flat = true;
     var new_flat = true;
     for (top..bottom) |y| {
-        const before = images[0].row(y)[span.left..][0..span.width];
-        const after = images[1].row(y)[span.left..][0..span.width];
+        const before = images[0].rowSegment(y, span.left, span.width);
+        const after = images[1].rowSegment(y, span.left, span.width);
         for (before, after) |old, new| {
             if (std.meta.eql(old, new)) continue;
             if (colors == null) colors = .{ old, new };

@@ -452,8 +452,8 @@ fn compareReplacement(collector: *Collector, scope: Scope, band: row_diff.Band, 
     var pixels_changed: usize = 0;
     var inside = false;
     for (0..height) |y| {
-        const before = scope.before.row(first_old + y)[left..][0..width];
-        const after = scope.after.row(first_new + y)[left..][0..width];
+        const before = scope.before.rowSegment(first_old + y, left, width);
+        const after = scope.after.rowSegment(first_new + y, left, width);
         if (pixel_ops.sameRun(before, after)) continue;
         const offset = ((first_old + y) * scope.before.width + left) * @sizeOf(Pixel);
         for (before, after, 0..) |old, new, x| {
@@ -490,8 +490,8 @@ fn sameBandPixels(scope: Scope, band: row_diff.Band) bool {
     const width = scope.span.width;
     // Check the actual bytes before dropping the band, including hash collisions.
     for (0..band.removed) |row| {
-        const before = scope.before.row(band.before + row)[left..][0..width];
-        const after = scope.after.row(band.after + row)[left..][0..width];
+        const before = scope.before.rowSegment(band.before + row, left, width);
+        const after = scope.after.rowSegment(band.after + row, left, width);
         if (!pixel_ops.sameRun(before, after)) return false;
     }
     return true;
@@ -520,9 +520,9 @@ fn unpaired(collector: *Collector, scope: Scope, scratch: Scratch, rows: Unpaire
         b.image.pixels = source.pixels[0 .. b.image.width * source.height];
         b.background = .{ .row = background };
     } else if (y > 0 and y + rows.count < source.height) {
-        const above = source.row(y - 1)[left..][0..width];
-        const below = source.row(y + rows.count)[left..][0..width];
-        const last = source.row(y + rows.count - 1)[left..][0..width];
+        const above = source.rowSegment(y - 1, left, width);
+        const below = source.rowSegment(y + rows.count, left, width);
+        const last = source.rowSegment(y + rows.count - 1, left, width);
         if (pixel_ops.sameRun(above, below) or
             (rows.element and pixel_ops.sameRun(above, last)))
         {
@@ -568,17 +568,13 @@ fn unchangedBlank(scope: Scope, bounds: columns.Span, y: usize, opposite: usize,
     const expected = rowRun(scope.before, y, bounds);
     var end = y + rows;
     while (end < scope.before.height and pixel_ops.sameRun(rowRun(scope.before, end, bounds), expected)) end += 1;
-    if (end == scope.before.height) return trailingMargin(scope.after, bounds, expected, y, opposite, rows);
+    if (end == scope.before.height) return hasEqualRun(expected, scope.after, bounds, y, opposite, rows);
     if (end == y + rows and fixedLowerEdge(scope, bounds, expected, y, end)) return true;
 
     var first = y;
     while (first > 0 and pixel_ops.sameRun(rowRun(scope.before, first - 1, bounds), expected)) first -= 1;
     return interiorBlank(scope.after, bounds, expected, first, end, opposite -| (y - first)) or
         fixedUpperBar(scope, bounds, expected, first);
-}
-
-fn trailingMargin(after: Image, bounds: columns.Span, paint: []const Pixel, y: usize, opposite: usize, rows: usize) bool {
-    return hasEqualRun(paint, after, bounds, y, opposite, rows);
 }
 
 fn fixedLowerEdge(scope: Scope, bounds: columns.Span, paint: []const Pixel, y: usize, end: usize) bool {
@@ -612,7 +608,7 @@ fn fixedUpperBar(scope: Scope, bounds: columns.Span, paint: []const Pixel, first
 }
 
 fn rowRun(image: Image, y: usize, bounds: columns.Span) []const Pixel {
-    return image.row(y)[bounds.left..][0..bounds.width];
+    return image.rowSegment(y, bounds.left, bounds.width);
 }
 
 fn hasEqualRun(expected: []const Pixel, image: Image, bounds: columns.Span, y: usize, opposite: usize, needed: usize) bool {

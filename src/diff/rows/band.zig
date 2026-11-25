@@ -47,6 +47,21 @@ pub fn append(bands: []Band, len: *usize, band: Band) void {
     len.* += 1;
 }
 
+/// Finds the exclusive end after skipping stationary keys in the supplied range.
+pub fn changedEnd(before: Keys, after: Keys, first: usize, limit: usize) usize {
+    var end = limit;
+    while (end > first and before[end - 1] == after[end - 1]) end -= 1;
+    return end;
+}
+
+test "trailing equal keys do not consume rows below the search floor" {
+    const before = [_]u64{ 2, 4, 6, 8 };
+    const after = [_]u64{ 3, 4, 6, 8 };
+    try std.testing.expectEqual(@as(usize, 1), changedEnd(&before, &after, 0, 4));
+    try std.testing.expectEqual(@as(usize, 2), changedEnd(&before, &after, 2, 4));
+    try std.testing.expectEqual(@as(usize, 4), changedEnd(&before, &after, 4, 4));
+}
+
 test {
     std.testing.refAllDecls(@This());
 }

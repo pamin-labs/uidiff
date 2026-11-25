@@ -166,8 +166,8 @@ fn shapeKeepsOffset(limits: band_model.Limits, gap: band_model.Band) bool {
     const long = images[@intFromBool(inserted)];
     const short_y = if (inserted) gap.before else gap.after;
     const long_y = if (inserted) gap.after else gap.before;
-    const backdrop = short.row(short_y - 1)[limits.left..][0..limits.width];
-    const opposite = long.row(long_y - 1)[limits.left..][0..limits.width];
+    const backdrop = short.rowSegment(short_y - 1, limits.left, limits.width);
+    const opposite = long.rowSegment(long_y - 1, limits.left, limits.width);
     if (!pixel_ops.sameRun(backdrop, opposite)) return false;
 
     const totals = sampleBand(.silhouette, short, long, limits, .{
@@ -186,9 +186,9 @@ fn sampleBand(comptime mode: enum { colour, silhouette }, before: Image, after: 
     var totals: PixelSamples = .{};
     var y: usize = 0;
     while (y < band.count) : (y += y_step) {
-        const old = before.row(band.before + y)[limits.left..][0..limits.width];
-        const same = after.row(band.after + y)[limits.left..][0..limits.width];
-        const moved = after.row(band.after + band.shift + y)[limits.left..][0..limits.width];
+        const old = before.rowSegment(band.before + y, limits.left, limits.width);
+        const same = after.rowSegment(band.after + y, limits.left, limits.width);
+        const moved = after.rowSegment(band.after + band.shift + y, limits.left, limits.width);
         var x: usize = 0;
         while (x < limits.width) : (x += x_step) {
             if (mode == .colour) {

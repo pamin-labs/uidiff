@@ -55,13 +55,13 @@ fn shiftedGrid(before: Image, after: Image, slots: []const Box, top: usize, bott
     const last: usize = bounds.deviceIndex(slots[slots.len - 1].x);
     const background = after.row(top)[last];
     for (top..bottom) |y| {
-        for (after.row(y)[last..][0..width]) |p| if (!pixel.same(p, background)) return false;
+        for (after.rowSegment(y, last, width)) |p| if (!pixel.same(p, background)) return false;
     }
     for (slots[1..], slots[0 .. slots.len - 1]) |old, new| {
         const from: usize = bounds.deviceIndex(old.x);
         const to: usize = bounds.deviceIndex(new.x);
         for (top..bottom) |y| {
-            if (!pixel.sameRun(before.row(y)[from..][0..width], after.row(y)[to..][0..width])) return false;
+            if (!pixel.sameRun(before.rowSegment(y, from, width), after.rowSegment(y, to, width))) return false;
         }
     }
     return true;

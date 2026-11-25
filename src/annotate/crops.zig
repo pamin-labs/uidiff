@@ -87,7 +87,7 @@ pub fn paintCrop(line: Line, patch: Crop, image: Image) void {
 fn cropRow(c: Crop, image: Image, y: usize, output: []Pixel) void {
     const first_y = c.from.y + y * c.from.h / c.to.h;
     if (c.from.w <= c.to.w and c.from.h <= c.to.h) {
-        const source = image.row(first_y)[c.from.x..][0..c.from.w];
+        const source = image.rowSegment(first_y, c.from.x, c.from.w);
         if (source.len == output.len) {
             @memcpy(output, source);
         } else {

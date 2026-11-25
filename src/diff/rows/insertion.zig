@@ -29,8 +29,7 @@ pub fn compactInsertion(before: band_model.Keys, after: band_model.Keys, limit: 
 // rows can account for fewer edits than the stationary background in Myers.
 pub fn panelInsertion(before: band_model.Keys, after: band_model.Keys, first: usize, limits: band_model.Limits, bands: []band_model.Band) ?[]band_model.Band {
     const image = (limits.images orelse return null)[0];
-    var last = before.len;
-    while (last > first and before[last - 1] == after[last - 1]) last -= 1;
+    const last = band_model.changedEnd(before, after, first, before.len);
     if (last == before.len) return null;
     const end = @min(last, first + max_panel_shift + 1);
     var candidate = first + limits.scroll + 1;

@@ -97,16 +97,16 @@ pub fn partition(before: Image, after: Image, bounds: Span, stationary: []bool) 
     @memset(stationary, true);
     const common = @min(before.height, after.height);
     for (0..common) |y| {
-        markChanged(stationary, before.row(y)[bounds.left..][0..bounds.width], after.row(y)[bounds.left..][0..bounds.width]);
+        markChanged(stationary, before.rowSegment(y, bounds.left, bounds.width), after.rowSegment(y, bounds.left, bounds.width));
         if ((y + 1) % gutter_check_rows == 0 and !hasGutter(stationary)) {
             return .{ .left = bounds.left, .stationary = &.{}, .extent = bounds.left + bounds.width };
         }
     }
     const tall = if (before.height > after.height) before else after;
-    const edge = tall.row(common - 1)[bounds.left..][0..bounds.width];
+    const edge = tall.rowSegment(common - 1, bounds.left, bounds.width);
     for (common..tall.height) |y| {
         // A column with new content in the extension is still compared.
-        markChanged(stationary, edge, tall.row(y)[bounds.left..][0..bounds.width]);
+        markChanged(stationary, edge, tall.rowSegment(y, bounds.left, bounds.width));
     }
     return .{ .left = bounds.left, .stationary = stationary, .extent = @min(before.width, after.width) };
 }
@@ -128,8 +128,8 @@ pub fn spanRows(before: Image, after: Image, bounds: Span, top: usize, bottom: u
     var right: usize = 0;
     for (top..bottom) |y| {
         if (left == 0 and right == width) break;
-        const a = before.row(y)[bounds.left..][0..width];
-        const b = after.row(y)[bounds.left..][0..width];
+        const a = before.rowSegment(y, bounds.left, width);
+        const b = after.rowSegment(y, bounds.left, width);
         var x: usize = 0;
         while (x + lanes <= left and equalBlock(a[x..][0..lanes], b[x..][0..lanes])) x += lanes;
         while (x < left) : (x += 1) {

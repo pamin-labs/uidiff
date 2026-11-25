@@ -55,9 +55,14 @@ pub const Image = struct {
         return self.pixels[y * self.width ..][0..self.width];
     }
 
+    /// Borrows a horizontal segment of a row in a validated image.
+    pub fn rowSegment(self: Image, y: usize, left: usize, width: usize) []const Pixel {
+        return self.row(y)[left..][0..width];
+    }
+
     /// Borrows bytes of a row segment within a validated image.
     pub fn rowBytes(self: Image, y: usize, left: usize, width: usize) []const u8 {
-        return std.mem.sliceAsBytes(self.row(y)[left..][0..width]);
+        return std.mem.sliceAsBytes(self.rowSegment(y, left, width));
     }
 };
 
@@ -86,6 +91,8 @@ test "rows use the packed stride" {
     const pixels = [_]Pixel{ .{ 1, 0, 0, 255 }, .{ 2, 0, 0, 255 }, .{ 3, 0, 0, 255 }, .{ 4, 0, 0, 255 } };
     const image: Image = .{ .width = 2, .height = 2, .pixels = &pixels };
     try std.testing.expectEqualSlices(Pixel, pixels[2..], image.row(1));
+    try std.testing.expectEqualSlices(Pixel, pixels[3..], image.rowSegment(1, 1, 1));
+    try std.testing.expectEqualSlices(u8, &.{}, image.rowBytes(1, 2, 0));
 }
 
 test {

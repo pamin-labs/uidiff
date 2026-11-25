@@ -81,8 +81,7 @@ pub fn assembleBands(before: band_model.Keys, after: band_model.Keys, limits: ba
             if (!leading and old_y < new_y and !chrome.hasVisibleStripe(before, old_background, limits, old_y, paired)) {
                 // Some stationary footer rows share the body's backdrop.
                 // They remain stationary even when the first anchor is lower.
-                var edge = m.after;
-                while (edge > new_y and before[edge - 1] == after[edge - 1]) edge -= 1;
+                const edge = band_model.changedEnd(before, after, new_y, m.after);
                 visible = @min(visible, edge - new_y);
             }
             band_model.append(bands, &len, .{

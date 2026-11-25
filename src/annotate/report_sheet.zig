@@ -185,9 +185,10 @@ pub const Rows = struct {
 pub fn render(allocator: Allocator, before: Image, after: Image, regions: []const Region, moves: []const Move) RenderError!Sheet {
     const rows = try Rows.init(allocator, before, after, regions, moves);
     defer rows.deinit(allocator);
-    const pixels = try allocator.alloc(Pixel, rows.plan.size.pixelCount().?);
-    for (0..rows.plan.size.height) |y| _ = rows.row(y, pixels[y * rows.plan.size.width ..][0..rows.plan.size.width]);
-    return .{ .pixels = pixels, .width = rows.plan.size.width, .height = rows.plan.size.height };
+    const size = rows.size();
+    const pixels = try allocator.alloc(Pixel, size.pixelCount().?);
+    for (0..size.height) |y| _ = rows.row(y, pixels[y * size.width ..][0..size.width]);
+    return .{ .pixels = pixels, .width = size.width, .height = size.height };
 }
 
 /// Copies the visible preview pixels for one row.
