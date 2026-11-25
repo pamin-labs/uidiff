@@ -384,6 +384,7 @@ const tab_indicator_height = values.CssPx.init(6);
 const tab_label_gap = values.CssPx.init(16);
 const corner_rail_contrast = 36;
 const corner_join_rounding = 2;
+const corner_join_reach_px = 4;
 const max_corner_rail = values.CssPx.init(2048);
 const min_grid_slots = 3;
 const max_grid_slots = 4;
@@ -1234,11 +1235,14 @@ fn railTurns(image: Image, corner_box: Box, y: usize, ink: values.Pixel, side: e
     const interior_y: usize = @intFromFloat(if (exterior == .start) corner_box.bottom() - 1 else corner_box.y);
     const leg_y = @min(y, interior_y) + (@max(y, interior_y) - @min(y, interior_y) + 1) / 2;
     if (leg_y == y) return false;
-    const edge = image.row(y);
     const leg = image.row(leg_y);
     if (toneDistance(ink, leg[outside]) < corner_rail_contrast) return false;
-    for (left..right) |x| {
-        if (toneDistance(edge[x], ink) + toneDistance(leg[x], ink) <= corner_join_rounding) return true;
+    const start = if (side == .left) left else @max(left, right -| corner_join_reach_px);
+    const end = if (side == .left) @min(right, left + corner_join_reach_px) else right;
+    for (start..end) |x| {
+        for (@min(y, leg_y)..@max(y, leg_y) + 1) |row| {
+            if (toneDistance(image.row(row)[x], ink) > corner_join_rounding) break;
+        } else return true;
     }
     return false;
 }
