@@ -335,44 +335,24 @@ pub fn mergeSwap(boxes: []Candidate, moves: []const values.Move, before: Image, 
 /// Joins a tab indicator transfer with its reciprocal label restyling.
 pub fn mergeTabSelection(boxes: []Candidate, before: Image, after: Image, scale: values.Scale) usize {
     if (boxes.len != tab_parts) return boxes.len;
-    var order = [_]usize{ 0, 1, 2 };
-    for (order) |i| _ = stationaryBox(boxes[i].region) orelse return boxes.len;
-    std.sort.insertion(usize, &order, boxes, tabPartAbove);
-    const label = boxes[order[0]].region.before.?;
-    const first = boxes[order[1]].region.before.?;
-    const last = boxes[order[2]].region.before.?;
+    var stationary: [max_regions]Box = undefined;
+    const parts = stationaryBoxes(boxes, &stationary) orelse return boxes.len;
+    std.sort.insertion(Box, parts, {}, boxAbove);
+    const label, const first, const last = parts[0..tab_parts].*;
     const a, const b = if (first.x < last.x) .{ first, last } else .{ last, first };
     if (label.height > scale.devicePixels(line_height) or a.y != b.y or a.height != b.height or
         a.height > scale.devicePixels(tab_indicator_height) or a.y < label.bottom() or
         a.y - label.bottom() > scale.devicePixels(tab_label_gap) or a.right() >= b.x) return boxes.len;
-    const ax: usize = @intFromFloat(a.x + a.width / 2);
-    const bx: usize = @intFromFloat(b.x + b.width / 2);
-    const y: usize = @intFromFloat(a.y + a.height / 2);
-    const old_indicator = before.row(y)[ax];
-    const new_indicator = after.row(y)[ax];
-    if (pixel.same(old_indicator, new_indicator) or !pixel.same(old_indicator, after.row(y)[bx]) or
-        !pixel.same(new_indicator, before.row(y)[bx])) return boxes.len;
-    const gap: usize = @intFromFloat((a.right() + b.x) / 2);
-    const background = before.row(y)[gap];
-    if (!pixel.same(background, after.row(y)[gap]) or
-        (!pixel.same(background, old_indicator) and !pixel.same(background, new_indicator))) return boxes.len;
-
-    const old_a = labelInk(before, label, a, background);
-    const new_a = labelInk(after, label, a, background);
-    if (pixel.same(old_a, new_a) or pixel.same(old_a, background) or pixel.same(new_a, background)) return boxes.len;
-    if (!pixel.same(old_a, labelInk(after, label, b, background)) or
-        !pixel.same(new_a, labelInk(before, label, b, background))) return boxes.len;
-    const cover = unite(unite(a, b), label);
-    boxes[0].region = .{ .before = cover, .after = cover };
-    return 1;
+    const background = indicatorTransfer(before, after, a, b) orelse return boxes.len;
+    if (!labelTransfer(before, after, label, a, b, background)) return boxes.len;
+    return collapse(boxes, unite(unite(a, b), label).?);
 }
 
 /// Pairs horizontally reflowed cards and leaves the unmatched card one-sided.
 pub fn pairCardGrid(boxes: []Candidate, before: Image, after: Image, scale: values.Scale) void {
     if (boxes.len < min_grid_slots or boxes.len > max_grid_slots) return;
-    var slots: [max_grid_slots]Box = undefined;
-    const row = slots[0..boxes.len];
-    for (boxes, row) |candidate, *slot| slot.* = stationaryBox(candidate.region) orelse return;
+    var slots: [max_regions]Box = undefined;
+    const row = stationaryBoxes(boxes, &slots) orelse return;
     std.sort.insertion(Box, row, {}, boxLeftOf);
     const first = row[0];
     const pitch = row[1].x - first.x;
@@ -690,8 +670,8 @@ fn boxPixelInset(length: usize) usize {
     return length / floating_panel_inset_divisor;
 }
 
-fn toneDistance(a: values.Pixel, b: values.Pixel) u16 {
-    return @abs(@as(i16, a[0]) - b[0]) + @abs(@as(i16, a[1]) - b[1]) + @abs(@as(i16, a[2]) - b[2]);
+fn toneDistance(a: values.Pixel, b: values.Pixel) f32 {
+    return @reduce(.Add, @abs(tone(a) - tone(b)));
 }
 
 fn panelShadow(before: Image, after: Image, box: Box, panel: Box, radius: usize) bool {
@@ -844,41 +824,50 @@ fn reciprocalMove(boxes: []Candidate, move: values.Move, before: Image, after: I
     const cover = Box.fromPixels(x, upper, right - x, 2 * pitch);
     if (cover.overlap(removed) != removed.width * removed.height or cover.overlap(inserted) != inserted.width * inserted.height) return null;
     if (right > before.width or upper + 2 * pitch > before.height or !exchangedRows(before, after, cover, pitch, pitch)) return null;
-    boxes[0].region = .{ .before = cover, .after = cover };
-    return 1;
+    return collapse(boxes, cover);
 }
 
 fn positionalSwap(boxes: []Candidate, before: Image, after: Image, max_pitch: f64) ?usize {
-    var top = stationaryBox(boxes[0].region) orelse return null;
+    var storage: [max_regions]Box = undefined;
+    const stationary = stationaryBoxes(boxes, &storage) orelse return null;
+    var top = stationary[0];
     var whole = top;
-    for (boxes[1..]) |candidate| {
-        const box = stationaryBox(candidate.region) orelse return null;
+    for (stationary[1..]) |box| {
         if (box.y < top.y) top = box;
         whole = unite(whole, box).?;
     }
-    for (boxes) |candidate| {
-        const opposite = stationaryBox(candidate.region) orelse return null;
+    for (stationary) |opposite| {
         const pitch = opposite.y - top.y;
         if (pitch > max_pitch or opposite.x != top.x or
             opposite.width != top.width or opposite.height != top.height) continue;
         const step: usize = @intFromFloat(pitch);
         const rows = whole.height - pitch;
-        if (!inSwapBands(boxes, top.y, opposite.y, rows)) continue;
+        if (!inSwapBands(stationary, top.y, opposite.y, rows)) continue;
         if (!exchangedRows(before, after, whole, step, @intFromFloat(rows))) continue;
-        boxes[0].region = .{ .before = whole, .after = whole };
-        return 1;
+        return collapse(boxes, whole);
     }
     return null;
 }
 
-fn inSwapBands(boxes: []const Candidate, upper: f64, lower: f64, height: f64) bool {
+fn collapse(boxes: []Candidate, cover: Box) usize {
+    boxes[0].region = .{ .before = cover, .after = cover };
+    return 1;
+}
+
+fn inSwapBands(boxes: []const Box, upper: f64, lower: f64, height: f64) bool {
     if (height <= 0 or upper + height > lower) return false;
-    for (boxes) |candidate| {
-        const box = candidate.region.before orelse return false;
+    for (boxes) |box| {
         const start = if (box.y < lower) upper else lower;
         if (box.y < start or box.bottom() > start + height) return false;
     }
     return true;
+}
+
+fn stationaryBoxes(boxes: []const Candidate, storage: *[max_regions]Box) ?[]Box {
+    if (boxes.len > storage.len) return null;
+    const result = storage[0..boxes.len];
+    for (boxes, result) |candidate, *box| box.* = stationaryBox(candidate.region) orelse return null;
+    return result;
 }
 
 fn stationaryBox(region: Region) ?Box {
@@ -898,15 +887,38 @@ fn exchangedRows(before: Image, after: Image, bands: Box, pitch: usize, rows: us
     return true;
 }
 
-fn tabPartAbove(boxes: []const Candidate, a: usize, b: usize) bool {
-    return boxes[a].region.before.?.y < boxes[b].region.before.?.y;
+fn boxAbove(_: void, a: Box, b: Box) bool {
+    return a.y < b.y;
+}
+
+fn indicatorTransfer(before: Image, after: Image, a: Box, b: Box) ?values.Pixel {
+    const ax: usize = @intFromFloat(a.x + a.width / 2);
+    const bx: usize = @intFromFloat(b.x + b.width / 2);
+    const y: usize = @intFromFloat(a.y + a.height / 2);
+    const old_indicator = before.row(y)[ax];
+    const new_indicator = after.row(y)[ax];
+    if (pixel.same(old_indicator, new_indicator) or !pixel.same(old_indicator, after.row(y)[bx]) or
+        !pixel.same(new_indicator, before.row(y)[bx])) return null;
+    const gap: usize = @intFromFloat((a.right() + b.x) / 2);
+    const background = before.row(y)[gap];
+    if (!pixel.same(background, after.row(y)[gap]) or
+        (!pixel.same(background, old_indicator) and !pixel.same(background, new_indicator))) return null;
+    return background;
+}
+
+fn labelTransfer(before: Image, after: Image, label: Box, a: Box, b: Box, background: values.Pixel) bool {
+    const old_a = labelInk(before, label, a, background);
+    const new_a = labelInk(after, label, a, background);
+    if (pixel.same(old_a, new_a) or pixel.same(old_a, background) or pixel.same(new_a, background)) return false;
+    return pixel.same(old_a, labelInk(after, label, b, background)) and
+        pixel.same(new_a, labelInk(before, label, b, background));
 }
 
 fn labelInk(image: Image, label: Box, indicator: Box, background: values.Pixel) values.Pixel {
     const x: usize = @intFromFloat(@max(indicator.x, label.x));
     const right: usize = @intFromFloat(@min(indicator.right(), label.right()));
     var ink = background;
-    var contrast: u16 = 0;
+    var contrast: f32 = 0;
     if (x >= right) return ink;
     for (@as(usize, @intFromFloat(label.y))..@as(usize, @intFromFloat(label.bottom()))) |y| {
         for (image.row(y)[x..right]) |p| {
@@ -942,10 +954,8 @@ fn shiftedGrid(before: Image, after: Image, slots: []const Box, top: usize, bott
 }
 
 fn corner(region: Region, limit: f64) ?Box {
-    const p = region.before orelse return null;
-    const q = region.after orelse return null;
-    if (!std.meta.eql(p, q) or @max(p.width, p.height) > limit) return null;
-    return p;
+    const box = stationaryBox(region) orelse return null;
+    return if (@max(box.width, box.height) <= limit) box else null;
 }
 
 fn outlineCorners(boxes: []const Candidate, before: Image, after: Image, top: Box, limit: f64) ?[3]usize {
