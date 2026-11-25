@@ -31,7 +31,9 @@ const Line = canvas.Line;
 const focus_caption_height = focus_layout.focus_caption_height;
 const focusColumn = focus_layout.focusColumn;
 const crop = crops.crop;
-const drawPane = crops.drawPane;
+const Pane = geometry.Pane;
+const paneRect = geometry.paneRect;
+const roundSpan = canvas.roundSpan;
 const drawDetail = crops.drawDetail;
 const paintCrop = crops.paintCrop;
 const badgeDiameter = badges.badgeDiameter;
@@ -186,6 +188,46 @@ pub fn render(allocator: Allocator, before: Image, after: Image, regions: []cons
     const pixels = try allocator.alloc(Pixel, rows.plan.size.pixelCount().?);
     for (0..rows.plan.size.height) |y| _ = rows.row(y, pixels[y * rows.plan.size.width ..][0..rows.plan.size.width]);
     return .{ .pixels = pixels, .width = rows.plan.size.width, .height = rows.plan.size.height };
+}
+
+/// Copies the visible preview pixels for one row.
+noinline fn drawPane(line: Line, pane: Pane, x: usize, y: usize, ui: Layout) void {
+    const rect = paneRect(x, y, pane.dimensions);
+    const radius = ui.px(16);
+    const shades = [_]Pixel{ .{ 241, 241, 242, 255 }, .{ 237, 237, 238, 255 }, .{ 232, 232, 234, 255 } };
+    if (line.y >= y + radius + ui.px(5) and line.y + radius + ui.px(5) < y + rect.h) {
+        const right = x + rect.w;
+        var outer = ui.px(8);
+        for ([_]usize{ 5, 2, 0 }, shades) |inset, tone| {
+            const inner = ui.px(inset);
+            line.fill(x - outer, x - inner, tone);
+            line.fill(right + inner, right + outer, tone);
+            outer = inner;
+        }
+        pane.copy(line.y - y, 0, line.pixels[x..right]);
+        return;
+    }
+    const visible = roundSpan(rect, radius, line.y);
+    if (visible) |span| {
+        line.fill(x, span[0], page);
+        line.fill(span[1], x + rect.w, page);
+    } else line.fill(x, x + rect.w, page);
+
+    // Layer short bands of softening shadow while leaving the pane interior
+    // to its source copy. The extra painting only touches the perimeter.
+    for ([_]usize{ 8, 5, 2 }, shades) |spread, tone| {
+        var shadow = rect.outset(ui.px(spread));
+        shadow.y += ui.px(4);
+        if (roundSpan(shadow, radius + ui.px(spread), line.y)) |span| {
+            if (visible) |inside| {
+                line.fill(span[0], @min(inside[0], span[1]), tone);
+                line.fill(@max(inside[1], span[0]), span[1], tone);
+            } else line.fill(span[0], span[1], tone);
+        }
+    }
+    if (visible) |span| {
+        pane.copy(line.y - y, span[0] - x, line.pixels[span[0]..span[1]]);
+    }
 }
 
 test {

@@ -9,13 +9,9 @@ const palette = @import("palette.zig");
 const Rect = geometry.Rect;
 const SourceRect = geometry.SourceRect;
 const Layout = geometry.Layout;
-const Pane = geometry.Pane;
-const paneRect = geometry.paneRect;
 const Line = canvas.Line;
 const Face = text.Face;
-const roundSpan = canvas.roundSpan;
 const textWidth = text.textWidth;
-const page = palette.page;
 const outline_gray = palette.outline_gray;
 const muted = palette.muted;
 const tint = palette.tint;
@@ -62,46 +58,6 @@ pub fn crop(image: Image, box: ?SourceRect, x: usize, y: usize, slot: usize, ui:
         .from = from,
         .to = .{ .x = x + inset, .y = y + inset, .w = out_w, .h = out_h },
     };
-}
-
-/// Copies the visible preview pixels for one row.
-pub noinline fn drawPane(line: Line, pane: Pane, x: usize, y: usize, ui: Layout) void {
-    const rect = paneRect(x, y, pane.dimensions);
-    const radius = ui.px(16);
-    const shades = [_]Pixel{ .{ 241, 241, 242, 255 }, .{ 237, 237, 238, 255 }, .{ 232, 232, 234, 255 } };
-    if (line.y >= y + radius + ui.px(5) and line.y + radius + ui.px(5) < y + rect.h) {
-        const right = x + rect.w;
-        var outer = ui.px(8);
-        for ([_]usize{ 5, 2, 0 }, shades) |inset, tone| {
-            const inner = ui.px(inset);
-            line.fill(x - outer, x - inner, tone);
-            line.fill(right + inner, right + outer, tone);
-            outer = inner;
-        }
-        pane.copy(line.y - y, 0, line.pixels[x..right]);
-        return;
-    }
-    const visible = roundSpan(rect, radius, line.y);
-    if (visible) |span| {
-        line.fill(x, span[0], page);
-        line.fill(span[1], x + rect.w, page);
-    } else line.fill(x, x + rect.w, page);
-
-    // Layer short bands of softening shadow while leaving the pane interior
-    // to its source copy. The extra painting only touches the perimeter.
-    for ([_]usize{ 8, 5, 2 }, shades) |spread, tone| {
-        var shadow = rect.outset(ui.px(spread));
-        shadow.y += ui.px(4);
-        if (roundSpan(shadow, radius + ui.px(spread), line.y)) |span| {
-            if (visible) |inside| {
-                line.fill(span[0], @min(inside[0], span[1]), tone);
-                line.fill(@max(inside[1], span[0]), span[1], tone);
-            } else line.fill(span[0], span[1], tone);
-        }
-    }
-    if (visible) |span| {
-        pane.copy(line.y - y, span[0] - x, line.pixels[span[0]..span[1]]);
-    }
 }
 
 /// Draws the detail crop or its absent-side label on one row.
