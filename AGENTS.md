@@ -26,7 +26,7 @@ Follow the public pamin-labs/skills engineering rules in [core](.agents/skills/p
 - `src/files.zig` is the file pipeline: it checks the options once, decodes both files, compares them and writes the sheet atomically. The CLI calls it and only translates.
 - `src/cli.zig` is the CLI entry and `src/cli/` its argument syntax and usage text.
 - `bench/` measures the public API.
-- `npm/` contains the JavaScript launcher. The release tooling stages its manifest and the native `@uidiff` packages from the build version and target list.
+- `npm/` contains the JavaScript launcher. The release tooling stages its manifest and the scoped launcher and its native platform packages from the build version and target list.
 - `skills/uidiff/` documents screenshot capture, comparison and report interpretation for agents.
 - `scripts/` contains developer tooling. `scripts/release/` packages the CLI, renders the Homebrew formula and tests the launcher and installers. The installers are `install.sh` and `install.ps1` at the repository root.
 - `.github/` contains the release target list and workflows. CI and `.github/workflows/release.yml` share the same ReleaseSafe build. A pushed `v*` tag matching `build.zig.zon` enables GitHub release assets and npm trusted publishing.

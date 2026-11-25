@@ -71,13 +71,14 @@ jobs:
           pattern: uidiff-*
           path: release
           merge-multiple: true
-      - run: python3 scripts/release/package.py npm release stage/npm
+      - run: |
+          mkdir -p stage
+          python3 scripts/release/package.py npm release stage/npm >stage/npm-order.txt
       - run: |
           dist_tag=latest
           if [[ "$TAG" == *-* ]]; then dist_tag=next; fi
-          for package in ./stage/npm/@uidiff/*; do
-            npm publish "$package" --access public --provenance --tag "$dist_tag"
-          done
-          npm publish ./stage/npm/uidiff --access public --provenance --tag "$dist_tag"
+          while IFS= read -r package; do
+            npm publish "./$package" --access public --provenance --tag "$dist_tag"
+          done <stage/npm-order.txt
         env:
           TAG: ${{ github.ref_name }}

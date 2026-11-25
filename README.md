@@ -79,7 +79,7 @@ The installers verify the binary against `SHA256SUMS` and print the installed
 path under `~/.local/bin` or `%LOCALAPPDATA%\Programs\uidiff`. Set
 `UIDIFF_VERSION` to select a specific release, with or without the leading `v`.
 
-For npm projects, run `npm install --save-dev uidiff` and use `npx uidiff`.
+For npm projects, run `npm install --save-dev @pamin-labs/uidiff` and use `npx uidiff`.
 npm selects the platform binary through optional dependencies.
 
 The [releases page](https://github.com/pamin-labs/uidiff/releases) also has

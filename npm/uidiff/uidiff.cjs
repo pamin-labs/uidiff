@@ -2,9 +2,15 @@
 const { spawnSync } = require("node:child_process");
 const { arch, argv, platform } = process;
 
-const name = `@uidiff/${platform}-${arch}`;
+const { uidiffNative } = require("./package.json");
+const nativePlatform = `${platform}-${arch}`;
 
 function main() {
+  const name = uidiffNative[nativePlatform];
+  if (typeof name !== "string") {
+    console.error(`uidiff: unsupported platform ${nativePlatform}.`);
+    return 2;
+  }
   let path;
   try {
     path = require.resolve(`${name}/native`);

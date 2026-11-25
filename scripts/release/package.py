@@ -16,6 +16,8 @@ ROOT = Path(__file__).resolve().parents[2]
 REPOSITORY = "https://github.com/pamin-labs/uidiff"
 NOTICES = ("LICENSE", "THIRD_PARTY_NOTICES")
 NATIVE_ENTRY = "./native"
+NPM_SCOPE = "@pamin-labs"
+NPM_PACKAGE = f"{NPM_SCOPE}/uidiff"
 
 
 @dataclass(frozen=True)
@@ -50,7 +52,11 @@ class Target:
 
     @property
     def npm_name(self):
-        return f"@uidiff/{self.npm_os}-{self.arch}"
+        return f"{NPM_PACKAGE}-{self.npm_platform}"
+
+    @property
+    def npm_platform(self):
+        return f"{self.npm_os}-{self.arch}"
 
 
 TARGETS = tuple(Target(zig) for zig in json.loads((ROOT / ".github/release-targets.json").read_text()))
@@ -130,6 +136,7 @@ def write_manifest(package_dir, manifest):
 
 
 def npm_packages(release_version, binaries, output):
+    publish_order = []
     shared = {
         "version": release_version,
         "license": "MIT",
@@ -138,6 +145,7 @@ def npm_packages(release_version, binaries, output):
     }
     for target in TARGETS:
         package_dir = output / target.npm_name
+        publish_order.append(package_dir)
         write_manifest(package_dir, {
             **shared,
             "name": target.npm_name,
@@ -148,16 +156,18 @@ def npm_packages(release_version, binaries, output):
         })
         shutil.copy2(binaries / target.release_binary(release_version), package_dir / target.binary)
         (package_dir / target.binary).chmod(0o755)
-    main = output / "uidiff"
+    main = output / NPM_PACKAGE
     write_manifest(main, {
         **shared,
-        "name": "uidiff",
+        "name": NPM_PACKAGE,
         "description": "Align moved screenshot content and box visual changes",
         "bin": {"uidiff": "uidiff.cjs"},
         "files": ["uidiff.cjs", *NOTICES],
         "optionalDependencies": {target.npm_name: release_version for target in TARGETS},
+        "uidiffNative": {target.npm_platform: target.npm_name for target in TARGETS},
     })
     shutil.copy2(ROOT / "npm/uidiff/uidiff.cjs", main / "uidiff.cjs")
+    return [*publish_order, main]
 
 
 def main():
@@ -188,7 +198,8 @@ def main():
     elif args.command == "finalize":
         finalize(release_version, args.output)
     elif args.command == "npm":
-        npm_packages(release_version, args.binaries, args.output)
+        for package_dir in npm_packages(release_version, args.binaries, args.output):
+            print(package_dir)
 
 
 if __name__ == "__main__":

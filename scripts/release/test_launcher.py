@@ -9,7 +9,7 @@ import tarfile
 from tempfile import TemporaryDirectory
 import zipfile
 
-from package import NOTICES, ROOT, TARGETS, digest, finalize, npm_packages, pack, version
+from package import NOTICES, NPM_PACKAGE, ROOT, TARGETS, digest, finalize, npm_packages, pack, version
 
 
 def check_launcher(launcher, binary):
@@ -64,17 +64,22 @@ def main():
             pack(target, release_version, bin_dir, release)
         finalize(release_version, release)
         check_assets(release, release_version)
-        npm_packages(release_version, release, packages)
+        publish_order = npm_packages(release_version, release, packages)
+        assert publish_order == [*(packages / target.npm_name for target in TARGETS), packages / NPM_PACKAGE]
 
-        launcher = packages / "uidiff/uidiff.cjs"
+        launcher = packages / NPM_PACKAGE / "uidiff.cjs"
         manifest = json.loads(launcher.with_name("package.json").read_text())
         assert manifest["optionalDependencies"] == {target.npm_name: release_version for target in TARGETS}
+        assert manifest["name"] == NPM_PACKAGE
+        assert manifest["bin"] == {"uidiff": "uidiff.cjs"}
+        assert manifest["uidiffNative"] == {target.npm_platform: target.npm_name for target in TARGETS}
+        assert f"npm install --save-dev {NPM_PACKAGE}" in (ROOT / "README.md").read_text()
         # Exercise Node package resolution for all six staged native packages.
         resolve = "process.stdout.write(require.resolve(process.argv[1], {paths: [process.argv[2]]}))"
         for target in TARGETS:
             target_dir = packages / target.npm_name
             executable = subprocess.check_output(
-                ["node", "-e", resolve, f"{target.npm_name}/native", launcher.parent],
+                ["node", "-e", resolve, f"{manifest['uidiffNative'][target.npm_platform]}/native", launcher.parent],
                 text=True,
             )
             assert Path(executable) == (target_dir / target.binary).resolve()
