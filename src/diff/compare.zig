@@ -2805,6 +2805,37 @@ test "audit: a gray label turning black beside a toast remains two-sided" {
     try std.testing.expectEqual(@as(?Box, bounds), edit.after);
 }
 
+test "round 25 audit: a darkened gray label cannot set its own shadow transmission" {
+    const before = try sample.Canvas.init(256, 144);
+    defer before.deinit();
+    const after = try sample.Canvas.init(256, 144);
+    defer after.deinit();
+    const bounds = Box.fromPixels(22, 50, 196, 46);
+    before.fill(28, 88, 18, 5, .{ 136, 136, 136, 255 });
+    after.fill(22, 50, 196, 46, .{ 230, 230, 230, 255 });
+    after.fill(28, 54, 184, 32, .{ 36, 36, 36, 255 });
+    after.fill(28, 88, 18, 5, .{ 115, 115, 115, 255 });
+    var edit: Region = .{ .before = bounds, .after = bounds };
+    regions.classifyOverlay(&edit, before.view, after.view, .one);
+    try std.testing.expectEqual(@as(?Box, bounds), edit.before);
+    try std.testing.expectEqual(@as(?Box, bounds), edit.after);
+}
+
+test "round 25 audit: antialiased fill on the rim of a new toast still allows insertion" {
+    const before = try sample.Canvas.init(256, 144);
+    defer before.deinit();
+    const after = try sample.Canvas.init(256, 144);
+    defer after.deinit();
+    const bounds = Box.fromPixels(22, 50, 196, 46);
+    after.fill(22, 50, 196, 46, .{ 230, 230, 230, 255 });
+    after.fill(28, 54, 184, 32, .{ 35, 55, 75, 255 });
+    after.fill(28, 86, 184, 1, .{ 145, 155, 165, 255 });
+    var edit: Region = .{ .before = bounds, .after = bounds };
+    regions.classifyOverlay(&edit, before.view, after.view, .one);
+    try std.testing.expect(edit.before == null);
+    try std.testing.expectEqual(@as(?Box, bounds), edit.after);
+}
+
 test "audit: growing or replacing a toast retains the old panel" {
     const before = try sample.Canvas.init(300, 180);
     defer before.deinit();

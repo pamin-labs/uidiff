@@ -197,9 +197,50 @@ const PanelEdge = union(enum) {
 const ShadowCheck = struct {
     area: PixelRect,
     panel: PixelRect,
-    scrim: Scrim,
+    mode: union(enum) { exact: values.Pixel, scrim: Scrim },
     radius: usize,
     pitch: usize,
+};
+
+const ShadowSide = enum { top, bottom, left, right };
+
+const ShadowProfile = struct {
+    transmission: f32 = 1,
+    coverage: f32 = 0,
+
+    fn predict(self: ShadowProfile, source: values.Pixel, fill: values.Pixel) @Vector(3, f32) {
+        return (Scrim{
+            .transmission = self.transmission * (1 - self.coverage),
+            .base = tone(fill) * @as(@Vector(3, f32), @splat(self.coverage)),
+        }).predict(source);
+    }
+};
+
+// Intersect the coefficient intervals that keep each channel within rounding.
+const BlendFit = struct {
+    low: f32,
+    high: f32 = 1,
+
+    fn include(self: *BlendFit, start: @Vector(3, f32), end: @Vector(3, f32), actual: @Vector(3, f32)) bool {
+        const slopes: [rgb_channels]f32 = end - start;
+        const deltas: [rgb_channels]f32 = actual - start;
+        for (slopes, deltas) |slope, delta| {
+            if (slope == 0) {
+                if (@abs(delta) > scrim_rounding) return false;
+                continue;
+            }
+            const a = (delta - scrim_rounding) / slope;
+            const b = (delta + scrim_rounding) / slope;
+            self.low = @max(self.low, @min(a, b));
+            self.high = @min(self.high, @max(a, b));
+            if (self.low > self.high) return false;
+        }
+        return true;
+    }
+
+    fn coefficient(self: BlendFit) f32 {
+        return (self.low + self.high) / 2;
+    }
 };
 
 /// Rows of a mask, inclusive.
@@ -336,7 +377,6 @@ const floating_panel_inset_divisor = 4;
 const floating_panel_edge_fringe = 3;
 const existing_panel_width_divisor = 2;
 const floating_shadow_pitch = 1;
-const identity_scrim: Scrim = .{ .transmission = 1, .base = @splat(0) };
 const max_swap_pitch = values.CssPx.init(128);
 const tab_parts = 3;
 const tab_indicator_height = values.CssPx.init(6);
@@ -657,7 +697,7 @@ fn floatingPanel(before: Image, after: Image, box: Box, max_height: f64, radius:
     return !existingPanel(before, area, panel) and checkShadow(before, after, .{
         .area = area,
         .panel = panel,
-        .scrim = identity_scrim,
+        .mode = .{ .exact = fill },
         .radius = radius,
         .pitch = floating_shadow_pitch,
     });
@@ -717,6 +757,90 @@ fn toneDistance(a: values.Pixel, b: values.Pixel) f32 {
 }
 
 fn checkShadow(before: Image, after: Image, check: ShadowCheck) bool {
+    return switch (check.mode) {
+        .exact => |fill| checkLocalShadow(before, after, check, fill),
+        .scrim => |scrim| checkScrimShadow(before, after, check, scrim),
+    };
+}
+
+fn checkLocalShadow(before: Image, after: Image, check: ShadowCheck, fill: values.Pixel) bool {
+    const area = check.area;
+    const panel = check.panel;
+    const radius = check.radius;
+    var profile: [4][max_scrim_shadow_radius]ShadowProfile = undefined;
+    for (std.enums.values(ShadowSide)) |side| {
+        const horizontal = side == .top or side == .bottom;
+        const start = if (horizontal) panel.left else panel.top;
+        const end = if (horizontal) panel.right else panel.bottom;
+        const extent = switch (side) {
+            .top => panel.top - area.top,
+            .bottom => area.bottom - panel.bottom,
+            .left => panel.left - area.left,
+            .right => area.right - panel.right,
+        };
+        for (0..@min(extent, radius)) |offset| {
+            const line = switch (side) {
+                .top => panel.top - 1 - offset,
+                .bottom => panel.bottom + offset,
+                .left => panel.left - 1 - offset,
+                .right => panel.right + offset,
+            };
+            profile[@backingInt(side)][offset] =
+                if (fitShadowLine(before, after, horizontal, line, start, end, null)) |t|
+                    .{ .transmission = t }
+                else if (offset < floating_panel_edge_fringe)
+                    .{ .coverage = fitShadowLine(before, after, horizontal, line, start, end, fill) orelse return false }
+                else
+                    return false;
+        }
+    }
+    for (area.top..area.bottom) |y| {
+        const old = before.row(y);
+        const new = after.row(y);
+        const dy = outsideDistance(y, panel.top, panel.bottom);
+        for (area.left..area.right) |x| {
+            if (pixel.same(old[x], new[x])) continue;
+            const dx = outsideDistance(x, panel.left, panel.right);
+            if (dx == 0 and dy == 0) continue;
+            if (dx > radius or dy > radius) return false;
+            // The side strips already share a fitted coefficient. Corners
+            // must agree with a blend between the neighbouring side values.
+            if (dx == 0 or dy == 0) continue;
+            if (old[x][3] != 255 or new[x][3] != 255) return false;
+            const row_side: ShadowSide = if (y < panel.top) .top else .bottom;
+            const col_side: ShadowSide = if (x < panel.left) .left else .right;
+            var blend: BlendFit = .{ .low = 0 };
+            if (!blend.include(
+                profile[@backingInt(row_side)][dy - 1].predict(old[x], fill),
+                profile[@backingInt(col_side)][dx - 1].predict(old[x], fill),
+                tone(new[x]),
+            )) return false;
+        }
+    }
+    return true;
+}
+
+fn outsideDistance(pixel_index: usize, start: usize, end: usize) usize {
+    if (pixel_index < start) return start - pixel_index;
+    return (pixel_index + 1) -| end;
+}
+
+fn fitShadowLine(before: Image, after: Image, horizontal: bool, line: usize, start: usize, end: usize, fill: ?values.Pixel) ?f32 {
+    var fit: BlendFit = .{ .low = if (fill == null) scrim_min_shadow_transmission else 0 };
+    for (start..end) |pos| {
+        const index = if (horizontal) line * before.width + pos else pos * before.width + line;
+        const a = before.pixels[index];
+        const b = after.pixels[index];
+        if (a[3] != 255 or b[3] != 255) return null;
+        const original = tone(a);
+        const first = if (fill == null) @as(@Vector(3, f32), @splat(0)) else original;
+        const last = if (fill) |ink| tone(ink) else original;
+        if (!fit.include(first, last, tone(b))) return null;
+    }
+    return fit.coefficient();
+}
+
+fn checkScrimShadow(before: Image, after: Image, check: ShadowCheck, scrim: Scrim) bool {
     const area = check.area;
     const panel = check.panel;
     const radius = check.radius;
@@ -731,12 +855,9 @@ fn checkShadow(before: Image, after: Image, check: ShadowCheck) bool {
         while (true) : (x = @min(x + check.pitch, last_x)) {
             const inside = in_panel_rows and x >= panel.left and x < panel.right;
             if (!inside) {
-                const matches = if (check.pitch == floating_shadow_pitch)
-                    pixel.same(old[x], new[x])
-                else
-                    check.scrim.matches(old[x], new[x]);
+                const matches = scrim.matches(old[x], new[x]);
                 if (!matches and (y < panel.top -| radius or y >= panel.bottom + radius or
-                    x < panel.left -| radius or x >= panel.right + radius or !check.scrim.shadow(old[x], new[x]))) return false;
+                    x < panel.left -| radius or x >= panel.right + radius or !scrim.shadow(old[x], new[x]))) return false;
             }
             if (x == last_x) break;
         }
@@ -751,7 +872,7 @@ fn overlaid(before: Image, after: Image, radius: usize) bool {
     return checkShadow(before, after, .{
         .area = .{ .left = 0, .right = before.width, .top = 0, .bottom = before.height },
         .panel = panel,
-        .scrim = scrim,
+        .mode = .{ .scrim = scrim },
         .radius = radius,
         .pitch = scrim_sample_pitch,
     });
