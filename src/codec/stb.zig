@@ -45,18 +45,12 @@ pub fn probe(allocator: Allocator, bytes: []const u8, cap: usize) DecodeError!He
 
 /// Decodes a fallback PNG under the caller's budget.
 pub fn loadLegacy(allocator: Allocator, bytes: []const u8, header: Header, cap: usize) DecodeError![]Pixel {
-    const pixels = try withDecodeBudget(loadStb, allocator, bytes, header, cap);
-    return pixels[0 .. header.size.width * header.size.height];
+    return withDecodeBudget(loadStb, allocator, bytes, header, cap);
 }
 
 /// Frees pixels allocated by the bounded PNG allocator.
 pub fn release(_: Allocator, pixels: []const Pixel) void {
-    free(@constCast(pixels.ptr));
-}
-
-/// Releases a PNG pixel buffer allocated by the codec hooks.
-pub fn free(pixel_data: [*]Pixel) void {
-    c.stbi_image_free(pixel_data);
+    c.stbi_image_free(@constCast(pixels.ptr));
 }
 
 /// Runs a byte-and-size decoder within the PNG allocation scope.
@@ -67,16 +61,21 @@ pub fn withDecodeBudget(comptime decodePixels: anytype, allocator: Allocator, by
 }
 
 /// Runs the fallback PNG decoder in an active allocation scope.
-pub fn loadStb(bytes: []const u8, expected: Size) DecodeError![*]Pixel {
+pub fn loadStb(bytes: []const u8, expected: Size) DecodeError![]Pixel {
     const len = std.math.cast(c_int, bytes.len) orelse return error.ImageTooLarge;
     var width: c_int = 0;
     var height: c_int = 0;
     var channels: c_int = 0;
-    const pixels: [*]Pixel = @ptrCast(c.stbi_load_from_memory(bytes.ptr, len, &width, &height, &channels, @sizeOf(Pixel)) orelse return memory.failure());
-    errdefer free(pixels);
+    const data = c.stbi_load_from_memory(bytes.ptr, len, &width, &height, &channels, @sizeOf(Pixel)) orelse return memory.failure();
+    errdefer c.stbi_image_free(data);
     const actual = try size(width, height);
     if (actual.width != expected.width or actual.height != expected.height) return error.InvalidImage;
-    return pixels;
+    const count = actual.pixelCount() orelse return error.ImageTooLarge;
+    // stb allocates the returned block through our memory hooks.
+    const allocation = memory.allocatedBytes(data);
+    const used = count * @sizeOf(Pixel);
+    if (allocation.len < used) return error.InvalidImage;
+    return std.mem.bytesAsSlice(Pixel, allocation[0..used]);
 }
 
 noinline fn beginDecode(allocator: Allocator, header: Header, len: usize, cap: usize) DecodeError!void {

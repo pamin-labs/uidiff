@@ -60,6 +60,7 @@ const SharedAllocator = struct {
     }
 
     fn lock(context: *anyopaque) *SharedAllocator {
+        // allocator installs self as the vtable context.
         const self: *SharedAllocator = @ptrCast(@alignCast(context));
         self.mutex.lockUncancelable(self.io);
         return self;

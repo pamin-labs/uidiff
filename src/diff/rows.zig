@@ -1209,8 +1209,8 @@ test "fixed-header scroll reveals content and skips flat paint" {
         for (row[4..36]) |*ink| ink.* = .{ @intCast(y), 90, 40, 255 };
     }
     @memcpy(new[body - scroll .. height - scroll], old[body..]);
-    const old_pixels: *const [height * width]values.Pixel = @ptrCast(&old);
-    const new_pixels: *const [height * width]values.Pixel = @ptrCast(&new);
+    const old_pixels = std.mem.bytesAsSlice(values.Pixel, std.mem.asBytes(&old));
+    const new_pixels = std.mem.bytesAsSlice(values.Pixel, std.mem.asBytes(&new));
     const original: Image = .{ .width = width, .height = height, .pixels = old_pixels };
     const scrolled: Image = .{ .width = width, .height = height, .pixels = new_pixels };
     var a: [height]u64 = undefined;
@@ -1267,8 +1267,8 @@ test "inserting and deleting above a divider preserves the deletion" {
             pixels[y][83] = rule;
         }
     }
-    const a: Image = .{ .width = width, .height = height, .pixels = @as(*const [width * height]values.Pixel, @ptrCast(&old)) };
-    const b: Image = .{ .width = width, .height = height, .pixels = @as(*const [width * height]values.Pixel, @ptrCast(&new)) };
+    const a: Image = .{ .width = width, .height = height, .pixels = std.mem.bytesAsSlice(values.Pixel, std.mem.asBytes(&old)) };
+    const b: Image = .{ .width = width, .height = height, .pixels = std.mem.bytesAsSlice(values.Pixel, std.mem.asBytes(&new)) };
     const limits: Limits = .{ .scroll = 2, .replacement = 24, .images = .{ a, b }, .left = 24, .width = 48 };
     var before: [height]u64 = undefined;
     var after: [height]u64 = undefined;

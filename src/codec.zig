@@ -104,7 +104,7 @@ pub const FileInput = struct {
         if (!png.matches(bytes)) return null;
         const probed = try probeFormat(png.probe, allocator, bytes, cap);
         const pixels = (try png.loadStreaming(allocator, bytes, probed.header, probed.limit)) orelse return null;
-        return owned(probed.size, pixels[0..probed.count], allocator, .png);
+        return owned(probed.header.size, pixels, allocator, .png);
     }
 };
 
@@ -129,7 +129,7 @@ pub fn decodeCapped(allocator: Allocator, bytes: []const u8, cap: usize) DecodeE
             const tag: Format = @field(Format, name);
             const probed = try probeFormat(format.probe, allocator, bytes, cap);
             const pixels = try format.decode(allocator, bytes, probed.header, probed.limit);
-            return owned(probed.size, pixels, allocator, tag);
+            return owned(probed.header.size, pixels, allocator, tag);
         }
     }
     return error.UnsupportedImageFormat;
@@ -175,13 +175,13 @@ pub fn readFile(io: Io, allocator: Allocator, path: []const u8) ReadError![]u8 {
 
 fn Probed(comptime probe: anytype) type {
     const Header = @typeInfo(@typeInfo(@TypeOf(probe)).@"fn".return_type.?).error_union.payload;
-    return struct { header: Header, size: Size, count: usize, limit: usize };
+    return struct { header: Header, limit: usize };
 }
 
 fn probeSize(allocator: Allocator, bytes: []const u8, cap: usize) DecodeError!Size {
     inline for (@typeInfo(@TypeOf(formats)).@"struct".field_names) |name| {
         if (@field(formats, name).matches(bytes)) {
-            return (try probeFormat(@field(formats, name).probe, allocator, bytes, cap)).size;
+            return (try probeFormat(@field(formats, name).probe, allocator, bytes, cap)).header.size;
         }
     }
     return error.UnsupportedImageFormat;
@@ -190,7 +190,8 @@ fn probeSize(allocator: Allocator, bytes: []const u8, cap: usize) DecodeError!Si
 noinline fn probeFormat(comptime probe: anytype, allocator: Allocator, bytes: []const u8, cap: usize) DecodeError!Probed(probe) {
     const limit = @min(cap, values.max_decode_bytes);
     const header = try probe(allocator, bytes, limit);
-    return .{ .header = header, .size = header.size, .count = try pixelCount(header.size), .limit = limit };
+    _ = try pixelCount(header.size);
+    return .{ .header = header, .limit = limit };
 }
 
 fn owned(size: Size, pixels: []const Pixel, allocator: Allocator, format: Format) Decoded {
@@ -278,8 +279,8 @@ test "streaming PNG matches procedural RGBA across dictionary wraps" {
     try encodePng(allocator, .{ .width = width, .height = height, .pixels = pixels }, &output.writer);
     const header = try png.probe(allocator, output.written(), values.max_decode_bytes);
     const streamed = (try png.loadStreaming(allocator, output.written(), header, values.max_decode_bytes)) orelse return error.TestUnexpectedResult;
-    defer stb.free(streamed);
-    try std.testing.expectEqualSlices(Pixel, pixels, streamed[0 .. header.size.width * header.size.height]);
+    defer stb.release(allocator, streamed);
+    try std.testing.expectEqualSlices(Pixel, pixels, streamed);
 }
 
 test "RGB8 streaming preserves opaque partial rows" {
@@ -297,9 +298,9 @@ test "RGB8 streaming preserves opaque partial rows" {
     const streamed = (try png.loadStreaming(allocator, output.written(), probed, values.max_decode_bytes)) orelse return error.TestUnexpectedResult;
     const legacy = try stb.loadLegacy(allocator, output.written(), probed, values.max_decode_bytes);
     defer stb.release(allocator, legacy);
-    defer stb.free(streamed);
+    defer stb.release(allocator, streamed);
     try std.testing.expectEqualSlices(Pixel, &pixels, legacy);
-    try std.testing.expectEqualSlices(Pixel, legacy, streamed[0..pixels.len]);
+    try std.testing.expectEqualSlices(Pixel, legacy, streamed);
 }
 
 test "header preflight handles JPEG metadata beyond its initial read" {

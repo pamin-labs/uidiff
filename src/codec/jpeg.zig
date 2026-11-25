@@ -19,7 +19,7 @@ const Decode = struct {
     length: c_ulong,
     size: Size,
     count: usize,
-    pixels: ?[*]Pixel = null,
+    pixels: ?[]Pixel = null,
 };
 
 // Limit progressive scans to keep bounded-memory decoding bounded in work.
@@ -93,11 +93,10 @@ pub fn decode(allocator: Allocator, bytes: []const u8, header: Header, cap: usiz
     var run: Decode = .{ .bytes = bytes, .length = length, .size = header.size, .count = count };
     var decoder = std.mem.zeroes(c.jpeg_decompress_struct);
     if (c.uidiff_jpeg_guard(&decoder, decodeRows, &run) == 0) {
-        memory.uidiff_codec_free(run.pixels);
+        if (run.pixels) |pixels| memory.uidiff_codec_free(pixels.ptr);
         return memory.failure();
     }
-    const pixels = run.pixels orelse return error.InvalidImage;
-    return pixels[0..count];
+    return run.pixels orelse error.InvalidImage;
 }
 
 /// Releases the decoded block through the allocator recorded when it was created.
@@ -129,11 +128,12 @@ fn decodeRows(pointer: c.j_decompress_ptr, context: ?*anyopaque) callconv(.c) c_
     decoder.progress = null;
 
     // libjpeg initializes every scanline before successful completion.
-    const pixels: [*]Pixel = @ptrCast(memory.uidiff_codec_malloc(run.count * @sizeOf(Pixel)) orelse return 0);
+    const bytes = memory.allocBytes(run.count * @sizeOf(Pixel)) orelse return 0;
+    const pixels = std.mem.bytesAsSlice(Pixel, bytes);
     run.pixels = pixels;
     while (decoder.output_scanline < run.size.height) {
         const row = pixels[@as(usize, decoder.output_scanline) * run.size.width ..][0..run.size.width];
-        var samples: c.JSAMPROW = @ptrCast(row.ptr);
+        var samples: c.JSAMPROW = std.mem.sliceAsBytes(row).ptr;
         if (c.jpeg_read_scanlines(decoder, &samples, 1) != 1) return 0;
         if (cmyk) convertCmyk(row, decoder.saw_Adobe_marker != 0);
     }
@@ -142,19 +142,19 @@ fn decodeRows(pointer: c.j_decompress_ptr, context: ?*anyopaque) callconv(.c) c_
 
 fn limitScans(common: c.j_common_ptr) callconv(.c) void {
     // This monitor is installed exclusively on the decompressor.
-    const decoder: c.j_decompress_ptr = @ptrCast(common);
+    const decoder: c.j_decompress_ptr = @ptrCast(@alignCast(common));
     if (decoder.*.input_scan_number > max_scans) c.uidiff_jpeg_fail(common);
 }
 
 fn convertCmyk(row: []Pixel, inverted: bool) void {
     const Bytes = @Vector(@sizeOf(Pixel), u8);
-    const Words = @Vector(@sizeOf(Pixel), u16);
+    const Words = @Vector(@sizeOf(Pixel), u32);
     for (row) |*pixel| {
         const samples: Bytes = pixel.*;
         const ink: Words = @intCast(if (inverted) samples else ~samples);
-        // The two terms sum to at most 65407, within one u16.
-        const partial = ink *% @as(Words, @splat(ink[3])) +% @as(Words, @splat(coverage_rounding_bias));
-        const rounded = (partial +% (partial >> @splat(coverage_bits))) >> @splat(coverage_bits);
+        // Widen before arithmetic so every intermediate fits in a lane.
+        const partial = ink * @as(Words, @splat(ink[3])) + @as(Words, @splat(coverage_rounding_bias));
+        const rounded = (partial + (partial >> @splat(coverage_bits))) >> @splat(coverage_bits);
         const rgb: Bytes = @intCast(rounded);
         pixel.* = @shuffle(u8, rgb, @as(Bytes, @splat(255)), @Vector(4, i32){ 0, 1, 2, -1 });
     }

@@ -102,7 +102,7 @@ pub fn streamingHeader(bytes: []const u8) bool {
 }
 
 /// Returns codec-budget-owned pixels, or null if the legacy decoder should try.
-pub fn decode(bytes: []const u8, size: values.Size) memory.Error!?[*]values.Pixel {
+pub fn decode(bytes: []const u8, size: values.Size) memory.Error!?[]values.Pixel {
     const range = idatRange(bytes) orelse return null;
     const width = size.width;
     const height = size.height;
@@ -114,20 +114,20 @@ pub fn decode(bytes: []const u8, size: values.Size) memory.Error!?[*]values.Pixe
     const scratch_bytes = inflate_bytes + input_bytes + (if (rgb) stride else 0);
     // Inflate writes the whole accepted pixel buffer. Scratch is consumed only
     // through bytes written by inflate or by the split-row copy.
-    const pixels: [*]u8 = @ptrCast(memory.uidiff_codec_malloc(count * channels) orelse return memory.failure());
+    const pixels = memory.allocBytes(count * channels) orelse return memory.failure();
     var keep = false;
-    defer if (!keep) memory.uidiff_codec_free(pixels);
-    const scratch: [*]u8 = @ptrCast(memory.uidiff_codec_malloc(scratch_bytes) orelse return memory.failure());
-    defer memory.uidiff_codec_free(scratch);
+    defer if (!keep) memory.uidiff_codec_free(pixels.ptr);
+    const scratch = memory.allocBytes(scratch_bytes) orelse return memory.failure();
+    defer memory.uidiff_codec_free(scratch.ptr);
     var rows: Rows = .{
-        .pixels = pixels[0 .. count * channels],
+        .pixels = pixels,
         .partial = scratch[inflate_bytes..][0..input_bytes],
         .expanded = scratch[inflate_bytes + input_bytes .. scratch_bytes],
         .stride = stride,
     };
     if (!try inflateRows(bytes, range, scratch[0..inflate_bytes], &rows)) return null;
     keep = true;
-    return @ptrCast(pixels);
+    return std.mem.bytesAsSlice(values.Pixel, pixels);
 }
 
 fn idatRange(bytes: []const u8) ?Range {

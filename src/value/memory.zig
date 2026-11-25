@@ -8,8 +8,8 @@ pub fn allocUnfilled(comptime T: type, allocator: std.mem.Allocator, count: usiz
     if (size == 0) return &.{};
     const ptr = allocator.rawAlloc(size, .of(T), @returnAddress()) orelse return error.OutOfMemory;
     // rawAlloc guarantees this alignment for the whole byte span.
-    const aligned: [*]T = @ptrCast(@alignCast(ptr));
-    return aligned[0..count];
+    const aligned: [*]align(@alignOf(T)) u8 = @alignCast(ptr);
+    return std.mem.bytesAsSlice(T, aligned[0..size]);
 }
 
 /// Releases storage obtained from allocUnfilled without refilling it.

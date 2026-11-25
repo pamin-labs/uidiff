@@ -21,11 +21,15 @@ const jpeg_quality = 100;
 
 /// Encodes one image to the supplied writer. The source is packed RGBA8.
 pub fn write(allocator: std.mem.Allocator, format: cases.Format, width: c_int, height: c_int, pixels: []const u8, output: *Writer) EncodeError!void {
+    if (width <= 0 or height <= 0) return error.EncodingFailed;
+    const stride = std.math.mul(c_int, width, channels) catch return error.EncodingFailed;
+    const footprint = std.math.mul(usize, @intCast(stride), @intCast(height)) catch return error.EncodingFailed;
+    if (pixels.len != footprint) return error.EncodingFailed;
     var sink: Sink = .{ .writer = output };
     switch (format) {
         .png, .jpg => {
             const ok = if (format == .png)
-                stb.stbi_write_png_to_func(emit, &sink, width, height, channels, pixels.ptr, width * channels)
+                stb.stbi_write_png_to_func(emit, &sink, width, height, channels, pixels.ptr, stride)
             else
                 stb.stbi_write_jpg_to_func(emit, &sink, width, height, channels, pixels.ptr, jpeg_quality);
             if (sink.failure) |err| return err;
@@ -38,8 +42,9 @@ pub fn write(allocator: std.mem.Allocator, format: cases.Format, width: c_int, h
             const length = webp.WebPEncodeLosslessRGBA(pixels.ptr, width, height, width * channels, &encoded);
             if (encoded == null) return error.EncodingFailed;
             defer webp.WebPFree(encoded);
-            if (length == 0) return error.EncodingFailed;
-            try output.writeAll(encoded[0..length]);
+            const allocation = memory.allocatedBytes(encoded);
+            if (length == 0 or length > allocation.len) return error.EncodingFailed;
+            try output.writeAll(allocation[0..length]);
         },
     }
 }
@@ -51,8 +56,14 @@ fn emit(context: ?*anyopaque, bytes: ?*anyopaque, length: c_int) callconv(.c) vo
         sink.failure = error.WriteFailed;
         return;
     };
-    const data: [*]const u8 = @ptrCast(bytes orelse return);
-    sink.writer.writeAll(data[0..count]) catch |err| {
+    if (count == 0) return;
+    const address = bytes orelse {
+        sink.failure = error.WriteFailed;
+        return;
+    };
+    // stb supplies a readable span of count bytes for the duration of the callback.
+    const data = @as([*]const u8, @ptrCast(address))[0..count];
+    sink.writer.writeAll(data) catch |err| {
         sink.failure = err;
     };
 }

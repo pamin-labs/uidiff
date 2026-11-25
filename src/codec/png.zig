@@ -4,6 +4,7 @@ const builtin = @import("builtin");
 const values = @import("../value.zig");
 const png_format = @import("png_format.zig");
 const stb = @import("stb.zig");
+const memory = @import("codec_memory");
 const scanlines = @import("png_scanlines.zig");
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
@@ -27,8 +28,6 @@ const Deflater = struct {
     stream: zlib.zng_stream,
     output: *Writer,
     out: []u8,
-
-    const header_bytes = 16;
 
     fn init(self: *Deflater, allocator: *Allocator, output: *Writer, out: []u8) EncodeError!void {
         self.* = .{ .stream = std.mem.zeroes(zlib.zng_stream), .output = output, .out = out };
@@ -79,21 +78,13 @@ const Deflater = struct {
     fn zalloc(context: ?*anyopaque, items: c_uint, size: c_uint) callconv(.c) ?*anyopaque {
         const allocator: *const Allocator = @ptrCast(@alignCast(context));
         const bytes = std.math.mul(usize, items, size) catch return null;
-        const total = std.math.add(usize, bytes, header_bytes) catch return null;
-        const block = if (builtin.mode == .debug)
-            (allocator.alignedAlloc(u8, .@"16", total) catch return null).ptr
-        else
-            allocator.rawAlloc(total, .@"16", @returnAddress()) orelse return null;
-        std.mem.writeInt(usize, block[0..@sizeOf(usize)], total, .little);
-        return block + header_bytes;
+        const block = memory.allocBlock(allocator.*, bytes) orelse return null;
+        if (builtin.mode == .debug) @memset(block, undefined);
+        return block.ptr;
     }
 
-    fn zfree(context: ?*anyopaque, address: ?*anyopaque) callconv(.c) void {
-        const allocator: *const Allocator = @ptrCast(@alignCast(context));
-        const data: [*]align(16) u8 = @ptrCast(@alignCast(address orelse return));
-        const base: [*]align(16) u8 = @alignCast(data - header_bytes);
-        const bytes = std.mem.readInt(usize, base[0..@sizeOf(usize)], .little);
-        if (builtin.mode == .debug) allocator.free(base[0..bytes]) else allocator.rawFree(base[0..bytes], .@"16", @returnAddress());
+    fn zfree(_: ?*anyopaque, address: ?*anyopaque) callconv(.c) void {
+        memory.freeBlock(address);
     }
 };
 
@@ -127,7 +118,7 @@ pub fn matches(prefix: []const u8) bool {
 
 /// Decodes the probed dimensions through the scanline or legacy decoder.
 pub fn decode(allocator: Allocator, bytes: []const u8, header: stb.Header, cap: usize) stb.DecodeError![]values.Pixel {
-    return (try load(allocator, bytes, header, cap))[0 .. header.size.width * header.size.height];
+    return load(allocator, bytes, header, cap);
 }
 
 /// Recognizes noninterlaced RGB8 and RGBA8 without decoding the image.
@@ -136,8 +127,8 @@ pub fn streamingHeader(bytes: []const u8) bool {
 }
 
 /// Runs bounded scanline decoding. Null requests the legacy fallback.
-pub fn loadStreaming(allocator: Allocator, bytes: []const u8, header: stb.Header, cap: usize) DecodeError!?[*]values.Pixel {
-    return stb.withDecodeBudget(streamPixels, allocator, bytes, header, cap);
+pub fn loadStreaming(allocator: Allocator, bytes: []const u8, header: stb.Header, cap: usize) DecodeError!?[]values.Pixel {
+    return stb.withDecodeBudget(scanlines.decode, allocator, bytes, header, cap);
 }
 
 /// Encodes a valid image. Allocates the compressor's window and one filtered row.
@@ -324,17 +315,13 @@ fn portableChecksum(kind: *const [4]u8, data: []const u8) u32 {
     return crc.final();
 }
 
-fn load(allocator: Allocator, bytes: []const u8, header: stb.Header, cap: usize) DecodeError![*]values.Pixel {
+fn load(allocator: Allocator, bytes: []const u8, header: stb.Header, cap: usize) DecodeError![]values.Pixel {
     return stb.withDecodeBudget(loadPixels, allocator, bytes, header, cap);
 }
 
-fn loadPixels(bytes: []const u8, size: values.Size) DecodeError![*]values.Pixel {
-    if (try streamPixels(bytes, size)) |pixels| return pixels;
+fn loadPixels(bytes: []const u8, size: values.Size) DecodeError![]values.Pixel {
+    if (try scanlines.decode(bytes, size)) |pixels| return pixels;
     return stb.loadStb(bytes, size);
-}
-
-fn streamPixels(bytes: []const u8, dimensions: values.Size) DecodeError!?[*]values.Pixel {
-    return scanlines.decode(bytes, dimensions);
 }
 
 fn encodeOnce(allocator: Allocator, image: Image) !void {
@@ -401,16 +388,16 @@ fn checkTestFilters(comptime channels: usize, color: u8, filters: []const u8) !v
     try writeTestPng(allocator, &output.writer, size, color, filtered[0 .. filters.len * (1 + row_bytes)]);
     const header = try probe(allocator, output.written(), values.max_decode_bytes);
     for (filters) |filter_byte| if (filter_byte > paeth_filter) {
-        try std.testing.expectEqual(@as(?[*]values.Pixel, null), try loadStreaming(allocator, output.written(), header, values.max_decode_bytes));
+        try std.testing.expectEqual(@as(?[]values.Pixel, null), try loadStreaming(allocator, output.written(), header, values.max_decode_bytes));
         try std.testing.expectError(error.InvalidImage, load(allocator, output.written(), header, values.max_decode_bytes));
         return;
     };
     const found = try load(allocator, output.written(), header, values.max_decode_bytes);
-    defer stb.free(found);
+    defer stb.release(allocator, found);
     const legacy = try stb.loadLegacy(allocator, output.written(), header, values.max_decode_bytes);
     defer stb.release(allocator, legacy);
     try std.testing.expectEqualSlices(values.Pixel, pixels[0 .. width * filters.len], legacy);
-    try std.testing.expectEqualSlices(values.Pixel, legacy, found[0..legacy.len]);
+    try std.testing.expectEqualSlices(values.Pixel, legacy, found);
 }
 
 fn referencePaeth(left: u8, above: u8, diagonal: u8) u8 {
@@ -473,10 +460,10 @@ fn fuzzStreamingRows(_: void, smith: *std.testing.Smith) !void {
     } else output.written();
     const header: stb.Header = .{ .size = size, .sample_bytes = 1 };
     const found = try loadStreaming(allocator, bytes, header, values.max_decode_bytes) orelse return;
-    defer stb.free(found);
+    defer stb.release(allocator, found);
     const legacy = try stb.loadLegacy(allocator, bytes, header, values.max_decode_bytes);
     defer stb.release(allocator, legacy);
-    try std.testing.expectEqualSlices(values.Pixel, legacy, found[0..legacy.len]);
+    try std.testing.expectEqualSlices(values.Pixel, legacy, found);
 }
 
 test "an encoded image starts with the PNG signature and ends with IEND" {
@@ -531,7 +518,7 @@ test "RGB8 accepts every legal IDAT split and refuses a truncated DEFLATE body" 
         rebuilt.clearRetainingCapacity();
         try splitTestIdat(&rebuilt.writer, encoded.written(), payload, at);
         const found = try load(allocator, rebuilt.written(), header, values.max_decode_bytes);
-        defer stb.free(found);
+        defer stb.release(allocator, found);
         try std.testing.expectEqual(values.Pixel{ 23, 57, 91, 255 }, found[0]);
     }
     rebuilt.clearRetainingCapacity();
@@ -555,7 +542,7 @@ test "RGB8 preserves legacy checksum tolerance" {
     changed[idat + 8 + len - 1] ^= 1;
     changed[idat + 8 + len] ^= 1;
     const found = try load(allocator, changed, header, values.max_decode_bytes);
-    defer stb.free(found);
+    defer stb.release(allocator, found);
     try std.testing.expectEqual(values.Pixel{ 23, 57, 91, 255 }, found[0]);
 }
 
@@ -574,9 +561,9 @@ test "RGB8 transparent colour keys use the legacy decoder" {
     try keyed.writer.writeAll(png.written()[header_end..]);
 
     const header = try probe(allocator, keyed.written(), values.max_decode_bytes);
-    try std.testing.expectEqual(@as(?[*]values.Pixel, null), try loadStreaming(allocator, keyed.written(), header, values.max_decode_bytes));
+    try std.testing.expectEqual(@as(?[]values.Pixel, null), try loadStreaming(allocator, keyed.written(), header, values.max_decode_bytes));
     const pixels = try load(allocator, keyed.written(), header, values.max_decode_bytes);
-    defer stb.free(pixels);
+    defer stb.release(allocator, pixels);
     try std.testing.expectEqual(values.Pixel{ raw[1], raw[2], raw[3], 0 }, pixels[0]);
 }
 
@@ -617,9 +604,9 @@ test "RGB8 streaming leaves grayscale, indexed, wide and interlaced PNGs to stb"
         try patched.writer.writeAll(encoded.written()[header_end..]);
 
         const metadata = try probe(allocator, patched.written(), values.max_decode_bytes);
-        try std.testing.expectEqual(@as(?[*]values.Pixel, null), try loadStreaming(allocator, patched.written(), metadata, values.max_decode_bytes));
+        try std.testing.expectEqual(@as(?[]values.Pixel, null), try loadStreaming(allocator, patched.written(), metadata, values.max_decode_bytes));
         const pixels = try load(allocator, patched.written(), metadata, values.max_decode_bytes);
-        defer stb.free(pixels);
+        defer stb.release(allocator, pixels);
         try std.testing.expectEqual(profile.expected, pixels[0]);
     }
 }
