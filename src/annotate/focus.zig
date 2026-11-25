@@ -25,6 +25,21 @@ pub const Focus = struct {
     height: usize = 0,
 };
 
+/// A positioned badge, with a leader only when its route is clear.
+pub const Badge = union(enum) {
+    none,
+    plain: Rect,
+    linked: Rect,
+
+    /// Returns the badge rectangle when placement found room.
+    pub fn position(self: Badge) ?Rect {
+        return switch (self) {
+            .none => null,
+            .plain, .linked => |rect| rect,
+        };
+    }
+};
+
 /// Layout of one numbered region in the overview and detail rows.
 pub const Detail = struct {
     region: Region,
@@ -32,13 +47,11 @@ pub const Detail = struct {
     after: ?Crop,
     before_mark: ?Rect,
     after_mark: ?Rect,
-    before_badge: ?Rect,
-    after_badge: ?Rect,
-    overview_leaders: [2]bool = @splat(false),
+    before_badge: Badge = .none,
+    after_badge: Badge = .none,
     focus: usize = 0,
     focus_marks: [2]?Rect = .{ null, null },
-    focus_badges: [2]?Rect = .{ null, null },
-    focus_leaders: [2]bool = @splat(false),
+    focus_badges: [2]Badge = @splat(.none),
     number: Text,
     top: usize,
     height: usize,
@@ -185,8 +198,8 @@ test "wide reports use bounded overviews and merge overlapping focus crops" {
     try std.testing.expectEqual(@as(usize, focus_slot_width), shrunk.to.w);
     try std.testing.expect(shrunk.to.h < shrunk.from.h);
     for (rows.plan.details) |detail| {
-        if (detail.after_badge) |b| try std.testing.expect(!b.overlaps(detail.after_mark.?));
-        if (detail.focus_badges[1]) |b| try std.testing.expect(!b.overlaps(detail.focus_marks[1].?));
+        if (detail.after_badge.position()) |b| try std.testing.expect(!b.overlaps(detail.after_mark.?));
+        if (detail.focus_badges[1].position()) |b| try std.testing.expect(!b.overlaps(detail.focus_marks[1].?));
     }
     const tall = focusWindow(.{ .x = 240, .y = 250, .w = 10, .h = 20 }, .{ .width = 1500, .height = 600 }).?;
     try std.testing.expectEqual(@as(usize, 130), tall.y);
@@ -209,8 +222,8 @@ test "wide removed strips get distinct focus badges and a scaled caption" {
     };
     const rows = try Rows.init(allocator, image, image, &regions, &.{});
     defer rows.deinit(allocator);
-    const first = rows.plan.details[0].focus_badges[0].?;
-    const second = rows.plan.details[1].focus_badges[0].?;
+    const first = rows.plan.details[0].focus_badges[0].position().?;
+    const second = rows.plan.details[1].focus_badges[0].position().?;
     try std.testing.expect(!first.overlaps(second));
     try std.testing.expect(!first.overlaps(rows.plan.details[1].focus_marks[0].?));
     try std.testing.expect(!second.overlaps(rows.plan.details[0].focus_marks[0].?));
@@ -230,5 +243,5 @@ test "focus badges use space outside a crop when available" {
     const box = values.Box.fromPixels(1588, 460, 8, 6);
     const rows = try Rows.init(allocator, image, image, &.{.{ .number = 1, .kind = .changed, .before = box, .after = box }}, &.{});
     defer rows.deinit(allocator);
-    try std.testing.expect(!rows.plan.details[0].focus_badges[0].?.overlaps(rows.plan.focuses[0].crops[0].?.to));
+    try std.testing.expect(!rows.plan.details[0].focus_badges[0].position().?.overlaps(rows.plan.focuses[0].crops[0].?.to));
 }

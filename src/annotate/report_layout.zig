@@ -217,8 +217,6 @@ fn planDetails(allocator: Allocator, before: Image, after: Image, regions: []con
             .after = b,
             .before_mark = before_mark,
             .after_mark = after_mark,
-            .before_badge = null,
-            .after_badge = null,
             .focus = index,
             .number = try Text.format(copy.number_format, .{region.number}),
             .top = top,
@@ -396,7 +394,7 @@ test "a top change in a thin preview can use the beside lane" {
     const plan = try Plan.init(allocator, image, image, &.{.{ .number = 1, .before = mark, .after = mark }}, &.{});
     defer plan.deinit(allocator);
     const edit = plan.details[0].before_mark.?;
-    const badge = plan.details[0].before_badge.?;
+    const badge = plan.details[0].before_badge.position().?;
     try std.testing.expect(badge.y + badge.h > edit.y and badge.y < edit.bottom());
 }
 
@@ -414,7 +412,7 @@ test "two stacked badges stay level with their own marks" {
     const plan = try Plan.init(allocator, image, image, &regions, &.{});
     defer plan.deinit(allocator);
     for (plan.details) |detail| {
-        const badge = detail.after_badge orelse return error.TestUnexpectedResult;
+        const badge = detail.after_badge.position() orelse return error.TestUnexpectedResult;
         const mark = detail.after_mark orelse return error.TestUnexpectedResult;
         try std.testing.expectEqual(mark.y + mark.h / 2, badge.y + badge.h / 2);
     }
