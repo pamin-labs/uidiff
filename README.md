@@ -53,7 +53,7 @@ All coordinates are device pixels of the input images; divide by `--scale` for l
 
 ### Limits and memory
 
-Inputs are bounded by `max_pixels`, `max_extent`, and `max_encoded_bytes` in `src/value/image.zig`. The default per-image decode cap is `max_decode_bytes` in the same file. The PNG and JPEG budget accounts for the encoded bytes, block-rounded dimensions, sample depth, and workspace in `src/codec/stb.zig`. WebP charges its RGBA output and decoder allocations against the cap. Over-limit images fail with `ImageTooLarge`.
+Inputs are bounded by `max_pixels`, `max_extent`, and `max_encoded_bytes` in `src/value/image.zig`. The default per-image decode cap is `max_decode_bytes` in the same file. The PNG budget accounts for encoded bytes, block-rounded dimensions, sample depth, and workspace. JPEG and WebP charge their RGBA output and decoder allocations against the cap. Over-limit images fail with `ImageTooLarge`.
 
 Noninterlaced RGB8 and RGBA8 PNGs use a fixed DEFLATE dictionary and scanline-sized decode scratch. The CLI can overlap two bounded PNG decodes. The comparison holds both decoded images, and the optional sheet is encoded one row at a time. Run `zig build bench` to measure peak RSS on the fixture pairs or your own captures.
 
@@ -92,6 +92,6 @@ Run `zig build bench` to measure the bundled synthetic phone and desktop pairs: 
 
 ## License
 
-MIT. uidiff includes libwebp (BSD 3-Clause), zlib-ng (Zlib), stb_image (MIT or public domain) and code adapted from pixelmatch (ISC). Release archives include [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES) beside `LICENSE`.
+MIT. uidiff includes libjpeg-turbo (IJG, Modified BSD and Zlib), libwebp (BSD 3-Clause), zlib-ng (Zlib), stb_image (MIT or public domain) and code adapted from pixelmatch (ISC). Release archives include [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES) beside `LICENSE`.
 
 The annotated sheet embeds bitmap glyphs derived from IBM Plex Sans. The glyphs are not distributed as a font named Plex. The full OFL-1.1 text is in [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES). Run `python3 scripts/generate-font.py --check` to verify the [committed table](src/annotate/font-ascii.bin) offline. Use `--verify-generated` for a fresh rasterization with the pinned generator dependencies.

@@ -12,8 +12,8 @@
 #define INFLATE_CHUNK_BYTES (32 * 1024)
 #endif
 
-void *uidiff_stbi_malloc(size_t size);
-void uidiff_stbi_free(void *block);
+void *uidiff_codec_malloc(size_t size);
+void uidiff_codec_free(void *block);
 
 typedef struct {
     uint8_t *next;
@@ -258,12 +258,12 @@ static bool consume_rows(png_rows *rows, const uint8_t *raw, size_t len) {
 static void *zalloc(void *opaque, unsigned int items, unsigned int size) {
     (void)opaque;
     if (size != 0 && items > SIZE_MAX / size) return NULL;
-    return uidiff_stbi_malloc((size_t)items * size);
+    return uidiff_codec_malloc((size_t)items * size);
 }
 
 static void zfree(void *opaque, void *block) {
     (void)opaque;
-    uidiff_stbi_free(block);
+    uidiff_codec_free(block);
 }
 
 static bool inflate_rows(const uint8_t *data, size_t first, size_t end,
@@ -323,14 +323,14 @@ int uidiff_png_load(const uint8_t *data, size_t len, uint32_t width,
         height > SIZE_MAX / (4 * (size_t)width)) return UIDIFF_PNG_FALLBACK;
 
     const size_t stride = 4 * (size_t)width;
-    uint8_t *pixels = uidiff_stbi_malloc(stride * height);
+    uint8_t *pixels = uidiff_codec_malloc(stride * height);
     if (!pixels) return UIDIFF_PNG_ALLOC_FAILED;
     const bool rgb = data[25] == 2;
     const size_t input_stride = rgb ? 3 * (size_t)width : stride;
     const size_t extra = rgb ? stride + 1 : 0;
-    uint8_t *scratch = uidiff_stbi_malloc(INFLATE_CHUNK_BYTES + input_stride + 1 + extra);
+    uint8_t *scratch = uidiff_codec_malloc(INFLATE_CHUNK_BYTES + input_stride + 1 + extra);
     if (!scratch) {
-        uidiff_stbi_free(pixels);
+        uidiff_codec_free(pixels);
         return UIDIFF_PNG_ALLOC_FAILED;
     }
     png_rows rows = {pixels, scratch + INFLATE_CHUNK_BYTES, stride,
@@ -338,9 +338,9 @@ int uidiff_png_load(const uint8_t *data, size_t len, uint32_t width,
                      0, height, NULL};
     bool alloc_failed = false;
     const bool ok = inflate_rows(data, first, end, scratch, &rows, &alloc_failed);
-    uidiff_stbi_free(scratch);
+    uidiff_codec_free(scratch);
     if (!ok) {
-        uidiff_stbi_free(pixels);
+        uidiff_codec_free(pixels);
         return alloc_failed ? UIDIFF_PNG_ALLOC_FAILED : UIDIFF_PNG_FALLBACK;
     }
     *result = pixels;

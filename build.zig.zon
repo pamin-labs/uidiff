@@ -2,6 +2,10 @@
     .name = .uidiff,
     .version = "0.0.1",
     .dependencies = .{
+        .libjpeg_turbo = .{
+            .url = "https://github.com/libjpeg-turbo/libjpeg-turbo/archive/refs/tags/3.2.1.tar.gz",
+            .hash = "N-V-__8AAL7xjQAsKFHQ2Q7h0-6DvFs7HY_YB4yGMgxwP9GX",
+        },
         .libwebp = .{
             .url = "https://github.com/webmproject/libwebp/archive/refs/tags/v1.6.0.tar.gz",
             .hash = "N-V-__8AAGkrewARcKiSyLfJKsaW0ZoqHh4hzi4mTGwekxjk",

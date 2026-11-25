@@ -7,6 +7,7 @@ const Build = std.Build;
 
 /// Translated decoder headers: only the codec bindings import these.
 const Decoders = struct {
+    jpeg: *Build.Module,
     stb: *Build.Module,
     webp: *Build.Module,
     zlib: *Build.Module,
@@ -190,6 +191,7 @@ fn libraryOptions(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, d
         .link_libc = true,
         .imports = b.allocator.dupe(Build.Module.Import, &.{
             .{ .name = "stb_c", .module = decoders.stb },
+            .{ .name = "jpeg_c", .module = decoders.jpeg },
             .{ .name = "webp_c", .module = decoders.webp },
             .{ .name = "zlib_c", .module = decoders.zlib },
             .{ .name = "codec_memory", .module = decoders.memory },
@@ -220,6 +222,7 @@ fn addDecoderSources(b: *Build, module: *Build.Module, target: Build.ResolvedTar
     // codecs in the shipped binary. Checked builds keep their normal mode.
     const legacy_flags: []const []const u8 = if (mode != .checked) &.{"-Os"} else &.{};
     addStbDecoder(b, module, target, legacy_flags, x86_simd, mode == .shipped_lto);
+    addJpegDecoder(b, module, target, legacy_flags);
     const webp = b.dependency("libwebp", .{});
     module.addIncludePath(webp.path(""));
     // The binding requests RGBA only.
@@ -257,6 +260,154 @@ fn addDecoderSources(b: *Build, module: *Build.Module, target: Build.ResolvedTar
     }
 }
 
+fn addJpegDecoder(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, flags: []const []const u8) void {
+    const jpeg = b.dependency("libjpeg_turbo", .{});
+    const neon = target.result.cpu.arch == .aarch64 and
+        std.Target.aarch64.featureSetHas(target.result.cpu.features, .neon);
+    const files = b.addWriteFiles();
+    const headers = files.getDirectory();
+
+    // The wrapper always requests native-size 8-bit RGBA or CMYK.
+    _ = files.add("jconfig.h",
+        \\#ifndef UIDIFF_JCONFIG_H
+        \\#define UIDIFF_JCONFIG_H
+        \\#define JPEG_LIB_VERSION 62
+        \\#define MEM_SRCDST_SUPPORTED 1
+        \\#define BITS_IN_JSAMPLE 8
+        \\#ifdef _WIN32
+        \\#ifndef __RPCNDR_H__
+        \\typedef unsigned char boolean;
+        \\#endif
+        \\#define HAVE_BOOLEAN
+        \\#if !defined(_BASETSD_H_) && !defined(_BASETSD_H)
+        \\typedef short INT16;
+        \\typedef signed int INT32;
+        \\#endif
+        \\#define XMD_H
+        \\#endif
+        \\#endif
+    );
+    _ = files.add("jconfigint.h", b.fmt(
+        \\#ifndef UIDIFF_JCONFIGINT_H
+        \\#define UIDIFF_JCONFIGINT_H
+        \\#define BUILD "uidiff"
+        \\#define HIDDEN __attribute__((visibility("hidden")))
+        \\#define INLINE __inline__
+        \\#define THREAD_LOCAL __thread
+        \\#define PACKAGE_NAME "libjpeg-turbo"
+        \\#define VERSION "3.2.1"
+        \\#define SIZEOF_SIZE_T __SIZEOF_SIZE_T__
+        \\#if __SIZEOF_LONG__ == __SIZEOF_SIZE_T__
+        \\#define HAVE_BUILTIN_CTZL
+        \\#endif
+        \\#define FALLTHROUGH __attribute__((fallthrough));
+        \\#define SIMD_ARCHITECTURE {s}
+        \\{s}
+        \\#endif
+    , .{ if (neon) "ARM64" else "NONE", if (neon) "#define WITH_SIMD 1" else "" }));
+    module.addIncludePath(headers);
+    module.addIncludePath(jpeg.path("src"));
+    module.addIncludePath(jpeg.path("simd"));
+    module.addIncludePath(b.path("src/codec"));
+    const vendor_flags = std.mem.concat(b.allocator, []const u8, &.{
+        &codec_section_flags,                                                                                                                        &fuzz_coverage_flags, flags,
+        &.{ "-fvisibility=hidden", "-DNO_GETENV", "-include", b.root.joinString(b.allocator, "src/codec/jpeg_build_config.h") catch @panic("OOM") },
+    }) catch @panic("OOM");
+    module.addCSourceFile(.{ .file = b.path("src/codec/jpeg.c"), .flags = &(codec_section_flags ++ fuzz_coverage_flags) });
+    module.addCSourceFiles(.{ .root = jpeg.path("src"), .flags = vendor_flags, .files = &.{
+        "jcomapi.c",            "jdapimin.c",           "jdatasrc.c",           "jdhuff.c",
+        "jdinput.c",            "jdmarker.c",           "jdphuff.c",            "jmemmgr.c",
+        "wrapper/jdapistd-8.c", "wrapper/jdcoefct-8.c", "wrapper/jddctmgr-8.c", "wrapper/jdmainct-8.c",
+        "wrapper/jdpostct-8.c", "wrapper/jdsample-8.c", "wrapper/jidctint-8.c", "wrapper/jutils-8.c",
+    } });
+
+    // These generated edits only apply to the pinned upstream revision.
+    var master = readDependencySource(b, jpeg, "src/jdmaster.c");
+    for ([_]struct { []const u8, []const u8, usize }{
+        .{ "cinfo->data_precision == 8", "1", 4 },
+        .{ "cinfo->data_precision <= 8", "1", 6 },
+        .{ "cinfo->data_precision == 12", "0", 5 },
+        .{ "cinfo->data_precision <= 12", "0", 6 },
+    }) |edit| master = replaceExactly(b.allocator, master, edit[0], edit[1], edit[2]);
+    module.addCSourceFile(.{ .file = files.add("jdmaster.c", modifiedJpeg(b, master)), .flags = vendor_flags });
+
+    var backing = readDependencySource(b, jpeg, "src/jmemnobs.c");
+    backing = replaceExactly(b.allocator, backing, "#include \"jmemsys.h\"", "#include \"jpeg.h\"\n#include \"jmemsys.h\"", 1);
+    backing = replaceExactly(b.allocator, backing, "MALLOC(sizeofobject)", "uidiff_codec_malloc(sizeofobject)", 2);
+    backing = replaceExactly(b.allocator, backing, "free(object);", "uidiff_codec_free(object);", 2);
+    module.addCSourceFile(.{ .file = files.add("jmemnobs.c", modifiedJpeg(b, backing)), .flags = vendor_flags });
+
+    const colour = readDependencySource(b, jpeg, "src/jdcolor.c");
+    const colour_types = replaceRange(b, colour, "  switch (cinfo->out_color_space) {\n  case JCS_GRAYSCALE:", "  case JCS_CMYK:\n#ifdef D_LOSSLESS_SUPPORTED",
+        \\  switch (cinfo->out_color_space) {
+        \\  case JCS_EXT_RGBA:
+        \\    cinfo->out_color_components = 4;
+        \\    switch (cinfo->jpeg_color_space) {
+        \\    case JCS_YCbCr:
+        \\#ifdef WITH_SIMD
+        \\      if (jsimd_set_ycc_rgb(cinfo)) {
+        \\        cconvert->pub._color_convert = jsimd_color_deconvert;
+        \\        break;
+        \\      }
+        \\#endif
+        \\      cconvert->pub._color_convert = ycc_extrgbx_convert;
+        \\      build_ycc_rgb_table(cinfo);
+        \\      break;
+        \\    case JCS_GRAYSCALE:
+        \\      cconvert->pub._color_convert = gray_extrgbx_convert;
+        \\      break;
+        \\    case JCS_RGB:
+        \\      cconvert->pub._color_convert = rgb_extrgbx_convert;
+        \\      break;
+        \\    default:
+        \\      ERREXIT(cinfo, JERR_CONVERSION_NOTIMPL);
+        \\    }
+        \\    break;
+        \\
+        \\
+    );
+    const supported_colour = replaceRange(b, colour_types, "    /* Permit null conversion to same output space */", "\n  }\n\n  if (cinfo->quantize_colors)", "    ERREXIT(cinfo, JERR_CONVERSION_NOTIMPL);");
+    module.addCSourceFile(.{ .file = files.add("jdcolor.c", modifiedJpeg(b, supported_colour)), .flags = vendor_flags });
+
+    // Upstream's x86 paths need NASM. Its Arm64 paths use C intrinsics.
+    if (neon) addJpegNeon(b, jpeg, files, module, vendor_flags);
+}
+
+fn addJpegNeon(b: *Build, jpeg: *Build.Dependency, files: *Build.Step.WriteFile, module: *Build.Module, flags: []const []const u8) void {
+    var compat = readDependencySource(b, jpeg, "simd/arm/neon-compat.h.in");
+    for ([_][]const u8{ "HAVE_VLD1_S16_X3", "HAVE_VLD1_U16_X2", "HAVE_VLD1Q_U8_X4" }) |feature| {
+        compat = replaceExactly(b.allocator, compat, b.fmt("#cmakedefine {s}", .{feature}), b.fmt("#define {s} 1", .{feature}), 1);
+    }
+    _ = files.add("neon-compat.h", compat);
+    var dispatch = readDependencySource(b, jpeg, "simd/jsimd.c");
+    for ([_]struct { []const u8, []const u8 }{
+        .{ "HIDDEN unsigned int\njsimd_set_rgb_ycc(", "HIDDEN unsigned int\njsimd_set_ycc_rgb(" },
+        .{ "HIDDEN unsigned int\njsimd_set_ycc_rgb565(", "HIDDEN void\njsimd_color_deconvert(" },
+        .{ "HIDDEN unsigned int\njsimd_set_h2v1_downsample(", "HIDDEN unsigned int\njsimd_set_h2v1_upsample(" },
+        .{ "HIDDEN unsigned int\njsimd_set_h2v1_merged_upsample(", "HIDDEN unsigned int\njsimd_set_idct_islow(" },
+    }) |edit| dispatch = replaceRange(b, dispatch, edit[0], edit[1], "");
+    const tail = "HIDDEN unsigned int\njsimd_set_idct_ifast(";
+    if (std.mem.count(u8, dispatch, tail) != 1) @panic("pinned JPEG SIMD dispatch changed");
+    dispatch = dispatch[0..std.mem.indexOf(u8, dispatch, tail).?];
+    dispatch = replaceExactly(b.allocator, dispatch, "SET_SIMD_EXTRGB_COLOR_DECONVERTER(neon);", "cinfo->cconvert->color_convert_simd = jsimd_ycc_extrgbx_convert_neon;", 1);
+    module.addCSourceFile(.{ .file = files.add("jsimd.c", modifiedJpeg(b, dispatch)), .flags = flags });
+    module.addCSourceFiles(.{ .root = jpeg.path("simd/arm"), .flags = flags, .files = &.{
+        "aarch64/jsimdcpu.c", "jdcolor-neon.c", "jdsample-neon.c", "jidctint-neon.c",
+    } });
+}
+
+fn modifiedJpeg(b: *Build, source: []const u8) []const u8 {
+    return b.fmt("/* Copyright (c) 2026 uidiff contributors. Build-time adaptation for uidiff. */\n{s}", .{source});
+}
+
+fn replaceRange(b: *Build, source: []const u8, first: []const u8, last: []const u8, replacement: []const u8) []u8 {
+    if (std.mem.count(u8, source, first) != 1 or std.mem.count(u8, source, last) != 1)
+        @panic("pinned source range anchors changed");
+    const begin = std.mem.indexOf(u8, source, first).?;
+    const end = std.mem.indexOfPos(u8, source, begin + first.len, last) orelse @panic("pinned source end anchor changed");
+    return replaceExactly(b.allocator, source, source[begin..end], replacement, 1);
+}
+
 fn addStbDecoder(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, legacy_flags: []const []const u8, x86_simd: X86Simd, use_lto: bool) void {
     addZlibNg(b, module, target, x86_simd, use_lto);
     module.addIncludePath(b.dependency("stb", .{}).path(""));
@@ -275,26 +426,26 @@ fn addStbDecoder(b: *Build, module: *Build.Module, target: Build.ResolvedTarget,
 fn zlibHeaders(b: *Build, target: Build.ResolvedTarget) *Build.Step.WriteFile {
     const zlib = b.dependency("zlib_ng", .{});
     const files = b.addWriteFiles();
-    const api = replaceExactly(b.allocator, zlibSource(b, zlib, "zlib-ng.h.in"), "@ZLIB_SYMBOL_PREFIX@", "", 2);
+    const api = replaceExactly(b.allocator, readDependencySource(b, zlib, "zlib-ng.h.in"), "@ZLIB_SYMBOL_PREFIX@", "", 2);
     _ = files.add("zlib-ng.h", b.fmt("#define UIDIFF_PNG_COMPRESSION_LEVEL {d}\n#define UIDIFF_ZLIB_CRC {d}\n{s}", .{
         png_compression_level, @intFromBool(zlibPngCrc(target)), api,
     }));
-    const conf = zlibSource(b, zlib, "zconf-ng.h.in");
+    const conf = readDependencySource(b, zlib, "zconf-ng.h.in");
     _ = files.add("zconf-ng.h", if (target.result.os.tag == .windows) conf else replaceExactly(b.allocator, conf, "#ifdef HAVE_UNISTD_H", "#if 1", 1));
-    _ = files.add("zlib_name_mangling-ng.h", zlibSource(b, zlib, "zlib_name_mangling.h.empty"));
+    _ = files.add("zlib_name_mangling-ng.h", readDependencySource(b, zlib, "zlib_name_mangling.h.empty"));
     return files;
 }
 
-fn zlibSource(b: *Build, zlib: *Build.Dependency, name: []const u8) []u8 {
-    b.dependOnFileContents(zlib.path(name));
-    return zlib.builder.root.root_dir.handle.readFileAlloc(b.graph.io, b.pathJoin(&.{ zlib.builder.root.sub_path, name }), b.allocator, .limited(256 * 1024)) catch
-        @panic("cannot read pinned zlib-ng source");
+fn readDependencySource(b: *Build, dependency: *Build.Dependency, name: []const u8) []u8 {
+    b.dependOnFileContents(dependency.path(name));
+    return dependency.builder.root.root_dir.handle.readFileAlloc(b.graph.io, b.pathJoin(&.{ dependency.builder.root.sub_path, name }), b.allocator, .limited(256 * 1024)) catch
+        @panic("cannot read pinned decoder source");
 }
 
 // Only the PNG writer initializes this compressor. Preserve the selected
 // upstream level's tuning and drop the other compression strategies.
 fn zlibDeflate(b: *Build, zlib: *Build.Dependency) Build.LazyPath {
-    const source = zlibSource(b, zlib, "deflate.c");
+    const source = readDependencySource(b, zlib, "deflate.c");
     const table = std.mem.indexOf(u8, source, "static const config configuration_table[10] = {") orelse @panic("zlib-ng level table changed");
     const medium = std.mem.indexOfPos(u8, source, table, "#else\n/* 3 */") orelse @panic("zlib-ng medium strategy changed");
     const tag = b.fmt("/* {d} */ ", .{png_compression_level});
@@ -319,7 +470,7 @@ fn zlibDeflate(b: *Build, zlib: *Build.Dependency) Build.LazyPath {
 // Gzip is disabled, but the upstream dispatcher publishes gzip folding
 // callbacks by default. Drop those references while preserving its ABI.
 fn zlibDispatch(b: *Build, zlib: *Build.Dependency) Build.LazyPath {
-    const source = zlibSource(b, zlib, "functable.c");
+    const source = readDependencySource(b, zlib, "functable.c");
     const first = std.mem.indexOf(u8, source, "static void crc32_fold_stub(") orelse @panic("zlib-ng dispatch stubs changed");
     const last = std.mem.indexOfPos(u8, source, first, "static void inflate_fast_stub(") orelse @panic("zlib-ng dispatch stubs changed");
     var text = replaceExactly(b.allocator, source, source[first..last], "", 1);
@@ -344,7 +495,7 @@ fn zlibDispatch(b: *Build, zlib: *Build.Dependency) Build.LazyPath {
 
 fn replaceExactly(allocator: std.mem.Allocator, text: []const u8, from: []const u8, to: []const u8, expected_count: usize) []u8 {
     if (std.mem.count(u8, text, from) != expected_count)
-        std.debug.panic("pinned zlib-ng edit expected {d} matches for {s}", .{ expected_count, from });
+        std.debug.panic("pinned decoder edit expected {d} matches for {s}", .{ expected_count, from });
     return std.mem.replaceOwned(u8, allocator, text, from, to) catch @panic("OOM");
 }
 
@@ -472,12 +623,14 @@ fn addWebpAllocator(b: *Build, module: *Build.Module, webp: *Build.Dependency, f
 fn addDecoders(b: *Build, target: Build.ResolvedTarget) Decoders {
     const webp = b.dependency("libwebp", .{});
     const stb = b.dependency("stb", .{});
+    const jpeg_c = b.addTranslateC(.{ .root_source_file = b.path("src/codec/jpeg.h"), .target = target, .optimize = codec_mode });
     const stb_c = b.addTranslateC(.{ .root_source_file = b.path("src/codec/stb.h"), .target = target, .optimize = codec_mode });
     stb_c.addIncludePath(stb.path(""));
     stb_c.defineCMacro("STBI_NO_STDIO", null);
     const webp_c = b.addTranslateC(.{ .root_source_file = webp.path("src/webp/decode.h"), .target = target, .optimize = codec_mode });
     const zlib_c = b.addTranslateC(.{ .root_source_file = zlibHeaders(b, target).getDirectory().path(b, "zlib-ng.h"), .target = target, .optimize = codec_mode });
     return .{
+        .jpeg = jpeg_c.createModule(),
         .stb = stb_c.createModule(),
         .webp = webp_c.createModule(),
         .zlib = zlib_c.createModule(),
@@ -636,6 +789,7 @@ fn fixtureGenerator(b: *Build, target: Build.ResolvedTarget, decoders: Decoders)
     const library = b.createModule(libraryOptions(b, target, optimize, decoders));
     const codecs = b.createModule(.{ .target = target, .optimize = codec_mode, .link_libc = true });
     addStbDecoder(b, codecs, target, &.{}, .shipped, false);
+    addJpegDecoder(b, codecs, target, &.{"-Os"});
     codecs.addIncludePath(webp.path(""));
     const config = b.addWriteFiles();
     _ = config.add("src/webp/config.h", "/* Use the same scalar encoder on every host. */\n");

@@ -47,14 +47,13 @@ pub fn failure() Error {
     };
 }
 
-// stb's allocation hooks, which stb.c names in STBI_MALLOC, STBI_REALLOC and
-// STBI_FREE.
-export fn uidiff_stbi_malloc(len: usize) callconv(.c) ?*anyopaque {
+// Allocation hooks shared by the C PNG and JPEG decoders.
+export fn uidiff_codec_malloc(len: usize) callconv(.c) ?*anyopaque {
     return allocate(current orelse return null, len);
 }
 
-export fn uidiff_stbi_realloc(data: ?*anyopaque, len: usize) callconv(.c) ?*anyopaque {
-    const old = data orelse return uidiff_stbi_malloc(len);
+export fn uidiff_codec_realloc(data: ?*anyopaque, len: usize) callconv(.c) ?*anyopaque {
+    const old = data orelse return uidiff_codec_malloc(len);
     const found = blockOf(old);
     if (len > found.prefix.len and len - found.prefix.len > remaining) return refuse(.over_budget);
     const total = std.math.add(usize, prefix_size, len) catch return refuse(.over_budget);
@@ -72,7 +71,7 @@ export fn uidiff_stbi_realloc(data: ?*anyopaque, len: usize) callconv(.c) ?*anyo
     return block + prefix_size;
 }
 
-export fn uidiff_stbi_free(data: ?*anyopaque) callconv(.c) void {
+export fn uidiff_codec_free(data: ?*anyopaque) callconv(.c) void {
     const found = blockOf(data orelse return);
     // A buffer freed after its call, such as returned pixels, credits a budget
     // that the next call resets.
@@ -94,7 +93,7 @@ export fn uidiff_webp_calloc(count: usize, size: usize) callconv(.c) ?*anyopaque
 }
 
 export fn uidiff_webp_free(data: ?*anyopaque) callconv(.c) void {
-    uidiff_stbi_free(data);
+    uidiff_codec_free(data);
 }
 
 fn refuse(reason: Refusal) ?*anyopaque {
@@ -135,15 +134,15 @@ test "blocks handed to stb are freed through the allocator that made them" {
     var moving: std.testing.FailingAllocator = .init(std.testing.allocator, .{ .resize_fail_index = 0 });
     begin(moving.allocator(), 64);
     defer current = null;
-    const block: [*]u8 = @ptrCast(uidiff_stbi_malloc(3) orelse return error.OutOfMemory);
+    const block: [*]u8 = @ptrCast(uidiff_codec_malloc(3) orelse return error.OutOfMemory);
     @memcpy(block[0..3], "abc");
-    const grown: [*]u8 = @ptrCast(uidiff_stbi_realloc(block, 64) orelse return error.OutOfMemory);
+    const grown: [*]u8 = @ptrCast(uidiff_codec_realloc(block, 64) orelse return error.OutOfMemory);
     try std.testing.expectEqualStrings("abc", grown[0..3]);
     try std.testing.expectEqual(@as(usize, 0), remaining);
-    try std.testing.expectEqual(@as(?*anyopaque, null), uidiff_stbi_realloc(grown, 65));
+    try std.testing.expectEqual(@as(?*anyopaque, null), uidiff_codec_realloc(grown, 65));
     try std.testing.expectEqual(error.ImageTooLarge, failure());
-    uidiff_stbi_free(grown);
-    uidiff_stbi_free(null);
+    uidiff_codec_free(grown);
+    uidiff_codec_free(null);
     try std.testing.expectEqual(@as(usize, 64), remaining);
 }
 

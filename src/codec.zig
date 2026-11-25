@@ -321,6 +321,7 @@ test "reading a file releases each allocation on failure" {
 }
 
 test {
+    std.testing.refAllDecls(jpeg);
     std.testing.refAllDecls(stb);
     std.testing.refAllDecls(webp);
     std.testing.refAllDecls(png);

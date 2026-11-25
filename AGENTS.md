@@ -19,7 +19,7 @@ Follow the public pamin-labs/skills engineering rules in [core](.agents/skills/p
 
 - `src/root.zig` exposes the public library. It imports only module roots: the files beside each layer directory.
 - `src/value.zig` and `src/value/` hold shared values and the image and memory bounds. Value modules depend only on other values and the standard library.
-- `src/codec.zig` and `src/codec/` handle format detection, bounded file reads, dimension and memory-budget checks, decoding and PNG encoding. Only `src/codec/stb.zig` imports the translated stb_image header and only `src/codec/webp.zig` the translated libwebp decoder header; the encoder headers are translated separately for the fixture generator, so the shipped library never includes them.
+- `src/codec.zig` and `src/codec/` handle format detection, bounded file reads, dimension and memory-budget checks, decoding and PNG encoding. Only `src/codec/stb.zig` imports the translated stb_image header, only `src/codec/jpeg.zig` the translated libjpeg-turbo bridge, and only `src/codec/webp.zig` the translated libwebp decoder header; the encoder headers are translated separately for the fixture generator, so the shipped library never includes them.
 - `src/diff.zig` and `src/diff/` compare pixels, align rows, and produce regions. `src/annotate.zig` and `src/annotate/` number and place labels and draw the annotated sheet. `src/report.zig` owns the versioned JSON report.
 - `src/files.zig` is the file pipeline: it checks the options once, decodes both files, compares them and writes the sheet atomically. The CLI calls it and only translates.
 - `src/cli.zig` is the CLI entry and `src/cli/` its argument syntax and usage text.
@@ -47,11 +47,12 @@ Named build modules, and the only files that may import them. The `export` row n
 | Module | Importers |
 | --- | --- |
 | `stb_c` | `src/codec/stb.zig` |
+| `jpeg_c` | `src/codec/jpeg.zig` |
 | `webp_c` | `src/codec/webp.zig` |
 | `zlib_c` | `src/codec/png.zig` |
 | `stb_write_c` | `tests/fixtures/encode.zig` |
 | `webp_encode_c` | `tests/fixtures/encode.zig` |
-| `codec_memory` | `src/codec.zig` `src/codec/stb.zig` `src/codec/webp.zig` `tests/fixtures/encode.zig` |
+| `codec_memory` | `src/codec.zig` `src/codec/stb.zig` `src/codec/jpeg.zig` `src/codec/webp.zig` `tests/fixtures/encode.zig` |
 | `fixtures` | `tests/e2e.zig` `tests/decode.zig` `tests/fuzz/` |
 | `e2e_options` | `tests/e2e.zig` |
 | `fixture_options` | `tests/fixtures/fresh.zig` |
@@ -59,7 +60,7 @@ Named build modules, and the only files that may import them. The `export` row n
 
 ## Decoders
 
-The noninterlaced RGB8 and RGBA8 PNG path uses zlib-ng to inflate scanlines into the output image. The PNG writer streams through zlib-ng at level 4. stb_image decodes other PNG profiles and JPEG, and libwebp decodes WebP. The shipped binary builds the PNG streaming path for speed and the other C decoders for size; tests and fuzzing compile them inside the Zig module, in its mode, so UBSan traps undefined behaviour in Debug and safe builds. Under `zig build test --fuzz` the decoders run on fuzzed input but without coverage feedback: Zig 0.17's fuzzer cannot read clang's coverage tables, so `fuzz_coverage_flags` in `build.zig` turns clang's instrumentation off, and only the Zig code steers the fuzzer. The shared allocation hooks in `src/codec/memory.zig` charge each decode against its budget. stb's budget is sized from the header, and libwebp's includes the decoded pixel buffer and scratch allocations.
+The noninterlaced RGB8 and RGBA8 PNG path uses zlib-ng to inflate scanlines into the output image. The PNG writer streams through zlib-ng at level 4. stb_image decodes other PNG profiles. libjpeg-turbo decodes 8-bit JPEG with the accurate integer IDCT and fancy chroma upsampling. Its Arm64 build uses C NEON intrinsics. libwebp decodes WebP. The shipped binary builds the PNG streaming path for speed and the other C decoders for size; tests and fuzzing compile them inside the Zig module, in its mode, so UBSan traps undefined behaviour in Debug and safe builds. Under `zig build test --fuzz` the decoders run on fuzzed input but without coverage feedback: Zig 0.17's fuzzer cannot read clang's coverage tables, so `fuzz_coverage_flags` in `build.zig` turns clang's instrumentation off, and only the Zig code steers the fuzzer. The shared allocation hooks in `src/codec/memory.zig` charge each decode against its budget. stb's PNG budget is sized from the header. JPEG and WebP charge their decoded buffers and scratch allocations against the caller's cap.
 
 ## Gates
 

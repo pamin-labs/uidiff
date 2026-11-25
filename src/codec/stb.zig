@@ -1,4 +1,4 @@
-//! Binds the in-memory PNG and JPEG decoder. Its allocations go through the
+//! Binds the in-memory PNG decoder. Its allocations go through the
 //! caller's allocator and are charged against a budget sized from the header.
 const std = @import("std");
 const c = @import("stb_c");
@@ -20,12 +20,10 @@ pub const Header = struct {
 pub const DecodeError = values.Image.Invalid || Allocator.Error || error{ImageTooLarge};
 
 /// Full-image buffers stb holds at once, each RGBA at the source sample depth.
-/// A progressive JPEG with four components holds two coefficient bytes and
-/// one plane byte per sample beside the RGBA output, which is four buffers.
 const live_images = 4;
-/// stb pads JPEG planes to whole blocks, at most 32 pixels on each axis.
+/// Round the budget's image dimensions up to a conservative block boundary.
 const block_pixels = 32;
-/// Headroom for stb's JPEG context and per-row buffers of up to four components.
+/// Headroom for the decoder context and per-row scratch.
 const fixed_bytes = 1024 * 1024;
 
 /// Returns dimensions and sample depth without decoding the pixels.
@@ -138,8 +136,7 @@ fn size(width: c_int, height: c_int) DecodeError!Size {
 }
 
 // stb replaces a failed format probe's reason with "unknown image type".
-// Read PNG dimensions on that error path. JPEG SOF dimensions fit u16,
-// so they cannot exceed the current extent limit.
+// Read PNG dimensions on that error path.
 fn oversizedPng(bytes: []const u8) bool {
     if (bytes.len < png_format.header_bytes or !std.mem.startsWith(u8, bytes, png_format.header_prefix)) return false;
     const offset = png_format.dimensions_offset;
