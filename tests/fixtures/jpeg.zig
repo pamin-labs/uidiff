@@ -12,12 +12,16 @@ pub const Encoding = struct {
 pub const Profile = struct {
     name: []const u8,
     file: []const u8,
-    encoded: []const u8,
     rgba_sha256: []const u8,
     encoding: Encoding,
 
+    /// Embeds the fixture only in a consumer that reads its encoded bytes.
+    pub fn encoded(comptime self: Profile) []const u8 {
+        return @embedFile("jpeg/" ++ self.file);
+    }
+
     fn load(comptime name: []const u8, comptime file: []const u8, comptime rgba_sha256: []const u8, encoding: Encoding) Profile {
-        return .{ .name = name, .file = file, .encoded = @embedFile("jpeg/" ++ file), .rgba_sha256 = rgba_sha256, .encoding = encoding };
+        return .{ .name = name, .file = file, .rgba_sha256 = rgba_sha256, .encoding = encoding };
     }
 };
 

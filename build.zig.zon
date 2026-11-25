@@ -21,14 +21,15 @@
     },
     .minimum_zig_version = "0.17.1",
     // What a consumer of the package downloads: the library and its build.
-    // build.zig imports the fixture case table, so its two declaration files
-    // ship; the tests, the fixture images and the benchmark do not.
+    // The build imports fixture metadata. Encoded samples are embedded only
+    // by the tests, so the source package omits the images and runners.
     .paths = .{
         "build.zig",
         "build.zig.zon",
         "src",
         "tests/fixtures.zig",
         "tests/fixtures/cases.zig",
+        "tests/fixtures/jpeg.zig",
         "LICENSE",
         "README.md",
         "THIRD_PARTY_NOTICES",

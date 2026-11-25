@@ -33,10 +33,10 @@ test "JPEG profiles match the pinned scalar encoder byte for byte" {
     const allocator = std.testing.allocator;
     var generated = try std.Io.Dir.cwd().openDir(io, options.jpeg_generated, .{});
     defer generated.close(io);
-    for (jpeg.profiles) |profile| {
+    inline for (jpeg.profiles) |profile| {
         const fresh = try generated.readFileAlloc(io, profile.file, allocator, .limited(max_fixture_bytes));
         defer allocator.free(fresh);
-        if (!std.mem.eql(u8, fresh, profile.encoded)) {
+        if (!std.mem.eql(u8, fresh, profile.encoded())) {
             std.debug.print("{s}/{s} is stale; run zig build jpeg-fixtures\n", .{ jpeg.directory, profile.file });
             return error.StaleFixture;
         }

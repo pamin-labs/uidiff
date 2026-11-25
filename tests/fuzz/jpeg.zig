@@ -13,6 +13,12 @@ const last_frame = 0xc2;
 const frame_marker_prefix = 0xff;
 const segment_length_bytes = @sizeOf(u16);
 
+const encoded_profiles = blk: {
+    var encoded: [fixtures.jpeg.profiles.len][]const u8 = undefined;
+    for (fixtures.jpeg.profiles, &encoded) |profile, *bytes| bytes.* = profile.encoded();
+    break :blk encoded;
+};
+
 fn frameFields(bytes: []const u8) struct { start: u16, end: u16 } {
     // These seeds come from the generator and have exactly one SOF.
     var offset: u16 = soi_bytes;
@@ -29,7 +35,7 @@ fn frameFields(bytes: []const u8) struct { start: u16, end: u16 } {
 }
 
 fn fuzzJpeg(_: void, smith: *testing.Smith) !void {
-    const seed = fixtures.jpeg.profiles[smith.valueRangeAtMost(u8, 0, fixtures.jpeg.profiles.len - 1)].encoded;
+    const seed = encoded_profiles[smith.valueRangeAtMost(u8, 0, encoded_profiles.len - 1)];
     const frame = frameFields(seed);
     var bytes: [max_fuzz_bytes]u8 = undefined;
     @memcpy(bytes[0..seed.len], seed);

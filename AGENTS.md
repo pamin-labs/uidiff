@@ -86,6 +86,7 @@ The noninterlaced RGB8 and RGBA8 PNG path uses zlib-ng to inflate scanlines into
 - `zig build -Doptimize=safe` and `zig build test` from an empty dependency and global cache
 - `zig build install size -Doptimize=safe -Dtarget=<target>` for each target in `.github/release-targets.json`
 - After building the CLI, run `python3 -B scripts/release/test_launcher.py` and the offline installer test for your platform, `sh scripts/release/test_install.sh` or `pwsh -File scripts/release/test_install.ps1`.
+- `python3 -B scripts/release/test_source_package.py` after the release build to compile the files published by the Zig source package.
 - Run `actionlint` and `shellcheck install.sh scripts/release/test_install.sh` for release changes. Before the first automated npm release, each npm package needs a trusted publisher for `release.yml`.
 
 `zig build test` fails when the committed fixtures differ from a fresh generation. `zig build fixtures` regenerates them on the host. `zig build fixture-generator -Dtarget=<target>` builds the generator for a target without running it.
