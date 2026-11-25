@@ -4,7 +4,7 @@ const builtin = @import("builtin");
 const values = @import("../value.zig");
 const png_format = @import("png_format.zig");
 const stb = @import("stb.zig");
-const memory = @import("codec_memory");
+const scanlines = @import("png_scanlines.zig");
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
 const zlib = @import("zlib_c");
@@ -109,9 +109,6 @@ const BorrowedRows = struct {
     }
 };
 
-const bit_depth = 8;
-const rgb_color = 2;
-const rgba_color = 6;
 /// Up filtering turns stationary areas into runs of zero bytes.
 const up_filter = 2;
 const sub_filter = 1;
@@ -135,7 +132,7 @@ pub fn decode(allocator: Allocator, bytes: []const u8, header: stb.Header, cap: 
 
 /// Recognizes noninterlaced RGB8 and RGBA8 without decoding the image.
 pub fn streamingHeader(bytes: []const u8) bool {
-    return zlib.uidiff_png_stream_header(bytes.ptr, bytes.len) != 0;
+    return scanlines.streamingHeader(bytes);
 }
 
 /// Runs bounded scanline decoding. Null requests the legacy fallback.
@@ -163,7 +160,7 @@ pub fn writeRows(allocator: Allocator, size: values.Size, source: anytype, outpu
     // Valid images have at most max_extent pixels per axis, which fits u32.
     std.mem.writeInt(u32, header[0..4], @intCast(size.width), .big);
     std.mem.writeInt(u32, header[4..8], @intCast(size.height), .big);
-    header[8..13].* = .{ bit_depth, if (rgb_only) rgb_color else rgba_color, 0, 0, 0 };
+    header[8..13].* = .{ png_format.sample_depth, if (rgb_only) png_format.rgb_color else png_format.rgba_color, 0, 0, 0 };
     try chunk(output, png_format.header_type, &header);
 
     const row_bytes = size.width * @sizeOf(values.Pixel);
@@ -337,14 +334,7 @@ fn loadPixels(bytes: []const u8, size: values.Size) DecodeError![*]values.Pixel 
 }
 
 fn streamPixels(bytes: []const u8, dimensions: values.Size) DecodeError!?[*]values.Pixel {
-    const width = std.math.cast(u32, dimensions.width) orelse return error.ImageTooLarge;
-    const height = std.math.cast(u32, dimensions.height) orelse return error.ImageTooLarge;
-    var pixels: [*c]u8 = null;
-    switch (zlib.uidiff_png_load(bytes.ptr, bytes.len, width, height, &pixels)) {
-        zlib.UIDIFF_PNG_DECODED => return if (pixels != null) @ptrCast(pixels) else error.InvalidImage,
-        zlib.UIDIFF_PNG_ALLOC_FAILED => return memory.failure(),
-        else => return null,
-    }
+    return scanlines.decode(bytes, dimensions);
 }
 
 fn encodeOnce(allocator: Allocator, image: Image) !void {
@@ -362,7 +352,7 @@ fn writeTestPng(allocator: Allocator, out: *Writer, size: values.Size, color: u8
     var header: [png_format.header_data_bytes]u8 = @splat(0);
     std.mem.writeInt(u32, header[0..4], @intCast(size.width), .big);
     std.mem.writeInt(u32, header[4..8], @intCast(size.height), .big);
-    header[8] = bit_depth;
+    header[8] = png_format.sample_depth;
     header[9] = color;
     try chunk(out, png_format.header_type, &header);
     var staging: [chunk_bytes]u8 = undefined;
@@ -422,8 +412,8 @@ fn fuzzStreamingRows(_: void, smith: *std.testing.Smith) !void {
     const width = smith.valueRangeAtMost(u8, 1, 12);
     const height = smith.valueRangeAtMost(u8, 1, 8);
     const size: values.Size = .{ .width = width, .height = height };
-    const color: u8 = if (smith.value(bool)) rgb_color else rgba_color;
-    const channels: usize = if (color == rgb_color) 3 else 4;
+    const color: u8 = if (smith.value(bool)) png_format.rgb_color else png_format.rgba_color;
+    const channels: usize = if (color == png_format.rgb_color) 3 else 4;
     var rows: [8 * (1 + 12 * 4)]u8 = undefined;
     const valid = rows[0 .. size.height * (1 + size.width * channels)];
     const length = if (smith.value(bool)) smith.slice(valid) else complete: {
@@ -476,10 +466,10 @@ test "encoding releases each allocation on failure" {
 }
 
 test "PNG filters preserve RGB8 and RGBA8 across streaming and fallback" {
-    try checkTestFilters(3, rgb_color, &.{ 3, 3, 0 });
-    try checkTestFilters(4, rgba_color, &.{ 3, 3, 0 });
-    try checkTestFilters(3, rgb_color, &.{ 3, 0, 5 });
-    try checkTestFilters(4, rgba_color, &.{ 3, 0, 5 });
+    try checkTestFilters(3, png_format.rgb_color, &.{ 3, 3, 0 });
+    try checkTestFilters(4, png_format.rgba_color, &.{ 3, 3, 0 });
+    try checkTestFilters(3, png_format.rgb_color, &.{ 3, 0, 5 });
+    try checkTestFilters(4, png_format.rgba_color, &.{ 3, 0, 5 });
 }
 
 test "RGB8 transparent colour keys use the legacy decoder" {
@@ -487,7 +477,7 @@ test "RGB8 transparent colour keys use the legacy decoder" {
     const raw = [_]u8{ 0, 23, 57, 91 };
     var png: Writer.Allocating = .init(allocator);
     defer png.deinit();
-    try writeTestPng(allocator, &png.writer, .{ .width = 1, .height = 1 }, rgb_color, &raw);
+    try writeTestPng(allocator, &png.writer, .{ .width = 1, .height = 1 }, png_format.rgb_color, &raw);
 
     var keyed: Writer.Allocating = .init(allocator);
     defer keyed.deinit();
@@ -503,7 +493,7 @@ test "RGB8 transparent colour keys use the legacy decoder" {
     try std.testing.expectEqual(values.Pixel{ raw[1], raw[2], raw[3], 0 }, pixels[0]);
 }
 
-test "the C streaming probe agrees with the PNG header layout" {
+test "the streaming probe agrees with the PNG header layout" {
     var header: [png_format.header_bytes]u8 = @splat(0);
     @memcpy(header[0..png_format.header_prefix.len], png_format.header_prefix);
     const offset = png_format.dimensions_offset;
@@ -512,10 +502,10 @@ test "the C streaming probe agrees with the PNG header layout" {
     const profile = header[offset + 2 * @sizeOf(u32) ..];
     const depth, const colour, const interlace = .{ 0, 1, 4 };
     profile[depth] = 8;
-    profile[colour] = rgba_color;
+    profile[colour] = png_format.rgba_color;
     try std.testing.expect(streamingHeader(&header));
     try std.testing.expect(!streamingHeader(header[0 .. header.len - 1]));
-    profile[colour] = rgb_color;
+    profile[colour] = png_format.rgb_color;
     try std.testing.expect(streamingHeader(&header));
     profile[depth] = 16;
     try std.testing.expect(!streamingHeader(&header));
@@ -525,7 +515,7 @@ test "the C streaming probe agrees with the PNG header layout" {
     profile[interlace] = 0;
     profile[colour] = 3;
     try std.testing.expect(!streamingHeader(&header));
-    profile[colour] = rgba_color;
+    profile[colour] = png_format.rgba_color;
     for (0..png_format.header_prefix.len) |i| {
         header[i] ^= 1;
         try std.testing.expect(!streamingHeader(&header));

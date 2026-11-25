@@ -14,6 +14,17 @@ pub const header_bytes = header_prefix.len + header_data_bytes;
 /// Offset of the big-endian 32-bit width and height.
 pub const dimensions_offset = signature.len + @sizeOf(u32) + header_type.len;
 
+/// First field after the two dimensions.
+pub const profile_offset = dimensions_offset + 2 * @sizeOf(u32);
+/// Offset of the PNG colour type byte.
+pub const color_offset = profile_offset + 1;
+/// Bits per channel in the RGB8 and RGBA8 profiles.
+pub const sample_depth = 8;
+/// PNG colour type with red, green and blue channels.
+pub const rgb_color = 2;
+/// PNG colour type with red, green, blue and alpha channels.
+pub const rgba_color = 6;
+
 test {
     std.testing.refAllDecls(@This());
 }

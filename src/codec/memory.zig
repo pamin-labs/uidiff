@@ -48,7 +48,8 @@ pub fn failure() Error {
 }
 
 // Allocation hooks shared by the C codecs.
-export fn uidiff_codec_malloc(len: usize) callconv(.c) ?*anyopaque {
+/// Allocates an unfilled block charged to the current codec budget.
+pub export fn uidiff_codec_malloc(len: usize) callconv(.c) ?*anyopaque {
     return allocate(current orelse return null, len);
 }
 
@@ -71,7 +72,8 @@ export fn uidiff_codec_realloc(data: ?*anyopaque, len: usize) callconv(.c) ?*any
     return block + prefix_size;
 }
 
-export fn uidiff_codec_free(data: ?*anyopaque) callconv(.c) void {
+/// Releases a block allocated by the codec budget.
+pub export fn uidiff_codec_free(data: ?*anyopaque) callconv(.c) void {
     const found = blockOf(data orelse return);
     // A buffer freed after its call, such as returned pixels, credits a budget
     // that the next call resets.
