@@ -237,6 +237,17 @@ pub fn hasRegion(found: []const values.Region, side: values.Side, x: usize, y: u
     return false;
 }
 
+/// Finds a two-sided mark that excludes the body of a nearby edit.
+pub fn hasSeparateMark(found: []const values.Region, x: usize, y: usize, body_x: usize, body_y: usize) bool {
+    if (!hasRegion(found, .after, body_x, body_y, null)) return false;
+    for (found, 0..) |_, index| {
+        const mark = found[index..][0..1];
+        if (hasRegion(mark, .before, x, y, null) and hasRegion(mark, .after, x, y, null) and
+            !hasRegion(mark, .after, body_x, body_y, null)) return true;
+    }
+    return false;
+}
+
 /// Adds the normal report padding to an expected test box.
 pub fn paddedBox(x: usize, y: usize, w: usize, h: usize) values.Box {
     const region_padding = regions.padding.count();

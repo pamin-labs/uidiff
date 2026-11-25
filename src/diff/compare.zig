@@ -168,6 +168,14 @@ pub fn compareChecked(allocator: Allocator, before: Image, after: Image, options
     if (collector.len > 1) collector.len = regions.mergeLogical(storage[0..collector.len], before, after, options.scale, moves.items);
     collector.len = regions.mergeTabSelection(storage[0..collector.len], before, after, options.scale);
     if (moves.items.len == 0) regions.pairCardGrid(storage[0..collector.len], before, after, options.scale);
+    if (collector.len == 1 and moves.items.len == 0 and storage.len > 1) {
+        if (regions.shadeMarginEdit(storage[0].region, before, after, options.scale)) |mark| {
+            // This smaller edit has independent evidence inside the shaded
+            // extent. It must bypass the normal nearby-box merger.
+            storage[1] = .{ .region = mark, .pixels = storage[0].pixels };
+            collector.len = 2;
+        }
+    }
     const out = try allocator.alloc(values.Region, collector.len);
     errdefer allocator.free(out);
     for (out, storage[0..collector.len]) |*region, box| region.* = box.region;
@@ -2760,21 +2768,6 @@ test "a dimmed viewport with a new opaque center pane is an inserted overlay" {
     try std.testing.expectEqual(Kind.removed, hidden.regions[0].kind);
 }
 
-test "a local opaque panel with a new shadow is inserted over existing content" {
-    const before = try sample.Canvas.init(256, 144);
-    defer before.deinit();
-    const after = try sample.Canvas.init(256, 144);
-    defer after.deinit();
-    before.line(54, 160, 62, 1, 64);
-    after.fill(22, 50, 196, 46, sample.inkShade(220, 4));
-    after.fill(28, 54, 184, 32, sample.inkShade(36, 4));
-    after.line(48, 145, 64, 2, 210);
-    const result = try compareCanvases(before, after, 1);
-    defer result.deinit(std.testing.allocator);
-    try std.testing.expectEqual(@as(usize, 1), result.regions.len);
-    try std.testing.expectEqual(Kind.inserted, result.regions[0].kind);
-}
-
 test "a colored edit next to a floating panel remains visible on both sides" {
     const before = try sample.Canvas.init(256, 144);
     defer before.deinit();
@@ -2786,7 +2779,7 @@ test "a colored edit next to a floating panel remains visible on both sides" {
     after.fill(22, 50, 18, 4, .{ 168, 31, 48, 255 });
     const result = try compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
-    try std.testing.expect(sample.hasRegion(result.regions, .before, 26, 52, .changed));
+    try std.testing.expect(sample.hasSeparateMark(result.regions, 26, 52, 100, 70));
 }
 
 test "audit: a gray label turning black beside a toast remains two-sided" {
@@ -2794,15 +2787,13 @@ test "audit: a gray label turning black beside a toast remains two-sided" {
     defer before.deinit();
     const after = try sample.Canvas.init(256, 144);
     defer after.deinit();
-    const bounds = Box.fromPixels(22, 50, 196, 46);
     before.fill(28, 88, 18, 5, .{ 136, 136, 136, 255 });
     after.fill(22, 50, 196, 46, .{ 220, 220, 220, 255 });
     after.fill(28, 54, 184, 32, .{ 36, 36, 36, 255 });
     after.fill(28, 88, 18, 5, .{ 0, 0, 0, 255 });
-    var edit: Region = .{ .before = bounds, .after = bounds };
-    regions.classifyOverlay(&edit, before.view, after.view, .one);
-    try std.testing.expectEqual(@as(?Box, bounds), edit.before);
-    try std.testing.expectEqual(@as(?Box, bounds), edit.after);
+    const result = try compareCanvases(before, after, 1);
+    defer result.deinit(std.testing.allocator);
+    try std.testing.expect(sample.hasSeparateMark(result.regions, 34, 90, 110, 75));
 }
 
 test "round 25 audit: a darkened gray label cannot set its own shadow transmission" {
@@ -2810,30 +2801,13 @@ test "round 25 audit: a darkened gray label cannot set its own shadow transmissi
     defer before.deinit();
     const after = try sample.Canvas.init(256, 144);
     defer after.deinit();
-    const bounds = Box.fromPixels(22, 50, 196, 46);
     before.fill(28, 88, 18, 5, .{ 136, 136, 136, 255 });
     after.fill(22, 50, 196, 46, .{ 230, 230, 230, 255 });
     after.fill(28, 54, 184, 32, .{ 36, 36, 36, 255 });
     after.fill(28, 88, 18, 5, .{ 115, 115, 115, 255 });
-    var edit: Region = .{ .before = bounds, .after = bounds };
-    regions.classifyOverlay(&edit, before.view, after.view, .one);
-    try std.testing.expectEqual(@as(?Box, bounds), edit.before);
-    try std.testing.expectEqual(@as(?Box, bounds), edit.after);
-}
-
-test "round 25 audit: antialiased fill on the rim of a new toast still allows insertion" {
-    const before = try sample.Canvas.init(256, 144);
-    defer before.deinit();
-    const after = try sample.Canvas.init(256, 144);
-    defer after.deinit();
-    const bounds = Box.fromPixels(22, 50, 196, 46);
-    after.fill(22, 50, 196, 46, .{ 230, 230, 230, 255 });
-    after.fill(28, 54, 184, 32, .{ 35, 55, 75, 255 });
-    after.fill(28, 86, 184, 1, .{ 145, 155, 165, 255 });
-    var edit: Region = .{ .before = bounds, .after = bounds };
-    regions.classifyOverlay(&edit, before.view, after.view, .one);
-    try std.testing.expect(edit.before == null);
-    try std.testing.expectEqual(@as(?Box, bounds), edit.after);
+    const result = try compareCanvases(before, after, 1);
+    defer result.deinit(std.testing.allocator);
+    try std.testing.expect(sample.hasSeparateMark(result.regions, 34, 90, 110, 75));
 }
 
 test "round 25 audit: narrow, edge-touching and gradient panels retain the old side" {
@@ -2841,13 +2815,12 @@ test "round 25 audit: narrow, edge-touching and gradient panels retain the old s
     defer before.deinit();
     const after = try sample.Canvas.init(300, 164);
     defer after.deinit();
-    const bounds = Box.fromPixels(18, 48, 264, 72);
     const background: values.Pixel = .{ 240, 240, 240, 255 };
     for ([_]enum { narrow, edge, gradient }{ .narrow, .edge, .gradient }) |profile| {
         @memset(before.pixels, background);
         @memset(after.pixels, background);
         after.fill(18, 48, 264, 72, .{ 225, 225, 225, 255 });
-        after.fill(30, 54, 240, 52, .{ 52, 32, 62, 255 });
+        after.fill(30, 54, 240, 56, .{ 52, 32, 62, 255 });
         switch (profile) {
             .narrow => before.fill(70, 57, 100, 45, .{ 70, 110, 90, 255 }),
             .edge => before.fill(18, 57, 260, 45, .{ 255, 255, 255, 255 }),
@@ -2855,10 +2828,14 @@ test "round 25 audit: narrow, edge-touching and gradient panels retain the old s
                 before.fill(60 + x, 57, 1, 45, .{ @intCast(40 + x), 110, 90, 255 });
             },
         }
-        var edit: Region = .{ .before = bounds, .after = bounds };
-        regions.classifyOverlay(&edit, before.view, after.view, .one);
-        try std.testing.expectEqual(@as(?Box, bounds), edit.before);
-        try std.testing.expectEqual(@as(?Box, bounds), edit.after);
+        before.fill(42, 111, 18, 5, .{ 136, 136, 136, 255 });
+        after.fill(42, 111, 18, 5, .{ 115, 115, 115, 255 });
+        const result = try compareCanvases(before, after, 1);
+        defer result.deinit(std.testing.allocator);
+        const prior_x: usize = if (profile == .edge) 20 else 90;
+        try std.testing.expect(sample.hasRegion(result.regions, .before, prior_x, 80, null));
+        try std.testing.expect(sample.hasRegion(result.regions, .after, 120, 80, null));
+        try std.testing.expect(sample.hasSeparateMark(result.regions, 48, 113, 120, 80));
     }
 }
 
@@ -2867,17 +2844,16 @@ test "audit: growing or replacing a toast retains the old panel" {
     defer before.deinit();
     const after = try sample.Canvas.init(300, 180);
     defer after.deinit();
-    const bounds = Box.fromPixels(18, 48, 264, 86);
     before.fill(42, 59, 216, 48, .{ 40, 82, 46, 255 });
     before.line(60, 180, 76, 1, 218);
     // Preserve the backdrop at the old panel's extent until it is covered.
     after.fill(18, 48, 264, 86, .{ 230, 230, 230, 255 });
     after.fill(30, 54, 240, 72, .{ 122, 36, 45, 255 });
     after.line(60, 190, 76, 2, 218);
-    var edit: Region = .{ .before = bounds, .after = bounds };
-    regions.classifyOverlay(&edit, before.view, after.view, .one);
-    try std.testing.expectEqual(@as(?Box, bounds), edit.before);
-    try std.testing.expectEqual(@as(?Box, bounds), edit.after);
+    const result = try compareCanvases(before, after, 1);
+    defer result.deinit(std.testing.allocator);
+    try std.testing.expect(sample.hasRegion(result.regions, .before, 48, 88, null));
+    try std.testing.expect(sample.hasRegion(result.regions, .after, 48, 88, null));
 }
 
 test "reciprocal row moves are grouped only when both rows exchange intact" {
