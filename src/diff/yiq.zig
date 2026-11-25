@@ -179,6 +179,10 @@ pub fn clearMovedCoverage(before: Raster, after: Raster, top: usize, cells: []re
 /// Reports whether two pixels differ beyond the colour threshold.
 pub inline fn aboveThreshold(a: Pixel, b: Pixel, byte_offset: usize) bool {
     if (same(a, b)) return false;
+    return aboveColourThreshold(a, b, byte_offset);
+}
+
+noinline fn aboveColourThreshold(a: Pixel, b: Pixel, byte_offset: usize) bool {
     const d = delta(a, b, byte_offset);
     return yiq(f64, d[0], d[1], d[2]) > max_delta;
 }
