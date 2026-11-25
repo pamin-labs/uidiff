@@ -47,6 +47,16 @@ cmp "$installed" zig-out/bin/uidiff
 [ "$(sh install.sh)" = "$installed" ]
 "$installed" --help > /dev/null
 
+# A valid hash and asset followed by extra fields is not a manifest entry.
+printf "%s  %s  extra\n" "${hash%% *}" "$asset" > "$latest/SHA256SUMS"
+if sh install.sh > "$tmp/output" 2> "$tmp/error"; then
+    printf "install.sh accepted a malformed checksum entry\n" >&2
+    exit 1
+fi
+grep -q "expected one binary entry" "$tmp/error"
+cmp "$installed" zig-out/bin/uidiff
+cp "$tagged/SHA256SUMS" "$latest/SHA256SUMS"
+
 printf "corrupt\n" > "$tagged/$asset"
 if sh install.sh > "$tmp/output" 2> "$tmp/error"; then
     printf "install.sh accepted a corrupt asset\n" >&2

@@ -41,7 +41,7 @@ download() {
 download "$manifest_url/SHA256SUMS" "$tmp/SHA256SUMS"
 suffix="-$os-$arch"
 entry=$(awk -v version="$version" -v pattern="$pattern" -v suffix="$suffix" '
-    length($1) == 64 && $1 ~ /^[0-9a-f]+$/ &&
+    NF == 2 && length($1) == 64 && $1 ~ /^[0-9a-f]+$/ &&
         ((version != "" && $2 == "uidiff-" version suffix) ||
          (version == "" && $2 ~ ("^uidiff-" pattern suffix "$"))) {
         print $1, $2
