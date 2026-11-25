@@ -473,7 +473,7 @@ fn compareReplacement(collector: *Collector, scope: Scope, band: row_diff.Band, 
     for (0..height) |y| {
         const before = scope.before.row(first_old + y)[left..][0..width];
         const after = scope.after.row(first_new + y)[left..][0..width];
-        if (std.mem.eql(u8, std.mem.sliceAsBytes(before), std.mem.sliceAsBytes(after))) continue;
+        if (pixel_ops.sameRun(before, after)) continue;
         const offset = ((first_old + y) * scope.before.width + left) * @sizeOf(Pixel);
         for (before, after, 0..) |old, new, x| {
             if (!yiq.aboveThreshold(old, new, offset + x * @sizeOf(Pixel))) continue;
@@ -511,7 +511,7 @@ fn sameBandPixels(scope: Scope, band: row_diff.Band) bool {
     for (0..band.removed) |row| {
         const before = scope.before.row(band.before + row)[left..][0..width];
         const after = scope.after.row(band.after + row)[left..][0..width];
-        if (!std.mem.eql(u8, std.mem.sliceAsBytes(before), std.mem.sliceAsBytes(after))) return false;
+        if (!pixel_ops.sameRun(before, after)) return false;
     }
     return true;
 }
@@ -542,8 +542,8 @@ fn unpaired(collector: *Collector, scope: Scope, scratch: Scratch, rows: Unpaire
         const above = source.row(y - 1)[left..][0..width];
         const below = source.row(y + rows.count)[left..][0..width];
         const last = source.row(y + rows.count - 1)[left..][0..width];
-        if (std.mem.eql(u8, std.mem.sliceAsBytes(above), std.mem.sliceAsBytes(below)) or
-            (rows.element and std.mem.eql(u8, std.mem.sliceAsBytes(above), std.mem.sliceAsBytes(last))))
+        if (pixel_ops.sameRun(above, below) or
+            (rows.element and pixel_ops.sameRun(above, last)))
         {
             b.background = .{ .row = source.row(y - 1) };
         }
@@ -575,48 +575,47 @@ fn unpaired(collector: *Collector, scope: Scope, scratch: Scratch, rows: Unpaire
 }
 
 fn blankBand(source: Image, first: usize, rows: usize, bounds: columns.Span) bool {
-    const head = rowBytes(source, first, bounds);
-    const pixel_bytes = @sizeOf(Pixel);
-    if (!std.mem.eql(u8, head[pixel_bytes..], head[0 .. head.len - pixel_bytes])) return false;
+    const head = rowRun(source, first, bounds);
+    if (!pixel_ops.sameRun(head[1..], head[0 .. head.len - 1])) return false;
     for (first + 1..first + rows) |y| {
-        if (!std.mem.eql(u8, head, rowBytes(source, y, bounds))) return false;
+        if (!pixel_ops.sameRun(head, rowRun(source, y, bounds))) return false;
     }
     return true;
 }
 
 fn unchangedBlank(scope: Scope, bounds: columns.Span, y: usize, opposite: usize, rows: usize) bool {
     if (opposite >= scope.after.height) return true;
-    const expected = rowBytes(scope.before, y, bounds);
+    const expected = rowRun(scope.before, y, bounds);
     var end = y + rows;
-    while (end < scope.before.height and std.mem.eql(u8, rowBytes(scope.before, end, bounds), expected)) end += 1;
+    while (end < scope.before.height and pixel_ops.sameRun(rowRun(scope.before, end, bounds), expected)) end += 1;
     if (end == scope.before.height) return trailingMargin(scope.after, bounds, expected, y, opposite, rows);
     if (end == y + rows and fixedLowerEdge(scope, bounds, expected, y, end)) return true;
 
     var first = y;
-    while (first > 0 and std.mem.eql(u8, rowBytes(scope.before, first - 1, bounds), expected)) first -= 1;
+    while (first > 0 and pixel_ops.sameRun(rowRun(scope.before, first - 1, bounds), expected)) first -= 1;
     return interiorBlank(scope.after, bounds, expected, first, end, opposite -| (y - first)) or
         fixedUpperBar(scope, bounds, expected, first);
 }
 
-fn trailingMargin(after: Image, bounds: columns.Span, paint: []const u8, y: usize, opposite: usize, rows: usize) bool {
+fn trailingMargin(after: Image, bounds: columns.Span, paint: []const Pixel, y: usize, opposite: usize, rows: usize) bool {
     return hasEqualRun(paint, after, bounds, y, opposite, rows);
 }
 
-fn fixedLowerEdge(scope: Scope, bounds: columns.Span, paint: []const u8, y: usize, end: usize) bool {
+fn fixedLowerEdge(scope: Scope, bounds: columns.Span, paint: []const Pixel, y: usize, end: usize) bool {
     return end < scope.after.height and
-        std.mem.eql(u8, rowBytes(scope.before, end, bounds), rowBytes(scope.after, end, bounds)) and
+        pixel_ops.sameRun(rowRun(scope.before, end, bounds), rowRun(scope.after, end, bounds)) and
         hasEqualRun(paint, scope.after, bounds, y, y, end - y);
 }
 
-fn interiorBlank(after: Image, bounds: columns.Span, paint: []const u8, first: usize, end: usize, opposite: usize) bool {
+fn interiorBlank(after: Image, bounds: columns.Span, paint: []const Pixel, first: usize, end: usize, opposite: usize) bool {
     // Matching only the unpaired portion could hide space actually removed
     // between two lines of content. Match the whole interior run.
     return hasEqualRun(paint, after, bounds, first, opposite, end - first);
 }
 
-fn fixedUpperBar(scope: Scope, bounds: columns.Span, paint: []const u8, first: usize) bool {
+fn fixedUpperBar(scope: Scope, bounds: columns.Span, paint: []const Pixel, first: usize) bool {
     if (first < min_bar_rows or first >= scope.after.height or
-        !std.mem.eql(u8, paint, rowBytes(scope.after, first, bounds)) or
+        !pixel_ops.sameRun(paint, rowRun(scope.after, first, bounds)) or
         !blankBand(scope.before, first - min_bar_rows, min_bar_rows, bounds)) return false;
     // A viewport bar reaches the top. Check its paint at both margins so
     // icons and lettering can interrupt the interior of the bar.
@@ -632,17 +631,17 @@ fn fixedUpperBar(scope: Scope, bounds: columns.Span, paint: []const u8, first: u
     return true;
 }
 
-fn rowBytes(image: Image, y: usize, bounds: columns.Span) []const u8 {
-    return image.rowBytes(y, bounds.left, bounds.width);
+fn rowRun(image: Image, y: usize, bounds: columns.Span) []const Pixel {
+    return image.row(y)[bounds.left..][0..bounds.width];
 }
 
-fn hasEqualRun(expected: []const u8, image: Image, bounds: columns.Span, y: usize, opposite: usize, needed: usize) bool {
+fn hasEqualRun(expected: []const Pixel, image: Image, bounds: columns.Span, y: usize, opposite: usize, needed: usize) bool {
     const start = @min(y, opposite);
     const end = @min(image.height, @max(y, opposite) + needed);
     var run: usize = 0;
     for (start..end) |row| {
-        const paint = rowBytes(image, row, bounds);
-        run = if (std.mem.eql(u8, expected, paint)) run + 1 else 0;
+        const paint = rowRun(image, row, bounds);
+        run = if (pixel_ops.sameRun(expected, paint)) run + 1 else 0;
         if (run == needed) return true;
     }
     return false;
@@ -2436,7 +2435,7 @@ test "an inset item after a deletion is not a footer" {
     after.fill(8, insertion, 225, 15, .{ 40, 200, 40, 255 });
     clipped.copyRows(0, after, 0, insertion + shift);
     clipped.copyRows(insertion + shift, before, insertion, before.view.height - shift);
-    try std.testing.expect(!std.mem.eql(u8, std.mem.sliceAsBytes(after.pixels), std.mem.sliceAsBytes(clipped.pixels)));
+    try std.testing.expect(!pixel_ops.sameRun(after.pixels, clipped.pixels));
     for ([_]bool{ false, true }) |reverse| {
         const result = try compareCanvases(if (reverse) after else before, if (reverse) before else after, 1);
         defer result.deinit(std.testing.allocator);
@@ -2482,7 +2481,7 @@ test "balanced insertion and deletion detect every visible loss in both directio
                     const y = (if (chrome) @as(usize, 44) else 8) + 18 * delete_at;
                     if (y + 18 * rows_count > height - (if (chrome) @as(usize, 50) else 0)) continue;
                     sample.auditPage(after, chrome, insert_at, delete_at, rows_count);
-                    const observable = !std.mem.eql(u8, std.mem.sliceAsBytes(after.pixels), std.mem.sliceAsBytes(clipped.pixels));
+                    const observable = !pixel_ops.sameRun(after.pixels, clipped.pixels);
                     for ([_]bool{ false, true }) |reverse| {
                         const result = try compareCanvases(if (reverse) after else before, if (reverse) before else after, 1);
                         defer result.deinit(std.testing.allocator);

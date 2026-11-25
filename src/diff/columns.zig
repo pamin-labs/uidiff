@@ -264,7 +264,7 @@ fn outlineSides(image: Image, middle: usize, edge: Edge, lane: Span, reach: usiz
 }
 
 fn markChanged(stationary: []bool, before: []const Pixel, after: []const Pixel) void {
-    if (std.mem.eql(u8, std.mem.sliceAsBytes(before), std.mem.sliceAsBytes(after))) return;
+    if (pixel.sameRun(before, after)) return;
     for (stationary, before, after) |*stable, old, new| stable.* = stable.* and pixel.same(old, new);
 }
 

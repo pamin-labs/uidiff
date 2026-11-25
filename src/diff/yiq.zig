@@ -91,7 +91,7 @@ pub fn mask(a: Raster, b: Raster, top: usize, rows: usize, out: []regions.Cell) 
         const new = b.row(y);
         const output = out[(y - top) * a.width ..][0..a.width];
         // Aligned bands are usually unchanged across the entire row.
-        if (old.len == new.len and std.mem.eql(u8, std.mem.sliceAsBytes(old), std.mem.sliceAsBytes(new))) {
+        if (old.len == new.len and pixel.sameRun(old, new)) {
             @memset(output, .clear);
             continue;
         }

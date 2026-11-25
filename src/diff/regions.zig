@@ -892,14 +892,10 @@ fn exchangedRows(before: Image, after: Image, bands: Box, pitch: usize, rows: us
     const right: usize = @intFromFloat(bands.right());
     const first: usize = @intFromFloat(bands.y);
     for (first..first + rows) |y| {
-        if (!sameRow(before.row(y)[x..right], after.row(y + pitch)[x..right]) or
-            !sameRow(after.row(y)[x..right], before.row(y + pitch)[x..right])) return false;
+        if (!pixel.sameRun(before.row(y)[x..right], after.row(y + pitch)[x..right]) or
+            !pixel.sameRun(after.row(y)[x..right], before.row(y + pitch)[x..right])) return false;
     }
     return true;
-}
-
-fn sameRow(a: []const values.Pixel, b: []const values.Pixel) bool {
-    return std.mem.eql(u8, std.mem.sliceAsBytes(a), std.mem.sliceAsBytes(b));
 }
 
 fn tabPartAbove(boxes: []const Candidate, a: usize, b: usize) bool {
@@ -939,7 +935,7 @@ fn shiftedGrid(before: Image, after: Image, slots: []const Box, top: usize, bott
         const from: usize = @intFromFloat(old.x);
         const to: usize = @intFromFloat(new.x);
         for (top..bottom) |y| {
-            if (!sameRow(before.row(y)[from..][0..width], after.row(y)[to..][0..width])) return false;
+            if (!pixel.sameRun(before.row(y)[from..][0..width], after.row(y)[to..][0..width])) return false;
         }
     }
     return true;
@@ -1005,7 +1001,7 @@ fn horizontalRail(before: Image, after: Image, left: Box, right: Box, exterior: 
     const outside = before.row(other_y)[x..x_end];
     for (first..end) |y| {
         const old = before.row(y)[x..x_end];
-        if (!sameRow(old, after.row(y)[x..x_end])) continue;
+        if (!pixel.sameRun(old, after.row(y)[x..x_end])) continue;
         for (old, outside) |ink, background| {
             if (toneDistance(ink, background) < corner_rail_contrast) break;
         } else if ((railTurns(before, left, y, old[0], .left, exterior) and

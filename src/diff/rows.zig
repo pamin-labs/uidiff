@@ -605,7 +605,7 @@ fn shapeKeepsOffset(limits: Limits, gap: Band) bool {
     const long_y = if (inserted) gap.after else gap.before;
     const backdrop = short.row(short_y - 1)[limits.left..][0..limits.width];
     const opposite = long.row(long_y - 1)[limits.left..][0..limits.width];
-    if (!std.mem.eql(u8, std.mem.sliceAsBytes(backdrop), std.mem.sliceAsBytes(opposite))) return false;
+    if (!pixel_ops.sameRun(backdrop, opposite)) return false;
 
     const totals = sampleBand(.silhouette, short, long, limits, .{
         .before = short_y,

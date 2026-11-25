@@ -13,6 +13,11 @@ pub fn same(a: Pixel, b: Pixel) bool {
     return @as(u32, @bitCast(a)) == @as(u32, @bitCast(b));
 }
 
+/// Compares packed RGBA runs without reading past either slice.
+pub noinline fn sameRun(a: []const Pixel, b: []const Pixel) bool {
+    return std.mem.eql(u8, std.mem.sliceAsBytes(a), std.mem.sliceAsBytes(b));
+}
+
 /// Loads one vector step of packed pixels as 32-bit words.
 pub fn load(block: *const [lanes]Pixel) @Vector(lanes, u32) {
     return @bitCast(block.*);
