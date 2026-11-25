@@ -13,13 +13,17 @@ import tarfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
+PROGRAM = "uidiff"
 REPOSITORY = "https://github.com/pamin-labs/uidiff"
+RELEASES = f"{REPOSITORY}/releases"
+CHECKSUMS = "SHA256SUMS"
+VERSION_PATTERN = r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?"
 NOTICES = ("LICENSE", "THIRD_PARTY_NOTICES")
 NATIVE_ENTRY = "./native"
 NPM_SCOPE = "@pamin-labs"
-NPM_PACKAGE = f"{NPM_SCOPE}/uidiff"
+NPM_PACKAGE = f"{NPM_SCOPE}/{PROGRAM}"
 TAP_REPOSITORY = "pamin-labs/homebrew-tap"
-TAP_FORMULA = "Formula/uidiff.rb"
+TAP_FORMULA = f"Formula/{PROGRAM}.rb"
 FORMULA_ASSET = Path(TAP_FORMULA).name
 
 
@@ -37,13 +41,17 @@ class Target:
 
     @property
     def binary(self):
-        return "uidiff.exe" if self.os == "windows" else "uidiff"
+        return PROGRAM + self.binary_extension
+
+    @property
+    def binary_extension(self):
+        return ".exe" if self.os == "windows" else ""
 
     def asset_stem(self, version):
-        return f"uidiff-{version}-{self.os}-{self.arch}"
+        return f"{PROGRAM}-{version}-{self.os}-{self.arch}"
 
     def release_binary(self, version):
-        return self.asset_stem(version) + self.binary.removeprefix("uidiff")
+        return self.asset_stem(version) + self.binary_extension
 
     def archive(self, version):
         extension = ".zip" if self.os == "windows" else ".tar.gz"
@@ -67,7 +75,7 @@ TARGETS = tuple(Target(zig) for zig in json.loads((ROOT / ".github/release-targe
 
 def version():
     zon = (ROOT / "build.zig.zon").read_text()
-    match = re.search(r'^    \.version = "([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)",$', zon, re.M)
+    match = re.search(rf'^    \.version = "({VERSION_PATTERN})",$', zon, re.M)
     if match is None:
         raise SystemExit("build.zig.zon: expected a release version")
     return match[1]
@@ -97,7 +105,7 @@ def pack(target, release_version, bin_dir, output):
 
 
 def formula_platforms(release_version, output):
-    url = f"{REPOSITORY}/releases/download/v{release_version}"
+    url = f"{RELEASES}/download/v{release_version}"
     lines = []
     for os in ("macos", "linux"):
         lines.append(f"  on_{os} do")
@@ -132,7 +140,7 @@ def finalize(release_version, output):
 
 def write_checksums(output, assets):
     sums = "".join(f"{digest(output / name)}  {name}\n" for name in sorted(assets))
-    manifest = output / "SHA256SUMS"
+    manifest = output / CHECKSUMS
     manifest.write_text(sums)
     return manifest
 

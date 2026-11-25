@@ -1,15 +1,54 @@
-"""Exercise staged npm packages and the launcher with the locally built CLI."""
+"""Check the standalone installer contract and exercise the staged npm launcher."""
 
 import json
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import tarfile
 from tempfile import TemporaryDirectory
 import zipfile
 
-from package import FORMULA_ASSET, NOTICES, NPM_PACKAGE, REPOSITORY, ROOT, TARGETS, digest, finalize, npm_packages, pack, version
+from package import (
+    CHECKSUMS, FORMULA_ASSET, NOTICES, NPM_PACKAGE, PROGRAM, RELEASES, ROOT,
+    TARGETS, VERSION_PATTERN, digest, finalize, npm_packages, pack, version,
+)
+
+
+def check_literals(text, filename, expected):
+    for name, value in expected.items():
+        pattern = rf"^\s*{re.escape(name)}\s*=\s*([^\r\n]+)"
+        found = [literal.strip().strip("'\"") for literal in re.findall(pattern, text, re.M)]
+        assert found == [value], f"{filename}: {name} differs from the release contract"
+
+
+def check_installers():
+    shell = (ROOT / "install.sh").read_text()
+    powershell = (ROOT / "install.ps1").read_text()
+    windows = [target for target in TARGETS if target.os == "windows"]
+    posix = [target for target in TARGETS if target.os != "windows"]
+    literal = dict(program=PROGRAM, releases=RELEASES, checksums=CHECKSUMS)
+    sh_version = VERSION_PATTERN.replace(r"\.", "[.]").replace("(?:", "(")
+    check_literals(shell, "install.sh", {**literal, "pattern": sh_version})
+    check_literals(powershell, "install.ps1", {
+        **{f"${name}": value for name, value in literal.items()},
+        "$releaseOs": windows[0].os,
+        "$extension": windows[0].binary_extension,
+        "$versionPattern": VERSION_PATTERN,
+    })
+
+    # OS and CPU spellings on the left come from uname and .NET.
+    systems = {"macos": "Darwin", "linux": "Linux"}
+    machines = {"aarch64": "arm64|aarch64", "x86_64": "x86_64|amd64"}
+    dotnet = {"aarch64": "Arm64", "x86_64": "X64"}
+    shell_os = re.findall(r"^\s*(\w+)\) os=(\w+) ;;$", shell, re.M)
+    shell_arch = re.findall(r"^\s*([\w|]+)\) arch=(\w+) ;;$", shell, re.M)
+    windows_arch = re.findall(r"^\s*(\w+) \{ '(\w+)' }$", powershell, re.M)
+    assert sorted(shell_os) == sorted({(systems[t.os], t.os) for t in posix}), "install.sh: OS mappings differ"
+    assert sorted(shell_arch) == sorted({(machines[t.zig.split("-")[0]], t.arch) for t in posix}), "install.sh: CPU mappings differ"
+    assert sorted(windows_arch) == sorted({(dotnet[t.zig.split("-")[0]], t.arch) for t in windows}), "install.ps1: CPU mappings differ"
+    assert {(t.os, t.arch) for t in posix} == {(os, arch) for _, os in shell_os for _, arch in shell_arch}, "install.sh: target matrix differs"
 
 
 def check_launcher(launcher, binary):
@@ -27,7 +66,7 @@ def check_launcher(launcher, binary):
 
 
 def check_assets(release, release_version):
-    sums = release / "SHA256SUMS"
+    sums = release / CHECKSUMS
     lines = [line.split("  ", 1) for line in sums.read_text().splitlines()]
     assert {name: checksum for checksum, name in lines} == {
         asset.name: digest(asset) for asset in release.iterdir() if asset != sums
@@ -38,7 +77,7 @@ def check_assets(release, release_version):
     for target in TARGETS:
         archive = release / target.archive(release_version)
         if target.os != "windows":
-            assert f'url "{REPOSITORY}/releases/download/v{release_version}/{archive.name}"' in content
+            assert f'url "{RELEASES}/download/v{release_version}/{archive.name}"' in content
             assert f'sha256 "{digest(archive)}"' in content
         if target.os == "windows":
             with zipfile.ZipFile(archive) as bundle:
@@ -50,6 +89,7 @@ def check_assets(release, release_version):
 
 
 def main():
+    check_installers()
     dist_os = {"Darwin": "macos", "Linux": "linux", "Windows": "windows"}[platform.system()]
     arch = {"x86_64": "x64", "amd64": "x64", "aarch64": "arm64", "arm64": "arm64"}[
         platform.machine().lower()
