@@ -2,6 +2,9 @@ name: x86 SIMD and LTO benchmarks
 
 'on':
   workflow_dispatch:
+  # Dispatch needs the workflow on the default branch; a bench tag runs it from any commit.
+  push:
+    tags: ['bench-x86-*']
 
 permissions:
   contents: read
