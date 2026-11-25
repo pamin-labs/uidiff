@@ -19,13 +19,57 @@ const white = palette.white;
 const tint = palette.tint;
 const Allocator = std.mem.Allocator;
 const Pixel = values.Pixel;
+const Image = values.Image;
+const Crop = @import("crops.zig").Crop;
 
 /// Whether the gutter carries an alignment ribbon.
 pub const Gutter = enum { plain, alignment };
 
+// Sheet-space endpoints of the visible connection to a mark.
+const Leader = struct {
+    first_y: usize,
+    last_y: usize,
+    top_x: usize,
+    bottom_x: usize,
+
+    fn init(mark: Rect, badge_box: Rect) Leader {
+        const a_x = badge_box.x + badge_box.w / 2;
+        const a_y = badge_box.y + badge_box.h / 2;
+        const b_x = std.math.clamp(a_x, mark.x, mark.right() - 1);
+        const b_y = std.math.clamp(a_y, mark.y, mark.bottom() - 1);
+        return .{
+            .first_y = @min(a_y, b_y),
+            .last_y = @max(a_y, b_y),
+            .top_x = if (a_y < b_y) a_x else b_x,
+            .bottom_x = if (a_y < b_y) b_x else a_x,
+        };
+    }
+
+    fn span(self: Leader, mark: Rect, y: usize) ?[2]usize {
+        if (y < self.first_y or y > self.last_y) return null;
+        const dx = @max(self.top_x, self.bottom_x) - @min(self.top_x, self.bottom_x);
+        const dy = self.last_y - self.first_y;
+        const start = if (dy == 0) 0 else (y - self.first_y) * dx / dy;
+        const end = if (dy == 0) dx else (@min(self.last_y, y + 1) - self.first_y) * dx / dy;
+        var left = if (self.top_x <= self.bottom_x) self.top_x + start else self.top_x - end;
+        var right = 1 + if (self.top_x <= self.bottom_x) self.top_x + end else self.top_x - start;
+        if (mark.containsRow(y)) {
+            // A span reaches the mark from only one side.
+            if (left < mark.x) right = @min(right, mark.x) else left = @max(left, mark.right());
+        }
+        return if (left < right) .{ left, right } else null;
+    }
+};
+
+const RoutedBadge = struct { position: ?Rect = null, leader: bool = false };
+const LeaderClearance = enum { clear, ink, obstructed };
+
 const badge_r = 26;
 
 const badge_ring = 3;
+// Stop looking for flat paint on very long paths over scaled captures.
+const max_leader_samples = 64 * 1024;
+const diagonal_clearance_px = 32;
 
 const overview_badge_diameter = 2 * (18 + badge_ring) + 1;
 
@@ -43,22 +87,22 @@ pub fn overviewDiameter(ui: Layout) usize {
 }
 
 /// Assigns non-overlapping overview and focus badge positions.
-pub fn placeBadges(allocator: Allocator, details: []Detail, focuses: []const Focus, panes: [2]Rect, size: values.Size, ui: Layout, captions: [2]Rect, gutter: Gutter) Allocator.Error!void {
+pub fn placeBadges(allocator: Allocator, details: []Detail, focuses: []const Focus, panes: [2]Rect, images: [2]Image, size: values.Size, ui: Layout, captions: [2]Rect, gutter: Gutter) Allocator.Error!void {
     if (details.len == 0) return;
     const storage = try allocator.alloc(Rect, 4 * details.len + panes.len);
     defer allocator.free(storage);
-    placeOverview(details, storage, panes, size, ui, captions, gutter);
+    placeOverview(details, storage, panes, images, size, ui, captions, gutter);
     for (focuses, 0..) |focus, group| {
         for (focus.crops, 0..) |patch, side| {
-            if (patch) |p| placeFocus(details, storage, p.to, side, group, textWidth(.regular, text.caption_size, focus.captions[side].bytes()) + text.caption_padding, focus.top + focus.height, ui);
+            if (patch) |p| placeFocus(details, storage, images[side], p, side, group, textWidth(.regular, text.caption_size, focus.captions[side].bytes()) + text.caption_padding, focus.top + focus.height, ui);
         }
     }
 }
 
 /// Draws the outward halo and assigned badge on one sheet row.
-pub noinline fn drawMark(line: Line, box: ?Rect, location: ?Rect, detail: Detail, ui: Layout) void {
+pub noinline fn drawMark(line: Line, box: ?Rect, location: ?Rect, leader: bool, detail: Detail, ui: Layout) void {
     const rect = box orelse return;
-    if (location) |where| drawLeader(line, rect, where, tint(detail.region.kind));
+    if (leader) if (location) |where| drawLeader(line, rect, where, tint(detail.region.kind));
     const width = 2;
     const halo = 2;
     const frame = rect.outset(3);
@@ -81,7 +125,7 @@ pub noinline fn badge(line: Line, bounds: Rect, kind: values.Kind, number: []con
     line.badgeText(inner, number, white);
 }
 
-fn placeOverview(details: []Detail, storage: []Rect, panes: [2]Rect, size: values.Size, ui: Layout, captions: [2]Rect, gutter: Gutter) void {
+fn placeOverview(details: []Detail, storage: []Rect, panes: [2]Rect, images: [2]Image, size: values.Size, ui: Layout, captions: [2]Rect, gutter: Gutter) void {
     const diameter = overviewDiameter(ui);
     const clearance = if (@min(panes[0].w, panes[1].w) < diameter) ui.px(thin_badge_gap) else 0;
     var len: usize = 0;
@@ -95,7 +139,7 @@ fn placeOverview(details: []Detail, storage: []Rect, panes: [2]Rect, size: value
             len += 1;
         };
     }
-    for (panes, 0..) |pane, side| {
+    for (panes, images, 0..) |pane, image, side| {
         const left_edge = @min(pane.x, clearance + if (!ui.wide and side == 1) panes[0].right() else 0);
         const right_edge = @max(pane.right(), (if (!ui.wide and side == 0) panes[1].x else size.width) -| clearance);
         const inner_left = pane.x -| clearance;
@@ -118,7 +162,12 @@ fn placeOverview(details: []Detail, storage: []Rect, panes: [2]Rect, size: value
                 placement.placeOutside(mark, outside[0], diameter, used)
             else
                 levelWithMark(mark, lanes, diameter, used);
-            const location = preferred orelse nearestOutside(mark, &outside, diameter, used) orelse placement.place(mark, pane, diameter, used);
+            const route = routeBadge(mark, preferred orelse nearestOutside(mark, &outside, diameter, used), image, .{
+                .from = .{ .x = 0, .y = 0, .w = image.width, .h = image.height },
+                .to = pane,
+            }, diameter, used);
+            const location = route.position;
+            d.overview_leaders[side] = route.leader;
             if (side == 0) d.before_badge = location else d.after_badge = location;
             if (location) |pos| {
                 storage[len] = pos;
@@ -158,7 +207,8 @@ fn nearestOutside(mark: Rect, bounds: []const Rect, diameter: usize, obstacles: 
     return best;
 }
 
-fn placeFocus(details: []Detail, storage: []Rect, pane: Rect, side: usize, group: usize, caption_width: usize, row_bottom: usize, ui: Layout) void {
+fn placeFocus(details: []Detail, storage: []Rect, image: Image, patch: Crop, side: usize, group: usize, caption_width: usize, row_bottom: usize, ui: Layout) void {
+    const pane = patch.to;
     const diameter = badgeDiameter(ui);
     storage[0] = Rect{ .x = pane.x, .y = pane.y -| diameter, .w = caption_width, .h = diameter };
     var len: usize = 1;
@@ -176,9 +226,12 @@ fn placeFocus(details: []Detail, storage: []Rect, pane: Rect, side: usize, group
         if (d.focus != group) continue;
         const mark = d.focus_marks[side] orelse continue;
         const used = storage[0..len];
-        const location = placement.placeOutside(mark, header, diameter, used) orelse placement.placeOutside(mark, beside, diameter, used) orelse
-            placement.placeOutside(mark, below, diameter, used) orelse placement.place(mark, pane, diameter, used);
+        const outside = placement.placeOutside(mark, header, diameter, used) orelse placement.placeOutside(mark, beside, diameter, used) orelse
+            placement.placeOutside(mark, below, diameter, used);
+        const route = routeBadge(mark, outside, image, patch, diameter, used);
+        const location = route.position;
         d.focus_badges[side] = location;
+        d.focus_leaders[side] = route.leader;
         if (location) |position| {
             storage[len] = position;
             len += 1;
@@ -186,27 +239,114 @@ fn placeFocus(details: []Detail, storage: []Rect, pane: Rect, side: usize, group
     }
 }
 
+fn routeBadge(mark: Rect, outside: ?Rect, image: Image, patch: Crop, diameter: usize, obstacles: []const Rect) RoutedBadge {
+    if (outside) |position| {
+        if (position.distanceSquared(mark) <= diameter * diameter) return .{ .position = position };
+        switch (leaderClearance(mark, position, image, patch, obstacles)) {
+            .clear => return .{ .position = position, .leader = true },
+            .obstructed => return .{ .position = position },
+            .ink => return .{ .position = adjacentOnPaint(mark, image, patch, diameter, obstacles) orelse outside },
+        }
+    }
+    return .{ .position = placement.place(mark, patch.to, diameter, obstacles) };
+}
+
+fn adjacentOnPaint(mark: Rect, image: Image, patch: Crop, diameter: usize, obstacles: []const Rect) ?Rect {
+    const pane = patch.to;
+    const around = [_]Rect{
+        .{ .x = pane.x, .y = pane.y, .w = pane.w, .h = mark.y - pane.y },
+        .{ .x = pane.x, .y = pane.y, .w = mark.x - pane.x, .h = pane.h },
+        .{ .x = pane.x, .y = mark.bottom(), .w = pane.w, .h = pane.bottom() - mark.bottom() },
+        .{ .x = mark.right(), .y = pane.y, .w = pane.right() - mark.right(), .h = pane.h },
+    };
+    var best: ?Rect = null;
+    var distance: usize = std.math.maxInt(usize);
+    for (around, 0..) |bounds, side| {
+        const initial = placement.place(mark, bounds, diameter, obstacles) orelse continue;
+        const radius = diameter / 2;
+        const across_rows = side % 2 != 0;
+        const start = if (across_rows) bounds.y else bounds.x;
+        const finish = (if (across_rows) bounds.bottom() else bounds.right()) - diameter;
+        const at = if (across_rows) initial.y else initial.x;
+        for ([_]usize{ at, @max(start, at -| radius), @min(finish, at + radius) }) |along| {
+            var candidate = initial;
+            if (across_rows) candidate.y = along else candidate.x = along;
+            const gap = candidate.distanceSquared(mark);
+            if (gap >= distance or gap > diameter * diameter) continue;
+            if (overlapsAny(candidate, obstacles) or !badgeOnPaint(image, patch, candidate)) continue;
+            best = candidate;
+            distance = gap;
+        }
+    }
+    return best;
+}
+
+fn overlapsAny(rect: Rect, obstacles: []const Rect) bool {
+    for (obstacles) |obstacle| if (rect.overlaps(obstacle)) return true;
+    return false;
+}
+
+fn badgeOnPaint(image: Image, patch: Crop, badge_box: Rect) bool {
+    var remaining: usize = max_leader_samples;
+    var background: ?Pixel = null;
+    for (badge_box.y..badge_box.bottom()) |y| {
+        const span = roundSpan(badge_box, badge_box.w / 2, y) orelse continue;
+        const row: Rect = .{ .x = span[0], .y = y, .w = span[1] - span[0], .h = 1 };
+        if (paintClearance(image, patch, row, &remaining, &background) != .clear) return false;
+    }
+    return true;
+}
+
+fn leaderClearance(mark: Rect, badge_box: Rect, image: Image, patch: Crop, obstacles: []const Rect) LeaderClearance {
+    const leader = Leader.init(mark, badge_box);
+    var remaining: usize = max_leader_samples;
+    var background: ?Pixel = null;
+    var obstructed = false;
+    // A diagonal needs room beside it to stay visually clear of other rows.
+    const padding: usize = if (leader.top_x != leader.bottom_x and leader.first_y != leader.last_y) diagonal_clearance_px else 0;
+    for (leader.first_y..leader.last_y + 1) |y| {
+        const span = leader.span(mark, y) orelse continue;
+        const line: Rect = .{ .x = span[0], .y = y, .w = span[1] - span[0], .h = 1 };
+        obstructed = obstructed or overlapsAny(line, obstacles);
+        if (!line.overlaps(patch.to)) continue;
+        var start = span[0] -| padding;
+        var end = span[1] + padding;
+        if (mark.containsRow(y)) {
+            if (span[0] < mark.x) end = @min(end, mark.x) else start = @max(start, mark.right());
+        }
+        const top = @max(y -| padding, patch.to.y);
+        const bottom = @min(y + padding + 1, patch.to.bottom());
+        const guard: Rect = .{ .x = start, .y = top, .w = end - start, .h = bottom - top };
+        const clearance = paintClearance(image, patch, guard, &remaining, &background);
+        if (clearance != .clear) return clearance;
+    }
+    return if (obstructed) .obstructed else .clear;
+}
+
+fn paintClearance(image: Image, patch: Crop, area: Rect, remaining: *usize, background: *?Pixel) LeaderClearance {
+    if (area.w == 0 or area.h == 0 or !area.overlaps(patch.to)) return .clear;
+    const left = @max(area.x, patch.to.x) - patch.to.x;
+    const right = @min(area.right(), patch.to.right()) - patch.to.x;
+    const top = @max(area.y, patch.to.y) - patch.to.y;
+    const bottom = @min(area.bottom(), patch.to.bottom()) - patch.to.y;
+    const x0 = patch.from.x + left * patch.from.w / patch.to.w;
+    const x1 = patch.from.x + (right * patch.from.w + patch.to.w - 1) / patch.to.w;
+    const y0 = patch.from.y + top * patch.from.h / patch.to.h;
+    const y1 = patch.from.y + (bottom * patch.from.h + patch.to.h - 1) / patch.to.h;
+    const count = (x1 - x0) * (y1 - y0);
+    if (count > remaining.*) return .obstructed;
+    remaining.* -= count;
+    for (y0..y1) |source_y| {
+        const pixels = image.row(source_y)[x0..x1];
+        const paint = background.* orelse pixels[0];
+        for (pixels) |pixel| if (!std.meta.eql(pixel, paint)) return .ink;
+        background.* = paint;
+    }
+    return .clear;
+}
+
 fn drawLeader(line: Line, mark: Rect, badge_box: Rect, color: Pixel) void {
-    const reach = badge_box.w;
-    if (badge_box.distanceSquared(mark) <= reach * reach) return;
-    const a_x = badge_box.x + badge_box.w / 2;
-    const a_y = badge_box.y + badge_box.h / 2;
-    const b_x = std.math.clamp(a_x, mark.x, mark.right() - 1);
-    const b_y = std.math.clamp(a_y, mark.y, mark.bottom() - 1);
-    const first_y = @min(a_y, b_y);
-    const last_y = @max(a_y, b_y);
-    if (line.y < first_y or line.y > last_y) return;
-    const top_x = if (a_y < b_y) a_x else b_x;
-    const bottom_x = if (a_y < b_y) b_x else a_x;
-    const dx = @max(top_x, bottom_x) - @min(top_x, bottom_x);
-    const start_fraction = if (first_y == last_y) 0 else (line.y - first_y) * dx / (last_y - first_y);
-    const end_fraction = if (first_y == last_y) dx else (@min(last_y, line.y + 1) - first_y) * dx / (last_y - first_y);
-    const left = if (top_x <= bottom_x) top_x + start_fraction else top_x - end_fraction;
-    const right = if (top_x <= bottom_x) top_x + end_fraction else top_x - start_fraction;
-    if (mark.containsRow(line.y)) {
-        line.fill(left, @min(mark.x, right + 1), color);
-        line.fill(@max(left, mark.right()), right + 1, color);
-    } else line.fill(left, right + 1, color);
+    if (Leader.init(mark, badge_box).span(mark, line.y)) |span| line.fill(span[0], span[1], color);
 }
 
 fn strokeOutside(line: Line, frame: Rect, radius: usize, thickness: usize, color: Pixel, protected: Rect) void {
@@ -223,7 +363,6 @@ fn badgeBounds(box: ?Rect, pane: Rect, ui: Layout) ?Rect {
 }
 
 test "the halo and color stroke leave the changed pixels uncovered" {
-    const Image = values.Image;
     const Region = values.Region;
     const Rows = @import("report_sheet.zig").Rows;
     const allocator = std.testing.allocator;
@@ -247,7 +386,6 @@ test "the halo and color stroke leave the changed pixels uncovered" {
 
 test "top corner badges stay above the pane and clear of the caption" {
     const page = palette.page;
-    const Image = values.Image;
     const Region = values.Region;
     const Rows = @import("report_sheet.zig").Rows;
     const allocator = std.testing.allocator;
@@ -271,7 +409,6 @@ test "top corner badges stay above the pane and clear of the caption" {
 
 test "thin wide strips and crops draw full badges above their pixels" {
     const page = palette.page;
-    const Image = values.Image;
     const Region = values.Region;
     const Rows = @import("report_sheet.zig").Rows;
     const allocator = std.testing.allocator;
@@ -321,7 +458,6 @@ test "small panes enlarge by an integer and keep badges clear of their boxes" {
 
 test "edge badges stay near their numbered boxes and avoid all other marks" {
     const page = palette.page;
-    const Image = values.Image;
     const Region = values.Region;
     const Rows = @import("report_sheet.zig").Rows;
     const allocator = std.testing.allocator;
@@ -349,7 +485,6 @@ test "edge badges stay near their numbered boxes and avoid all other marks" {
 
 test "whole-image wide changes have a badge in both overviews" {
     const page = palette.page;
-    const Image = values.Image;
     const Rows = @import("report_sheet.zig").Rows;
     const allocator = std.testing.allocator;
     const pixels: [900 * 12]Pixel = @splat(page);
@@ -362,7 +497,6 @@ test "whole-image wide changes have a badge in both overviews" {
 }
 
 test "edge badges use the gutter margins and the space above the caption" {
-    const Image = values.Image;
     const Region = values.Region;
     const Rows = @import("report_sheet.zig").Rows;
     const allocator = std.testing.allocator;
@@ -402,4 +536,27 @@ test "a distant badge gets a leader outside the marked pixels" {
     try std.testing.expectEqual(white, pixels[150]);
     try std.testing.expectEqual(background, pixels[49]);
     try std.testing.expectEqual(background, pixels[320]);
+}
+
+test "overview leaders move a blocked badge near the edited box" {
+    const width = 320;
+    const height = 200;
+    var pixels: [width * height]Pixel = @splat(white);
+    const image: Image = .{ .width = width, .height = height, .pixels = &pixels };
+    const patch: Crop = .{
+        .from = .{ .x = 0, .y = 0, .w = width, .h = height },
+        .to = .{ .x = 60, .y = 0, .w = width, .h = height },
+    };
+    const mark: Rect = .{ .x = 330, .y = 70, .w = 20, .h = 20 };
+    const aligned: Rect = .{ .x = 0, .y = 60, .w = 40, .h = 40 };
+    const diagonal: Rect = .{ .x = 0, .y = 39, .w = 40, .h = 40 };
+    try std.testing.expect(routeBadge(mark, aligned, image, patch, 40, &.{}).leader);
+    for (78..83) |y| @memset(pixels[y * width + 20 ..][0..15], palette.ink);
+    for (60..69) |y| @memset(pixels[y * width + 95 ..][0..18], palette.ink);
+    for ([_]Rect{ aligned, diagonal }) |outside| {
+        const route = routeBadge(mark, outside, image, patch, 40, &.{});
+        try std.testing.expect(!route.leader);
+        try std.testing.expect(!std.meta.eql(route.position.?, outside));
+        try std.testing.expect(route.position.?.distanceSquared(mark) <= 40 * 40);
+    }
 }

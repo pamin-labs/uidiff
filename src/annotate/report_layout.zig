@@ -121,7 +121,7 @@ pub const Plan = struct {
         errdefer allocator.free(details);
         errdefer allocator.free(focuses);
         const captions = layoutCaptions(layout, panes, size.width);
-        try placeBadges(allocator, details, focuses, panes, size, layout, captions.bounds, if (moves.len != 0 and !layout.wide) .alignment else .plain);
+        try placeBadges(allocator, details, focuses, panes, .{ before, after }, size, layout, captions.bounds, if (moves.len != 0 and !layout.wide) .alignment else .plain);
         if (details.len != 0) size.height = content.end + layout.px(margin) - layout.px(detail_gap);
         if (size.width > max_sheet_width or size.pixelCount() == null) return error.SheetTooLarge;
 

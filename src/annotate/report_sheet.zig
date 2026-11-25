@@ -122,8 +122,8 @@ pub const Rows = struct {
         const badge_reach = overviewDiameter(ui);
         if (y + badge_reach >= a.y and y < plan.pane_end + badge_reach) {
             for (plan.details) |detail| {
-                drawMark(line, detail.before_mark, detail.before_badge, detail, ui);
-                drawMark(line, detail.after_mark, detail.after_badge, detail, ui);
+                drawMark(line, detail.before_mark, detail.before_badge, detail.overview_leaders[0], detail, ui);
+                drawMark(line, detail.after_mark, detail.after_badge, detail.overview_leaders[1], detail, ui);
             }
         }
         if (plan.details.len != 0 and y >= plan.pane_end) {
@@ -170,8 +170,8 @@ pub const Rows = struct {
             }
             for (plan.details) |detail| {
                 if (detail.focus != index) continue;
-                for (detail.focus_marks, detail.focus_badges) |mark, location| {
-                    drawMark(line, mark, location, detail, plan.layout);
+                for (detail.focus_marks, detail.focus_badges, detail.focus_leaders) |mark, location, leader| {
+                    drawMark(line, mark, location, leader, detail, plan.layout);
                 }
             }
             return;
