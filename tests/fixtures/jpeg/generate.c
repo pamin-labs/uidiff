@@ -7,10 +7,13 @@
 enum { width = UIDIFF_FIXTURE_WIDTH, height = UIDIFF_FIXTURE_HEIGHT, quality = 87 };
 
 struct profile {
+    const char *filename;
     J_COLOR_SPACE color;
     int vertical_sampling;
     int progressive;
 };
+
+#include "jpeg_fixture_profiles.h"
 
 static void generate(const struct profile *profile, FILE *file) {
     struct jpeg_compress_struct encoder;
@@ -48,18 +51,10 @@ static void generate(const struct profile *profile, FILE *file) {
 }
 
 int main(int argc, char **argv) {
-    const struct profile profiles[] = {
-        { JCS_YCbCr, 2, 0 },
-        { JCS_YCbCr, 1, 0 },
-        { JCS_YCbCr, 2, 1 },
-        { JCS_GRAYSCALE, 1, 0 },
-        { JCS_CMYK, 1, 0 },
-        { JCS_YCCK, 1, 0 },
-    };
     const size_t count = sizeof profiles / sizeof *profiles;
-    if (argc != (int)count + 2) return EXIT_FAILURE;
+    if (argc != 2) return EXIT_FAILURE;
     for (size_t i = 0; i < count; ++i) {
-        const char *name = argv[i + 2];
+        const char *name = profiles[i].filename;
         const size_t capacity = strlen(argv[1]) + strlen(name) + sizeof "/";
         char *path = malloc(capacity);
         if (!path) return EXIT_FAILURE;

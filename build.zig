@@ -865,6 +865,7 @@ fn addJpegFixtures(b: *Build) Build.LazyPath {
     configureJpeg(b, module, jpeg, config, false);
     module.addCMacro("UIDIFF_FIXTURE_WIDTH", b.fmt("{d}", .{fixtures.jpeg.width}));
     module.addCMacro("UIDIFF_FIXTURE_HEIGHT", b.fmt("{d}", .{fixtures.jpeg.height}));
+    _ = config.add("jpeg_fixture_profiles.h", jpegProfileHeader(b));
     module.addCSourceFile(.{ .file = b.path(fixtures.jpeg.directory ++ "/generate.c"), .flags = &.{"-ffp-contract=off"} });
     const source = readDependencySource(b, jpeg, "CMakeLists.txt");
     const copyright_year = pinnedValue(source, "\nset(COPYRIGHT_YEAR \"", '"');
@@ -881,11 +882,28 @@ fn addJpegFixtures(b: *Build) Build.LazyPath {
     const output = run.addOutputDirectoryArg("jpeg-fixtures");
     const update = b.addUpdateSourceFiles();
     for (fixtures.jpeg.profiles) |profile| {
-        run.addArg(profile.file);
         update.addCopyFileToSource(output.path(b, profile.file), b.fmt("{s}/{s}", .{ fixtures.jpeg.directory, profile.file }));
     }
     b.step("jpeg-fixtures", "Regenerate the small JPEG profile fixtures with the pinned encoder").dependOn(&update.step);
     return output;
+}
+
+fn jpegProfileHeader(b: *Build) []const u8 {
+    var rows: std.ArrayList(u8) = .empty;
+    rows.appendSlice(b.allocator, "static const struct profile profiles[] = {\n") catch @panic("OOM");
+    for (fixtures.jpeg.profiles) |profile| {
+        const color = switch (profile.encoding.color) {
+            .ycbcr => "JCS_YCbCr",
+            .gray => "JCS_GRAYSCALE",
+            .cmyk => "JCS_CMYK",
+            .ycck => "JCS_YCCK",
+        };
+        rows.appendSlice(b.allocator, b.fmt("    {{ \"{s}\", {s}, {d}, {d} }},\n", .{
+            profile.file, color, profile.encoding.vertical_samples, @intFromBool(profile.encoding.progressive),
+        })) catch @panic("OOM");
+    }
+    rows.appendSlice(b.allocator, "};\n") catch @panic("OOM");
+    return rows.items;
 }
 
 test {
