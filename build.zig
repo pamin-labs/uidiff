@@ -136,7 +136,7 @@ pub fn build(b: *Build) void {
     const lib = libraryOptions(b, target, optimize, decoders);
     const uidiff = b.addModule("uidiff", lib);
     linkShippedCodecs(b, uidiff, target, x86_simd, false);
-    // Keep the measured arm64 Linux release default. Other targets opt in for benchmarking.
+    // Enable LTO for the measured Linux musl release targets. Windows opts in for benchmarking.
     const os = target.result.os.tag;
     const arch = target.result.cpu.arch;
     const linux_musl = os == .linux and target.result.abi == .musl;
@@ -145,7 +145,7 @@ pub fn build(b: *Build) void {
     const requested_lto = b.option(bool, "cli-lto", "Override LTO for Linux musl or Windows ReleaseSafe CLIs");
     if (requested_lto == true and !can_lto) @panic("-Dcli-lto=true requires an arm64 or x86-64 Linux musl or Windows ReleaseSafe target");
     // Keep bitcode archives out of the public module consumed by other builds.
-    const use_lto = requested_lto orelse (can_lto and linux_musl and arch == .aarch64);
+    const use_lto = requested_lto orelse (can_lto and linux_musl);
     const cli_library = if (use_lto) b.createModule(lib) else uidiff;
     if (use_lto) linkShippedCodecs(b, cli_library, target, x86_simd, true);
 
