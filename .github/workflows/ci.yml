@@ -33,6 +33,13 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-24.04-arm
+            rows_only: true
+          - os: macos-15-intel
+            rows_only: true
+          - os: windows-11-arm
+            rows_only: true
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -42,27 +49,16 @@ jobs:
         with:
           cache-key: ${{ matrix.os }}
       - run: zig build test
+        if: ${{ !matrix.rows_only }}
       - run: zig build e2e
+        if: ${{ !matrix.rows_only }}
       - run: zig build test-threaded
-        if: runner.os == 'Linux'
-      - run: zig build test -Dcpu=baseline -Dx86-simd=without_avx2 "-Dtest-filter=streaming PNG matches procedural RGBA across dictionary wraps"
+        if: runner.os == 'Linux' && !matrix.rows_only
+      - run: zig build test-x86-fallback
         if: runner.os == 'Linux' && runner.arch == 'X64'
 
-  png-rows:
-    if: github.event_name == 'pull_request'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04-arm, macos-15-intel, windows-11-arm]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          persist-credentials: false
-      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
-        with:
-          cache-key: png-rows-${{ matrix.os }}
-      - run: zig build test "-Dtest-filter=RGB8"
+      - run: zig build test-png-rows
+        if: matrix.rows_only
 
   clean-build:
     if: github.event_name == 'pull_request'
@@ -74,9 +70,7 @@ jobs:
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           use-cache: false
-      - run: |
-          zig build -Doptimize=safe
-          zig build test
+      - run: zig build -Doptimize=safe
         env:
           ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/uidiff-clean-zig-cache
 
@@ -100,7 +94,6 @@ jobs:
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           cache-key: ${{ matrix.target }}
-      - run: zig build -Doptimize=safe -Dtarget="${{ matrix.target }}"
       - run: zig build size -Doptimize=safe -Dtarget="${{ matrix.target }}"
 
   font:
@@ -131,4 +124,3 @@ jobs:
           persist-credentials: false
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
       - run: zig build bench
-      - run: zig build size

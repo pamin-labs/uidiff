@@ -95,6 +95,15 @@ test "module roots expose their API" {
     inline for (.{ values, diff, codec, annotate, report, files }) |module| std.testing.refAllDecls(module);
 }
 
+test "required test selection" {
+    const filter = @import("required_test_options").filter;
+    if (filter.len == 0) return;
+    for (@import("builtin").test_functions) |entry| {
+        if (std.mem.indexOf(u8, entry.name, filter) != null) return;
+    }
+    return error.NoSelectedTests;
+}
+
 test {
     std.testing.refAllDecls(@This());
 }

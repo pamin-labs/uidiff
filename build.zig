@@ -175,6 +175,7 @@ pub fn build(b: *Build) void {
     const host_generator = if (target.query.isNative()) generator else fixtureGenerator(b, b.graph.host, addDecoders(b, b.graph.host));
     addTests(b, target, test_mode, decoders, install_cli, host_generator, x86_simd);
     addThreadedTest(b, target, decoders);
+    addPngTestGates(b, target, test_mode, decoders);
     addBenchmark(b, target, optimize, uidiff);
     const fuzz_count = b.addWriteFiles().add("fuzz-target-count.txt", b.fmt("{d}\n", .{fuzz_targets.len + library_fuzz_targets}));
     const fuzz_count_install = b.addInstallFile(fuzz_count, "fuzz-target-count.txt");
@@ -185,6 +186,8 @@ pub fn build(b: *Build) void {
 
 /// The library module's options, without its C decoders.
 fn libraryOptions(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoders: Decoders) Build.Module.CreateOptions {
+    const defaults = b.addOptions();
+    defaults.addOption([]const u8, "filter", "");
     return .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
@@ -196,6 +199,7 @@ fn libraryOptions(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, d
             .{ .name = "webp_c", .module = decoders.webp },
             .{ .name = "zlib_c", .module = decoders.zlib },
             .{ .name = "codec_memory", .module = decoders.memory },
+            .{ .name = "required_test_options", .module = defaults.createModule() },
         }) catch @panic("OOM"),
     };
 }
@@ -686,9 +690,30 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
 fn addThreadedTest(b: *Build, target: Build.ResolvedTarget, decoders: Decoders) void {
     const module = addCheckedLibrary(b, target, .debug, decoders, .shipped);
     module.sanitize_thread = true;
-    const tests = b.addTest(.{ .root_module = module, .filters = &.{"overlapped PNG decodes"} });
-    const run = b.addRunArtifact(tests);
-    b.step("test-threaded", "Check overlapping decodes under ThreadSanitizer").dependOn(&run.step);
+    addRequiredTest(b, module, "test-threaded", "Check overlapping decodes under ThreadSanitizer", "overlapped PNG decodes");
+}
+
+fn addPngTestGates(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoders: Decoders) void {
+    const rows = addCheckedLibrary(b, target, optimize, decoders, .shipped);
+    addRequiredTest(b, rows, "test-png-rows", "Check the RGB8 streaming row paths", "RGB8");
+    if (target.result.cpu.arch != .x86_64) {
+        b.step("test-x86-fallback", "Check PNG dictionary wrapping without AVX2")
+            .dependOn(&b.addFail("test-x86-fallback requires an x86_64 target").step);
+        return;
+    }
+    var query = target.query;
+    query.cpu_model = .baseline;
+    const baseline = b.resolveTargetQuery(query);
+    const fallback = addCheckedLibrary(b, baseline, optimize, addDecoders(b, baseline), .without_avx2);
+    addRequiredTest(b, fallback, "test-x86-fallback", "Check PNG dictionary wrapping without AVX2", "streaming PNG matches procedural RGBA across dictionary wraps");
+}
+
+fn addRequiredTest(b: *Build, library: *Build.Module, name: []const u8, description: []const u8, filter: []const u8) void {
+    const options = b.addOptions();
+    options.addOption([]const u8, "filter", filter);
+    library.addImport("required_test_options", options.createModule());
+    const filters = b.allocator.dupe([]const u8, &.{ filter, "required test selection" }) catch @panic("OOM");
+    b.step(name, description).dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = library, .filters = filters })).step);
 }
 
 fn addE2e(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, uidiff: *Build.Module, cases: *Build.Module, install_cli: *Build.Step.InstallArtifact) *Build.Step {

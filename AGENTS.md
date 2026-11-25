@@ -56,6 +56,7 @@ Named build modules, and the only files that may import them. The `export` row n
 | `fixtures` | `tests/e2e.zig` `tests/decode.zig` `tests/fuzz/` |
 | `e2e_options` | `tests/e2e.zig` |
 | `fixture_options` | `tests/fixtures/fresh.zig` |
+| `required_test_options` | `src/root.zig` |
 | `export` | `src/codec/memory.zig` |
 
 ## Decoders
@@ -70,10 +71,12 @@ The noninterlaced RGB8 and RGBA8 PNG path uses zlib-ng to inflate scanlines into
 - `zig build test`
 - `zig build e2e`
 - `zig build test-threaded` on Linux
+- `zig build test-png-rows` and `zig build test-x86-fallback` on the CI architectures
 - `bash scripts/fuzz.sh` (every fuzz target: the CLI's argument parser and each file in `tests/fuzz/`)
 - `zig build bench`
 - `zig build size`
 - `python3 scripts/generate-font.py --check` (offline, checked against the pinned atlas digest)
+- `zig build -Doptimize=safe` from an empty dependency and global cache
 - `zig build -Doptimize=safe -Dtarget=<target>` for each target in `.github/workflows/ci.yml`
 
 `zig build test` fails when the committed fixtures differ from a fresh generation. `zig build fixtures` regenerates them on the host. `zig build fixture-generator -Dtarget=<target>` builds the generator for a target without running it.
