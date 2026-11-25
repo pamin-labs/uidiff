@@ -5,13 +5,15 @@ const stb = @import("codec/stb.zig");
 const webp = @import("codec/webp.zig");
 const jpeg = @import("codec/jpeg.zig");
 const png = @import("codec/png.zig");
-const png_format = @import("codec/png_format.zig");
 const memory = @import("codec_memory");
 const Allocator = std.mem.Allocator;
 const Image = values.Image;
 const Pixel = values.Pixel;
 const Size = values.Size;
 const Io = std.Io;
+
+/// Procedural JPEG inputs shared by the decoder and pair tests.
+pub const jpeg_test_images = @import("codec/jpeg_test_images.zig");
 
 /// Writes a valid image as PNG.
 pub const encodePng = png.write;
@@ -81,38 +83,17 @@ pub const FileInput = struct {
         self.file.close(io);
     }
 
-    /// Sniffs the bounded PNG profile without relying on its name.
-    pub fn isStreaming(self: FileInput, io: Io) ReadError!bool {
-        if (self.length < png_format.header_bytes or self.length > concurrent_encoded_bytes) return false;
-        var prefix: [png_format.header_bytes]u8 = undefined;
-        try readBytes(io, self.file, &prefix);
-        return png.streamingHeader(&prefix);
-    }
-
     /// Decodes any supported profile from this handle. The caller owns the pixels.
     pub fn decode(self: FileInput, io: Io, allocator: Allocator, cap: usize) (ReadError || DecodeError)!Decoded {
         const bytes = try readEncoded(io, allocator, self.file, self.length);
         defer values.freeUnfilled(u8, allocator, bytes);
         return decodeCapped(allocator, bytes, cap);
     }
-
-    /// Tries the bounded PNG decoder after isStreaming succeeds. Null requests
-    /// the ordered fallback. The caller owns any returned pixels.
-    pub fn stream(self: FileInput, io: Io, allocator: Allocator, cap: usize) (ReadError || DecodeError)!?Decoded {
-        const bytes = try readEncoded(io, allocator, self.file, self.length);
-        defer values.freeUnfilled(u8, allocator, bytes);
-        if (!png.matches(bytes)) return null;
-        const probed = try probeFormat(png.probe, allocator, bytes, cap);
-        const pixels = (try png.loadStreaming(allocator, bytes, probed.header, probed.limit)) orelse return null;
-        return owned(probed.header.size, pixels, allocator, .png);
-    }
 };
 
 const formats = .{ .png = png, .jpeg = jpeg, .webp = webp };
 
 const probe_prefix_bytes = 4096;
-// Keep the extra encoded buffer cheap for comparisons that load two files.
-const concurrent_encoded_bytes = 1024 * 1024;
 
 /// Checks the encoded size, image dimensions and decode budget before
 /// allocating pixels. The caller owns the result.

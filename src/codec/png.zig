@@ -121,11 +121,6 @@ pub fn decode(allocator: Allocator, bytes: []const u8, header: stb.Header, cap: 
     return load(allocator, bytes, header, cap);
 }
 
-/// Recognizes noninterlaced RGB8 and RGBA8 without decoding the image.
-pub fn streamingHeader(bytes: []const u8) bool {
-    return scanlines.streamingHeader(bytes);
-}
-
 /// Runs bounded scanline decoding. Null requests the legacy fallback.
 pub fn loadStreaming(allocator: Allocator, bytes: []const u8, header: stb.Header, cap: usize) DecodeError!?[]values.Pixel {
     return stb.withDecodeBudget(scanlines.decode, allocator, bytes, header, cap);
@@ -595,7 +590,7 @@ test "RGB8 streaming leaves grayscale, indexed, wide and interlaced PNGs to stb"
         header[png_format.profile_offset] = profile.depth;
         header[png_format.header_bytes - 1] = profile.interlace;
         std.mem.writeInt(u32, header[png_format.header_bytes..][0..4], std.hash.Crc32.hash(header[checksum_start..png_format.header_bytes]), .big);
-        try std.testing.expect(!streamingHeader(&header));
+        try std.testing.expect(!scanlines.streamingHeader(&header));
 
         var patched: Writer.Allocating = .init(allocator);
         defer patched.deinit();
@@ -621,22 +616,22 @@ test "the streaming probe agrees with the PNG header layout" {
     const depth, const colour, const interlace = .{ 0, 1, 4 };
     profile[depth] = 8;
     profile[colour] = png_format.rgba_color;
-    try std.testing.expect(streamingHeader(&header));
-    try std.testing.expect(!streamingHeader(header[0 .. header.len - 1]));
+    try std.testing.expect(scanlines.streamingHeader(&header));
+    try std.testing.expect(!scanlines.streamingHeader(header[0 .. header.len - 1]));
     profile[colour] = png_format.rgb_color;
-    try std.testing.expect(streamingHeader(&header));
+    try std.testing.expect(scanlines.streamingHeader(&header));
     profile[depth] = 16;
-    try std.testing.expect(!streamingHeader(&header));
+    try std.testing.expect(!scanlines.streamingHeader(&header));
     profile[depth] = 8;
     profile[interlace] = 1;
-    try std.testing.expect(!streamingHeader(&header));
+    try std.testing.expect(!scanlines.streamingHeader(&header));
     profile[interlace] = 0;
     profile[colour] = 3;
-    try std.testing.expect(!streamingHeader(&header));
+    try std.testing.expect(!scanlines.streamingHeader(&header));
     profile[colour] = png_format.rgba_color;
     for (0..png_format.header_prefix.len) |i| {
         header[i] ^= 1;
-        try std.testing.expect(!streamingHeader(&header));
+        try std.testing.expect(!scanlines.streamingHeader(&header));
         header[i] ^= 1;
     }
 }

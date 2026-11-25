@@ -45,6 +45,7 @@ pub const WriteError = EncodeSheetError || Io.Dir.CreateFileAtomicError ||
 /// File, codec, comparison and sheet failures.
 pub const CompareError = codec.ReadError || codec.DecodeError || diff.CompareError || WriteError;
 
+const DecodeResult = (codec.ReadError || codec.DecodeError)!codec.Decoded;
 const DecodedPair = struct { before: codec.Decoded, after: codec.Decoded };
 
 // Decoder blocks retain their allocator until both images are released.
@@ -132,32 +133,31 @@ fn loadPair(io: Io, shared: *SharedAllocator, paths: Paths, cap: usize, diagnost
     diagnostics.path = paths.before;
     const first = try codec.FileInput.open(io, paths.before);
     defer first.close(io);
-    if (!try first.isStreaming(io)) return decodeInOrder(io, allocator, first, null, paths, cap, diagnostics);
-    const second = codec.FileInput.open(io, paths.after) catch return decodeInOrder(io, allocator, first, null, paths, cap, diagnostics);
+    const second = codec.FileInput.open(io, paths.after) catch
+        return decodeInOrder(io, allocator, first, null, paths, cap, diagnostics);
     defer second.close(io);
-    if (!(second.isStreaming(io) catch false))
-        return decodeInOrder(io, allocator, first, second, paths, cap, diagnostics);
-
+    // The caller decodes before while one worker decodes after. Keep the
+    // shared allocator and both handles alive until the worker has joined.
     const locked = shared.allocator();
-    var future = io.concurrent(codec.FileInput.stream, .{ second, io, locked, cap }) catch |err| switch (err) {
-        // Some Io providers have no worker. Both open files remain usable.
-        error.ConcurrencyUnavailable => return decodeInOrder(io, allocator, first, second, paths, cap, diagnostics),
-    };
-    const streamed = first.stream(io, locked, cap) catch |err| {
-        discardStreaming(future.cancel(io));
+    var second_result: DecodeResult = undefined;
+    const worker = std.Thread.spawn(.{}, decodeOnThread, .{ second, io, locked, cap, &second_result }) catch
+        return decodeInOrder(io, allocator, first, second, paths, cap, diagnostics);
+    const first_result = first.decode(io, locked, cap);
+    worker.join();
+    var before = first_result catch |err| {
+        if (second_result) |image| {
+            var unused = image;
+            unused.deinit();
+        } else |_| {}
         return err;
     };
-    if (streamed) |image| {
-        var before = image;
-        errdefer before.deinit();
-        diagnostics.path = paths.after;
-        const after = (try future.await(io)) orelse try second.decode(io, allocator, cap);
-        return .{ .before = before, .after = after };
-    }
-    // An unsupported first PNG profile may need full-image scratch. Release
-    // the second image before falling back to ordered decoding.
-    discardStreaming(future.cancel(io));
-    return decodeInOrder(io, allocator, first, second, paths, cap, diagnostics);
+    errdefer before.deinit();
+    diagnostics.path = paths.after;
+    return .{ .before = before, .after = try second_result };
+}
+
+fn decodeOnThread(input: codec.FileInput, io: Io, allocator: Allocator, cap: usize, output: *DecodeResult) void {
+    output.* = input.decode(io, allocator, cap);
 }
 
 fn decodeInOrder(io: Io, allocator: Allocator, first: codec.FileInput, second: ?codec.FileInput, paths: Paths, cap: usize, diagnostics: *Diagnostics) CompareError!DecodedPair {
@@ -167,17 +167,6 @@ fn decodeInOrder(io: Io, allocator: Allocator, first: codec.FileInput, second: ?
     diagnostics.path = paths.after;
     const after = if (second) |input| try input.decode(io, allocator, cap) else try codec.decodeFileCapped(io, allocator, paths.after, cap);
     return .{ .before = before, .after = after };
-}
-
-fn discardStreaming(result: (codec.ReadError || codec.DecodeError)!?codec.Decoded) void {
-    if (result) |decoded| {
-        if (decoded) |image| {
-            var unused = image;
-            unused.deinit();
-        }
-    } else |_| {
-        // The ordered decode owns diagnostics for this attempt.
-    }
 }
 
 fn preflightSheet(io: Io, allocator: Allocator, paths: Paths, sheet_path: []const u8, cap: usize, diagnostics: *Diagnostics) CompareError!void {
@@ -221,7 +210,7 @@ test "an invalid scale clears file diagnostics before loading" {
     try std.testing.expectEqual(@as(?[]const u8, null), diagnostics.path);
 }
 
-test "overlapped PNG decodes keep before-side error priority" {
+test "overlapped decodes preserve PNG and JPEG errors and results" {
     const io = std.testing.io;
     const allocator = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
@@ -239,19 +228,44 @@ test "overlapped PNG decodes keep before-side error priority" {
     defer allocator.free(before);
     const after = try tmp.dir.realPathFileAlloc(io, after_name, allocator);
     defer allocator.free(after);
-    var diagnostics: Diagnostics = .{};
     const paths: Paths = .{ .before = before, .after = after };
-    const same = try compareFiles(io, allocator, paths, .{}, &diagnostics);
-    defer same.deinit(allocator);
-    try std.testing.expectEqual(@as(usize, 0), same.regions.len);
-    const truncated = output.written()[0..41];
+    const samples = [_][]const u8{ output.written(), &codec.jpeg_test_images.gray };
+    for (samples) |old| {
+        for (samples) |new| {
+            var a = try codec.decode(allocator, old);
+            defer a.deinit();
+            var b = try codec.decode(allocator, new);
+            defer b.deinit();
+            const expected = try diff.compare(allocator, a.image, b.image, .{});
+            defer expected.deinit(allocator);
+
+            try tmp.dir.writeFile(io, .{ .sub_path = before_name, .data = old });
+            try tmp.dir.writeFile(io, .{ .sub_path = after_name, .data = new });
+            var diagnostics: Diagnostics = .{};
+            const actual = try compareFiles(io, allocator, paths, .{}, &diagnostics);
+            defer actual.deinit(allocator);
+            try std.testing.expectEqualDeep(expected, actual);
+            try std.testing.expectEqual(@as(?[]const u8, null), diagnostics.path);
+        }
+    }
+
+    var diagnostics: Diagnostics = .{};
+    const jpeg = &codec.jpeg_test_images.gray;
+    const truncated = jpeg[0 .. jpeg.len - codec.jpeg_test_images.eoi.len];
     try tmp.dir.writeFile(io, .{ .sub_path = before_name, .data = truncated });
-    try tmp.dir.writeFile(io, .{ .sub_path = after_name, .data = truncated });
+    try tmp.dir.writeFile(io, .{ .sub_path = after_name, .data = "unsupported" });
     try std.testing.expectError(error.InvalidImage, compareFiles(io, allocator, paths, .{}, &diagnostics));
     try std.testing.expectEqualStrings(before, diagnostics.path.?);
-    try tmp.dir.writeFile(io, .{ .sub_path = before_name, .data = output.written() });
+    try tmp.dir.writeFile(io, .{ .sub_path = before_name, .data = jpeg });
+    try tmp.dir.writeFile(io, .{ .sub_path = after_name, .data = truncated });
     try std.testing.expectError(error.InvalidImage, compareFiles(io, allocator, paths, .{}, &diagnostics));
     try std.testing.expectEqualStrings(after, diagnostics.path.?);
+    try tmp.dir.deleteFile(io, after_name);
+    try std.testing.expectError(error.FileNotFound, compareFiles(io, allocator, paths, .{}, &diagnostics));
+    try std.testing.expectEqualStrings(after, diagnostics.path.?);
+    try tmp.dir.writeFile(io, .{ .sub_path = before_name, .data = truncated });
+    try std.testing.expectError(error.InvalidImage, compareFiles(io, allocator, paths, .{}, &diagnostics));
+    try std.testing.expectEqualStrings(before, diagnostics.path.?);
 }
 
 test {

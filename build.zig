@@ -749,7 +749,7 @@ fn addFuzzInventory(b: *Build, inventory: *Build.Step.Run, module: *Build.Module
 fn addThreadedTest(b: *Build, target: Build.ResolvedTarget, decoders: Decoders) void {
     const module = addCheckedLibrary(b, target, .debug, decoders, .shipped);
     module.sanitize_thread = true;
-    addRequiredTest(b, module, "test-threaded", "Check overlapping decodes under ThreadSanitizer", "overlapped PNG decodes");
+    addRequiredTest(b, module, "test-threaded", "Check overlapping decodes under ThreadSanitizer", "overlapped decodes");
 }
 
 fn addPngTestGates(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoders: Decoders) void {
