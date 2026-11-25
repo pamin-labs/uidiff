@@ -167,6 +167,30 @@ const Scrim = struct {
 
 const HorizontalExterior = enum { above, below };
 
+const PixelRect = struct {
+    left: usize,
+    right: usize,
+    top: usize,
+    bottom: usize,
+
+    fn fromBox(box: Box) PixelRect {
+        return .{ .left = @intFromFloat(box.x), .right = @intFromFloat(box.right()), .top = @intFromFloat(box.y), .bottom = @intFromFloat(box.bottom()) };
+    }
+};
+
+const PanelEdge = union(enum) {
+    fill: values.Pixel,
+    scrim: Scrim,
+};
+
+const ShadowCheck = struct {
+    area: PixelRect,
+    panel: PixelRect,
+    scrim: Scrim,
+    radius: usize,
+    pitch: usize,
+};
+
 /// Rows of a mask, inclusive.
 const RowRange = struct { first: usize, last: usize };
 
@@ -293,10 +317,14 @@ const scrim_min_shadow_transmission = 0.82;
 const scrim_window_contrast = 12.0;
 const floating_panel_height = values.CssPx.init(96);
 const floating_panel_width_to_height = 3;
-const floating_panel_min_contrast = 32;
+const floating_panel_min_width = 4;
+const floating_panel_min_fill_height_divisor = 2;
+const rgb_channels = 3;
+const floating_panel_min_contrast = rgb_channels * 32;
 const floating_panel_inset_divisor = 4;
 const floating_panel_edge_fringe = 3;
 const existing_panel_width_divisor = 2;
+const floating_shadow_pitch = 1;
 const identity_scrim: Scrim = .{ .transmission = 1, .base = @splat(0) };
 const max_swap_pitch = values.CssPx.init(128);
 const tab_parts = 3;
@@ -605,57 +633,59 @@ fn containsMove(box: Box, rows: values.RowRange, move: values.Move, slack: f64, 
 }
 
 fn floatingPanel(before: Image, after: Image, box: Box, max_height: f64, radius: usize) bool {
-    if (box.height > max_height or box.width < @max(floating_panel_inset_divisor, floating_panel_width_to_height * box.height)) return false;
-    const x: usize = @intFromFloat(box.x);
-    const y: usize = @intFromFloat(box.y);
-    const x_end: usize = @intFromFloat(box.right());
-    const y_end: usize = @intFromFloat(box.bottom());
-    const px = x_end - boxPixelInset(x_end - x);
-    const py = y + (y_end - y) / 2;
-    const fill = after.row(py)[px];
-    if (fill[3] != 255) return false;
-    var top = py;
-    while (top > y and pixel.same(after.row(top - 1)[px], fill)) top -= 1;
-    var bottom = py + 1;
-    while (bottom < y_end and pixel.same(after.row(bottom)[px], fill)) bottom += 1;
-    const height = bottom - top;
-    if (height < (y_end - y) / 2 or top == 0 or bottom + floating_panel_edge_fringe >= y_end) return false;
-    if (toneDistance(fill, before.row(top)[px]) < 3 * floating_panel_min_contrast and
-        toneDistance(fill, before.row(bottom - 1)[px]) < 3 * floating_panel_min_contrast) return false;
-
-    const inner = after.row(top + boxPixelInset(height));
-    var left = px;
-    while (left > x and pixel.same(inner[left - 1], fill)) left -= 1;
-    var right = px + 1;
-    while (right < x_end and pixel.same(inner[right], fill)) right += 1;
-    const width = right - left;
-    if (width < (x_end - x) - boxPixelInset(x_end - x) or left == 0 or right >= after.width) return false;
-    // A replacement fill also has straight sides. Require a new shadow beside
-    // the rectangle and check the rest of the box for other changes.
-    const shadow_y = bottom + floating_panel_edge_fringe;
-    if (pixel.same(before.row(shadow_y)[px], after.row(shadow_y)[px])) return false;
-    const inset = boxPixelInset(width);
-    if (inset == 0) return false;
-    for ([_]usize{ top, bottom - 1 }) |yy| {
-        for (after.row(yy)[left + inset .. right - inset]) |p| if (!pixel.same(p, fill)) return false;
-    }
-    for (top + boxPixelInset(height)..bottom - boxPixelInset(height)) |yy| {
-        const row = after.row(yy);
-        if (!pixel.same(row[left], fill) or !pixel.same(row[right - 1], fill)) return false;
-    }
-    const panel = Box.fromPixels(left, top, width, height);
-    return !existingPanel(before, box, panel) and panelShadow(before, after, box, panel, radius);
+    if (box.height > max_height or box.width < @max(floating_panel_min_width, floating_panel_width_to_height * box.height)) return false;
+    const area = PixelRect.fromBox(box);
+    const panel = panelRect(after, area) orelse return false;
+    const x = area.right - boxPixelInset(area.right - area.left);
+    const fill = after.row(panel.top)[x];
+    if (toneDistance(fill, before.row(panel.top)[x]) < floating_panel_min_contrast and
+        toneDistance(fill, before.row(panel.bottom - 1)[x]) < floating_panel_min_contrast) return false;
+    const shadow_y = panel.bottom + floating_panel_edge_fringe;
+    if (pixel.same(before.row(shadow_y)[x], after.row(shadow_y)[x])) return false;
+    return !existingPanel(before, area, panel) and checkShadow(before, after, .{
+        .area = area,
+        .panel = panel,
+        .scrim = identity_scrim,
+        .radius = radius,
+        .pitch = floating_shadow_pitch,
+    });
 }
 
-fn existingPanel(before: Image, box: Box, panel: Box) bool {
-    const x: usize = @intFromFloat(box.x);
-    const right: usize = @intFromFloat(box.right());
-    const top: usize = @intFromFloat(panel.y);
-    const bottom: usize = @intFromFloat(panel.bottom());
-    const minimum: usize = @as(usize, @intFromFloat(panel.width)) / existing_panel_width_divisor;
-    var y = top;
-    while (y < bottom) : (y += scrim_sample_pitch) {
-        const row = before.row(y)[x..right];
+fn panelRect(image: Image, area: PixelRect) ?PixelRect {
+    const x = area.right - boxPixelInset(area.right - area.left);
+    const y = area.top + (area.bottom - area.top) / 2;
+    const fill = image.row(y)[x];
+    if (fill[3] != 255) return null;
+    const edge: PanelEdge = .{ .fill = fill };
+    const origin = y * image.width + x;
+    const stride: isize = @intCast(image.width);
+    const top = y - panelReach(image, image, edge, origin, y - area.top, -stride);
+    const bottom = y + 1 + panelReach(image, image, edge, origin, area.bottom - y - 1, stride);
+    const height = bottom - top;
+    if (height < (area.bottom - area.top) / floating_panel_min_fill_height_divisor or
+        top == 0 or bottom + floating_panel_edge_fringe >= area.bottom) return null;
+    const inner = (top + boxPixelInset(height)) * image.width + x;
+    const left = x - panelReach(image, image, edge, inner, x - area.left, -1);
+    const right = x + 1 + panelReach(image, image, edge, inner, area.right - x - 1, 1);
+    const width = right - left;
+    if (width < area.right - area.left - boxPixelInset(area.right - area.left) or left == 0 or right >= image.width) return null;
+    const inset = boxPixelInset(width);
+    if (inset == 0) return null;
+    for ([_]usize{ top, bottom - 1 }) |yy| {
+        for (image.row(yy)[left + inset .. right - inset]) |px| if (!pixel.same(px, fill)) return null;
+    }
+    for (top + boxPixelInset(height)..bottom - boxPixelInset(height)) |yy| {
+        const row = image.row(yy);
+        if (!pixel.same(row[left], fill) or !pixel.same(row[right - 1], fill)) return null;
+    }
+    return .{ .left = left, .right = right, .top = top, .bottom = bottom };
+}
+
+fn existingPanel(before: Image, area: PixelRect, panel: PixelRect) bool {
+    const minimum = (panel.right - panel.left) / existing_panel_width_divisor;
+    var y = panel.top;
+    while (y < panel.bottom) : (y += scrim_sample_pitch) {
+        const row = before.row(y)[area.left..area.right];
         var start: usize = 0;
         for (row[1..], 1..) |p, i| {
             if (pixel.same(p, row[start])) continue;
@@ -674,44 +704,27 @@ fn toneDistance(a: values.Pixel, b: values.Pixel) f32 {
     return @reduce(.Add, @abs(tone(a) - tone(b)));
 }
 
-fn panelShadow(before: Image, after: Image, box: Box, panel: Box, radius: usize) bool {
-    const left: usize = @intFromFloat(panel.x);
-    const right: usize = @intFromFloat(panel.right());
-    const top: usize = @intFromFloat(panel.y);
-    const bottom: usize = @intFromFloat(panel.bottom());
-    const x_start: usize = @intFromFloat(box.x);
-    const x_end: usize = @intFromFloat(box.right());
-    const y_end: usize = @intFromFloat(box.bottom());
-    for (@as(usize, @intFromFloat(box.y))..y_end) |y| {
+fn checkShadow(before: Image, after: Image, check: ShadowCheck) bool {
+    const area = check.area;
+    const panel = check.panel;
+    const radius = check.radius;
+    const last_y = area.bottom - 1;
+    const last_x = area.right - 1;
+    var y = area.top;
+    while (true) : (y = @min(y + check.pitch, last_y)) {
         const old = before.row(y);
         const new = after.row(y);
-        for (x_start..x_end) |x| {
-            if (y >= top and y < bottom and x >= left and x < right) continue;
-            if (pixel.same(old[x], new[x])) continue;
-            if (y < top -| radius or y >= bottom + radius or x < left -| radius or x >= right + radius or
-                !identity_scrim.shadow(old[x], new[x])) return false;
-        }
-    }
-    return true;
-}
-
-fn overlaid(before: Image, after: Image, radius: usize) bool {
-    const scrim = fitScrim(before, after) orelse return false;
-    const panel = panelBounds(before, after, scrim) orelse return false;
-    const last_y = before.height - 1;
-    const last_x = before.width - 1;
-    var y: usize = 0;
-    while (true) : (y = @min(y + scrim_sample_pitch, last_y)) {
-        const a = before.row(y);
-        const b = after.row(y);
         const in_panel_rows = y >= panel.top and y < panel.bottom;
-        var x: usize = 0;
-        while (true) : (x = @min(x + scrim_sample_pitch, last_x)) {
+        var x = area.left;
+        while (true) : (x = @min(x + check.pitch, last_x)) {
             const inside = in_panel_rows and x >= panel.left and x < panel.right;
-            if (!inside and !scrim.matches(a[x], b[x])) {
-                // A drop shadow attenuates the same dimmed content.
-                if (y < panel.top -| radius or y >= panel.bottom + radius or
-                    x < panel.left -| radius or x >= panel.right + radius or !scrim.shadow(a[x], b[x])) return false;
+            if (!inside) {
+                const matches = if (check.pitch == floating_shadow_pitch)
+                    pixel.same(old[x], new[x])
+                else
+                    check.scrim.matches(old[x], new[x]);
+                if (!matches and (y < panel.top -| radius or y >= panel.bottom + radius or
+                    x < panel.left -| radius or x >= panel.right + radius or !check.scrim.shadow(old[x], new[x]))) return false;
             }
             if (x == last_x) break;
         }
@@ -720,7 +733,19 @@ fn overlaid(before: Image, after: Image, radius: usize) bool {
     return true;
 }
 
-fn panelBounds(before: Image, after: Image, scrim: Scrim) ?struct { left: usize, right: usize, top: usize, bottom: usize } {
+fn overlaid(before: Image, after: Image, radius: usize) bool {
+    const scrim = fitScrim(before, after) orelse return false;
+    const panel = panelBounds(before, after, scrim) orelse return false;
+    return checkShadow(before, after, .{
+        .area = .{ .left = 0, .right = before.width, .top = 0, .bottom = before.height },
+        .panel = panel,
+        .scrim = scrim,
+        .radius = radius,
+        .pitch = scrim_sample_pitch,
+    });
+}
+
+fn panelBounds(before: Image, after: Image, scrim: Scrim) ?PixelRect {
     const y = before.height / 2;
     const center = before.width / 2;
     const a = before.row(y);
@@ -735,21 +760,24 @@ fn panelBounds(before: Image, after: Image, scrim: Scrim) ?struct { left: usize,
     const stride: isize = @intCast(before.width);
     const right_extent = before.width - center - 1;
     const lower_extent = before.height - y - 1;
-    const left = panelReach(before, after, scrim, origin, center, -1);
-    const right = panelReach(before, after, scrim, origin, right_extent, 1);
-    const top = panelReach(before, after, scrim, origin, y, -stride);
-    const bottom = panelReach(before, after, scrim, origin, lower_extent, stride);
+    const left = panelReach(before, after, .{ .scrim = scrim }, origin, center, -1);
+    const right = panelReach(before, after, .{ .scrim = scrim }, origin, right_extent, 1);
+    const top = panelReach(before, after, .{ .scrim = scrim }, origin, y, -stride);
+    const bottom = panelReach(before, after, .{ .scrim = scrim }, origin, lower_extent, stride);
     if (left == center or right == right_extent or top == y or bottom == lower_extent) return null;
     return .{ .left = center - left, .right = center + right + 1, .top = y - top, .bottom = y + bottom + 1 };
 }
 
 // Takes a validated ray from a pixel to its row or column boundary.
-noinline fn panelReach(before: Image, after: Image, scrim: Scrim, origin: usize, extent: usize, step: isize) usize {
+noinline fn panelReach(before: Image, after: Image, edge: PanelEdge, origin: usize, extent: usize, step: isize) usize {
     var pos: isize = @intCast(origin);
     for (0..extent) |distance| {
         pos += step;
         const index: usize = @intCast(pos);
-        if (scrim.matches(before.pixels[index], after.pixels[index])) return distance;
+        if (switch (edge) {
+            .scrim => |scrim| scrim.matches(before.pixels[index], after.pixels[index]),
+            .fill => |fill| !pixel.same(after.pixels[index], fill),
+        }) return distance;
     }
     return extent;
 }
