@@ -864,13 +864,20 @@ fn addFixtures(b: *Build, test_step: *Build.Step, generator: *Build.Step.Compile
 
 fn addJpegFixtures(b: *Build) Build.LazyPath {
     const jpeg = b.dependency("libjpeg_turbo", .{});
-    const module = b.createModule(.{ .target = b.graph.host, .optimize = .safe, .link_libc = true });
     const config = b.addWriteFiles();
+    const header = config.add("jpeg_encoder.h", "#include \"jinclude.h\"\n#include \"jpeglib.h\"\n");
+    const c = b.addTranslateC(.{ .root_source_file = header, .target = b.graph.host, .optimize = .safe });
+    c.addIncludePath(config.getDirectory());
+    c.addIncludePath(jpeg.path("src"));
+    c.addIncludePath(b.path("src/codec"));
+    const module = b.createModule(.{
+        .root_source_file = b.path("tests/fixtures/jpeg_generate.zig"),
+        .target = b.graph.host,
+        .optimize = .safe,
+        .link_libc = true,
+        .imports = &.{.{ .name = "jpeg_encode_c", .module = c.createModule() }},
+    });
     configureJpeg(b, module, jpeg, config, false);
-    module.addCMacro("UIDIFF_FIXTURE_WIDTH", b.fmt("{d}", .{fixtures.jpeg.width}));
-    module.addCMacro("UIDIFF_FIXTURE_HEIGHT", b.fmt("{d}", .{fixtures.jpeg.height}));
-    _ = config.add("jpeg_fixture_profiles.h", jpegProfileHeader(b));
-    module.addCSourceFile(.{ .file = b.path(fixtures.jpeg.directory ++ "/generate.c"), .flags = &.{"-ffp-contract=off"} });
     const source = readDependencySource(b, jpeg, "CMakeLists.txt");
     const copyright_year = pinnedValue(source, "\nset(COPYRIGHT_YEAR \"", '"');
     const version_header = readDependencySource(b, jpeg, "src/jversion.h.in");
@@ -890,24 +897,6 @@ fn addJpegFixtures(b: *Build) Build.LazyPath {
     }
     b.step("jpeg-fixtures", "Regenerate the small JPEG profile fixtures with the pinned encoder").dependOn(&update.step);
     return output;
-}
-
-fn jpegProfileHeader(b: *Build) []const u8 {
-    var rows: std.ArrayList(u8) = .empty;
-    rows.appendSlice(b.allocator, "static const struct profile profiles[] = {\n") catch @panic("OOM");
-    for (fixtures.jpeg.profiles) |profile| {
-        const color = switch (profile.encoding.color) {
-            .ycbcr => "JCS_YCbCr",
-            .gray => "JCS_GRAYSCALE",
-            .cmyk => "JCS_CMYK",
-            .ycck => "JCS_YCCK",
-        };
-        rows.appendSlice(b.allocator, b.fmt("    {{ \"{s}\", {s}, {d}, {d} }},\n", .{
-            profile.file, color, profile.encoding.vertical_samples, @intFromBool(profile.encoding.progressive),
-        })) catch @panic("OOM");
-    }
-    rows.appendSlice(b.allocator, "};\n") catch @panic("OOM");
-    return rows.items;
 }
 
 test {

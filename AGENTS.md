@@ -47,6 +47,7 @@ Named build modules, and the only files that may import them. The `export` row n
 | Module | Importers |
 | --- | --- |
 | `stb_c` | `src/codec/stb.zig` |
+| `jpeg_encode_c` | `tests/fixtures/jpeg_generate.zig` |
 | `jpeg_c` | `src/codec/jpeg.zig` |
 | `webp_c` | `src/codec/webp.zig` |
 | `zlib_c` | `src/codec/png.zig` `src/codec/png_scanlines.zig` |
