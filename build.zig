@@ -444,14 +444,18 @@ fn readDependencySource(b: *Build, dependency: *Build.Dependency, name: []const 
 // upstream level's tuning and drop the other compression strategies.
 fn zlibDeflate(b: *Build, zlib: *Build.Dependency) Build.LazyPath {
     const source = readDependencySource(b, zlib, "deflate.c");
-    const table = std.mem.indexOf(u8, source, "static const config configuration_table[10] = {") orelse @panic("zlib-ng level table changed");
-    const medium = std.mem.indexOfPos(u8, source, table, "#else\n/* 3 */") orelse @panic("zlib-ng medium strategy changed");
+    const table_anchor = "static const config configuration_table[10] = {";
+    const medium_anchor = "#else\n/* 3 */";
+    const table_end = " /* max compression */\n\n/* Note: the deflate()";
+    if (std.mem.count(u8, source, table_anchor) != 1 or std.mem.count(u8, source, medium_anchor) != 1)
+        @panic("zlib-ng level table changed");
+    const table = std.mem.indexOf(u8, source, table_anchor).?;
+    const medium = std.mem.indexOfPos(u8, source, table, medium_anchor) orelse @panic("zlib-ng medium strategy changed");
     const tag = b.fmt("/* {d} */ ", .{png_compression_level});
-    const entry = (std.mem.indexOfPos(u8, source, medium, tag) orelse @panic("zlib-ng compression level missing")) + tag.len;
-    const close = (std.mem.indexOfScalarPos(u8, source, entry, '}') orelse @panic("zlib-ng level entry changed")) + 1;
-    const end = (std.mem.indexOfPos(u8, source, close, "}};") orelse @panic("zlib-ng level table changed")) + 3;
-    if (std.mem.indexOf(u8, source[entry..close], "deflate_medium") == null) @panic("zlib-ng level no longer uses the medium strategy");
-    var text = replaceExactly(b.allocator, source, source[table..end], b.fmt("static const config configuration = {s};", .{source[entry..close]}), 1);
+    const medium_end = std.mem.indexOfPos(u8, source, medium, "#endif") orelse @panic("zlib-ng medium strategy has no end");
+    const entry = pinnedValue(source[medium..medium_end], tag, '}');
+    if (std.mem.count(u8, entry, "deflate_medium") != 1) @panic("zlib-ng level no longer uses the medium strategy");
+    var text = replaceRange(b, source, table_anchor, table_end, b.fmt("static const config configuration = {s}}};", .{entry}));
     const dispatch =
         \\s->level == 0 ? deflate_stored(s, flush) :
         \\                 s->strategy == Z_HUFFMAN_ONLY ? deflate_huff(s, flush) :
@@ -469,9 +473,7 @@ fn zlibDeflate(b: *Build, zlib: *Build.Dependency) Build.LazyPath {
 // callbacks by default. Drop those references while preserving its ABI.
 fn zlibDispatch(b: *Build, zlib: *Build.Dependency) Build.LazyPath {
     const source = readDependencySource(b, zlib, "functable.c");
-    const first = std.mem.indexOf(u8, source, "static void crc32_fold_stub(") orelse @panic("zlib-ng dispatch stubs changed");
-    const last = std.mem.indexOfPos(u8, source, first, "static void inflate_fast_stub(") orelse @panic("zlib-ng dispatch stubs changed");
-    var text = replaceExactly(b.allocator, source, source[first..last], "", 1);
+    var text = replaceRange(b, source, "static void crc32_fold_stub(", "static void inflate_fast_stub(", "");
     const removed = [_]struct { []const u8, usize }{
         .{ "    ft.crc32_fold = &crc32_fold_c;\n    ft.crc32_fold_copy = &crc32_fold_copy_c;\n    ft.crc32_fold_final = &crc32_fold_final_c;\n    ft.crc32_fold_reset = &crc32_fold_reset_c;\n", 2 },
         .{ "        ft.crc32_fold = &crc32_fold_pclmulqdq;\n        ft.crc32_fold_copy = &crc32_fold_pclmulqdq_copy;\n        ft.crc32_fold_final = &crc32_fold_pclmulqdq_final;\n        ft.crc32_fold_reset = &crc32_fold_pclmulqdq_reset;\n", 1 },
