@@ -1,3 +1,4 @@
+/* stb_image needs one C translation unit for STB_IMAGE_IMPLEMENTATION. */
 /* Compile only the in-memory PNG paths used by the binding, and
    route every allocation through the binding's Zig allocator. */
 #include "codec_memory.h"

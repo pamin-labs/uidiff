@@ -1,14 +1,11 @@
 #ifndef UIDIFF_JPEG_H
 #define UIDIFF_JPEG_H
 #include <stddef.h>
-#include <stdint.h>
-#include "codec_memory.h"
+#include <stdio.h>
+#include "jpeglib.h"
 
-/* The scan limit used by libjpeg-turbo's fuzzer. */
-#define UIDIFF_JPEG_MAX_SCANS 500
+typedef int (*uidiff_jpeg_run)(j_decompress_ptr decoder, void *context);
 
-/* Returns an RGBA image owned by the active codec-memory allocation scope. */
-uint8_t *uidiff_jpeg_decode(const uint8_t *bytes, size_t len,
-                           uint32_t width, uint32_t height);
-
+int uidiff_jpeg_guard(j_decompress_ptr decoder, uidiff_jpeg_run run, void *context);
+void uidiff_jpeg_fail(j_common_ptr decoder);
 #endif

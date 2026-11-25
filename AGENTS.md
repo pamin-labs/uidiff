@@ -7,6 +7,7 @@ Follow the public pamin-labs/skills engineering rules in [core](.agents/skills/p
 ## Rules
 
 - Prioritize performance, then memory, CPU, and disk use. Size buffers once from the image, keep allocations out of pixel and row loops, and use SIMD on the pixel kernel. Report before and after measurements and the `zig build bench` method for performance claims.
+- Write uidiff code in Zig. A C file is reserved for a C library implementation unit or an ABI operation that Zig cannot supply. Each such file documents why it exists.
 - Use the Zig version and dependency hashes pinned in `build.zig.zon`. Upgrade the toolchain separately.
 - The tests in `tests/` and beside the code are the specification. A behaviour change updates them in the same change.
 - Logs and errors name files and counts only.

@@ -24,6 +24,7 @@ const X86Simd = enum { shipped, baseline, without_ssse3, without_sse4, without_a
 // run with UBSan in the checked test build and in fuzzing.
 const shipped_mode: Optimize = .safe;
 const codec_mode: Optimize = .fast;
+const jpeg_public_config = "#define UIDIFF_JPEG_PUBLIC_CONFIG 1\n#include \"jpeg_build_config.h\"\n#undef UIDIFF_JPEG_PUBLIC_CONFIG\n";
 const png_compression_level = 4;
 /// The shipped CLI's size budget for every CI target. Run zig build size
 /// with -Dtarget to measure a specific binary.
@@ -303,7 +304,7 @@ fn addJpegDecoder(b: *Build, module: *Build.Module, target: Build.ResolvedTarget
     module.addCSourceFile(.{ .file = files.add("jdmaster.c", modifiedJpeg(b, master)), .flags = vendor_flags });
 
     var backing = readDependencySource(b, jpeg, "src/jmemnobs.c");
-    backing = replaceExactly(b.allocator, backing, "#include \"jmemsys.h\"", "#include \"jpeg.h\"\n#include \"jmemsys.h\"", 1);
+    backing = replaceExactly(b.allocator, backing, "#include \"jmemsys.h\"", "#include \"codec_memory.h\"\n#include \"jmemsys.h\"", 1);
     backing = replaceExactly(b.allocator, backing, "MALLOC(sizeofobject)", "uidiff_codec_malloc(sizeofobject)", 2);
     backing = replaceExactly(b.allocator, backing, "free(object);", "uidiff_codec_free(object);", 2);
     module.addCSourceFile(.{ .file = files.add("jmemnobs.c", modifiedJpeg(b, backing)), .flags = vendor_flags });
@@ -350,7 +351,7 @@ fn configureJpeg(b: *Build, module: *Build.Module, jpeg: *Build.Dependency, file
     _ = std.SemanticVersion.parse(version) catch @panic("pinned JPEG version is not a version number");
     module.addCMacro("UIDIFF_JPEG_VERSION", b.fmt("\"{s}\"", .{version}));
     if (neon) module.addCMacro("UIDIFF_JPEG_NEON", "1");
-    _ = files.add("jconfig.h", "#define UIDIFF_JPEG_PUBLIC_CONFIG 1\n#include \"jpeg_build_config.h\"\n#undef UIDIFF_JPEG_PUBLIC_CONFIG\n");
+    _ = files.add("jconfig.h", jpeg_public_config);
     _ = files.add("jconfigint.h", "#define UIDIFF_JPEG_INTERNAL_CONFIG 1\n#include \"jpeg_build_config.h\"\n#undef UIDIFF_JPEG_INTERNAL_CONFIG\n");
     module.addIncludePath(files.getDirectory());
     module.addIncludePath(jpeg.path("src"));
@@ -615,7 +616,13 @@ fn addWebpAllocator(b: *Build, module: *Build.Module, webp: *Build.Dependency, f
 fn addDecoders(b: *Build, target: Build.ResolvedTarget) Decoders {
     const webp = b.dependency("libwebp", .{});
     const stb = b.dependency("stb", .{});
+    const jpeg = b.dependency("libjpeg_turbo", .{});
+    const jpeg_config = b.addWriteFiles();
+    _ = jpeg_config.add("jconfig.h", jpeg_public_config);
     const jpeg_c = b.addTranslateC(.{ .root_source_file = b.path("src/codec/jpeg.h"), .target = target, .optimize = codec_mode });
+    jpeg_c.addIncludePath(jpeg_config.getDirectory());
+    jpeg_c.addIncludePath(jpeg.path("src"));
+    jpeg_c.addIncludePath(b.path("src/codec"));
     const stb_c = b.addTranslateC(.{ .root_source_file = b.path("src/codec/stb.h"), .target = target, .optimize = codec_mode });
     stb_c.addIncludePath(stb.path(""));
     stb_c.defineCMacro("STBI_NO_STDIO", null);
