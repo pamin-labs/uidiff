@@ -3,16 +3,15 @@ const std = @import("std");
 const c = @import("jpeg_c");
 const test_images = @import("jpeg_test_images.zig");
 const memory = @import("codec_memory");
+const decoded_size = @import("dimensions.zig");
 const values = @import("../value.zig");
 const Allocator = std.mem.Allocator;
 const Pixel = values.Pixel;
 const Size = values.Size;
+const Header = decoded_size.Header;
 
 /// Malformed input or a refusal from the codec memory budget.
 pub const DecodeError = memory.Error;
-
-/// Dimensions from the first supported start-of-frame marker.
-pub const Header = struct { size: Size };
 
 const Decode = struct {
     bytes: []const u8,

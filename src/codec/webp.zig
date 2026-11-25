@@ -2,16 +2,15 @@
 const std = @import("std");
 const c = @import("webp_c");
 const memory = @import("codec_memory");
+const decoded_size = @import("dimensions.zig");
 const values = @import("../value.zig");
 const Allocator = std.mem.Allocator;
 const Pixel = values.Pixel;
 const Size = values.Size;
+const Header = decoded_size.Header;
 
 /// Malformed bytes, an exceeded budget, or a failed allocation.
 pub const DecodeError = memory.Error;
-
-/// Validated dimensions of an encoded WebP image.
-pub const Header = struct { size: Size };
 
 const riff = "RIFF";
 const webp = "WEBP";
@@ -41,7 +40,7 @@ pub fn release(allocator: Allocator, pixels: []const Pixel) void {
 
 /// Decodes RGBA8 pixels of a probed size. Assumes size.pixelCount() is not
 /// null. The caller owns the returned slice and releases it through release.
-pub fn load(allocator: Allocator, bytes: []const u8, size: Size, cap: usize) DecodeError![]Pixel {
+fn load(allocator: Allocator, bytes: []const u8, size: Size, cap: usize) DecodeError![]Pixel {
     const count = size.width * size.height;
     const output_bytes = count * @sizeOf(Pixel);
     if (output_bytes > cap) return error.ImageTooLarge;
@@ -63,10 +62,7 @@ fn dimensions(bytes: []const u8) values.Image.Invalid!Size {
     var width: c_int = 0;
     var height: c_int = 0;
     if (c.WebPGetInfo(bytes.ptr, bytes.len, &width, &height) == 0) return error.InvalidImage;
-    return .{
-        .width = std.math.cast(usize, width) orelse return error.InvalidImage,
-        .height = std.math.cast(usize, height) orelse return error.InvalidImage,
-    };
+    return decoded_size.fromC(width, height);
 }
 
 test "a RIFF header without a WebP image is rejected" {

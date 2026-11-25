@@ -5,9 +5,13 @@ const c = @import("stb_c");
 const values = @import("../value.zig");
 const png_format = @import("png_format.zig");
 const memory = @import("codec_memory");
+const decoded_size = @import("dimensions.zig");
 const Allocator = std.mem.Allocator;
 const Pixel = values.Pixel;
 const Size = values.Size;
+
+/// Malformed bytes, a decode past its memory budget, or an allocation failure.
+pub const DecodeError = memory.Error;
 
 /// What a probe reads from the file header.
 pub const Header = struct {
@@ -15,9 +19,6 @@ pub const Header = struct {
     /// Bytes per channel sample: 1, or 2 for a 16-bit PNG.
     sample_bytes: usize,
 };
-
-/// Malformed bytes, a decode past its memory budget, or an allocation failure.
-pub const DecodeError = values.Image.Invalid || Allocator.Error || error{ImageTooLarge};
 
 /// The peak for PNG is Adam7's inflated data, destination and current pass.
 /// Charge each as a full RGBA image at the source sample depth.
@@ -40,7 +41,7 @@ pub fn probe(allocator: Allocator, bytes: []const u8, cap: usize) DecodeError!He
         return memory.failure();
     }
     const sixteen = c.stbi_is_16_bit_from_memory(bytes.ptr, len) != 0;
-    return .{ .size = try size(width, height), .sample_bytes = if (sixteen) 2 else 1 };
+    return .{ .size = try decoded_size.fromC(width, height), .sample_bytes = if (sixteen) 2 else 1 };
 }
 
 /// Decodes a fallback PNG under the caller's budget.
@@ -68,7 +69,7 @@ pub fn loadStb(bytes: []const u8, expected: Size) DecodeError![]Pixel {
     var channels: c_int = 0;
     const data = c.stbi_load_from_memory(bytes.ptr, len, &width, &height, &channels, @sizeOf(Pixel)) orelse return memory.failure();
     errdefer c.stbi_image_free(data);
-    const actual = try size(width, height);
+    const actual = try decoded_size.fromC(width, height);
     if (actual.width != expected.width or actual.height != expected.height) return error.InvalidImage;
     const count = actual.pixelCount() orelse return error.ImageTooLarge;
     // stb allocates the returned block through our memory hooks.
@@ -94,13 +95,6 @@ fn budget(header: Header, encoded_len: usize) ?usize {
     const scaled = std.math.mul(usize, image, header.sample_bytes) catch return null;
     const total = std.math.add(usize, scaled, encoded_len +| fixed_bytes) catch return null;
     return if (total <= values.max_decode_bytes) total else null;
-}
-
-fn size(width: c_int, height: c_int) DecodeError!Size {
-    return .{
-        .width = std.math.cast(usize, width) orelse return error.InvalidImage,
-        .height = std.math.cast(usize, height) orelse return error.InvalidImage,
-    };
 }
 
 // stb replaces a failed format probe's reason with "unknown image type".
