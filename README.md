@@ -3,10 +3,6 @@
 <p align="center"><b>What changed between two screenshots, at a glance.</b><br>
 Compare two captures and get a sheet with detected changes boxed, numbered and labelled.</p>
 
-<p align="center">
-  <img src="docs/images/dashboard-desktop-light.png" alt="uidiff's sheet for a desktop dashboard: before and after side by side, three numbered changes, a gutter showing the rows that moved down, and a close-up of each change" width="100%">
-</p>
-
 You change a UI, or a script does, or an AI agent does, and now you need to know what actually changed. A pixel diff tells you which pixels differ, so one inserted row paints everything below it. uidiff tells you what changed: it lines up rows that only moved, boxes each real edit, labels it **changed**, **inserted** or **removed**, and reports how far the rest moved. It reads nothing but the two images, so the same command works for websites, iOS and Android apps, desktop apps, games, canvas and mini programs. It earns its keep wherever a UI is iterated on, and most of all in vibe coding, where the screen changes every few minutes and you need to see what the agent really did.
 
 ## Why uidiff
@@ -30,22 +26,12 @@ You change a UI, or a script does, or an AI agent does, and now you need to know
 
 `--annotate sheet.png` draws before and after panes, with numbered boxes in amber for changed regions, green for insertions and red for removals. The gutter shows stationary and shifted rows. Numbered close-ups appear below the panes. Panoramic captures use stacked overview strips.
 
-<table>
-  <tr>
-    <td width="50%"><img src="docs/images/chat-phone-light.png" alt="Phone chat: a new message pushes the thread down; one inserted box, the rest marked as moved"></td>
-    <td width="50%"><img src="docs/images/settings-phone-light.png" alt="Phone settings: a toggle and a label changed in place, each boxed, numbered and shown close up"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>A new message: one green box, and the thread below it shown as moved, not changed.</sub></td>
-    <td align="center"><sub>Edits in place: each one boxed, numbered and shown close up.</sub></td>
-  </tr>
-  <tr>
-    <td colspan="2"><img src="docs/images/pricing-desktop-dark.png" alt="Desktop pricing page in dark mode with three numbered changes and a moved block"></td>
-  </tr>
-  <tr>
-    <td colspan="2" align="center"><sub>Dark mode, desktop: three changes and a block that moved 128 px, in one picture.</sub></td>
-  </tr>
-</table>
+Render the procedural phone fixture with a local build.
+
+```sh
+zig build
+zig-out/bin/uidiff tests/fixtures/images/phone-light/before.png tests/fixtures/images/phone-light/after.png --scale 2 --annotate sheet.png
+```
 
 ## The report
 
