@@ -17,7 +17,7 @@ const Decoders = struct {
 /// shipped binary, or inside the Zig module, in its mode with UBSan, for
 /// tests and fuzzing (without coverage feedback; see fuzz_coverage_flags).
 const CodecBuild = enum { shipped, shipped_lto, checked };
-const X86Simd = enum { baseline, without_ssse3, without_sse4, without_avx2, without_pclmul };
+const X86Simd = enum { shipped, baseline, without_ssse3, without_sse4, without_avx2, without_pclmul };
 
 // The shipped Zig binary retains runtime safety checks. The C decoders
 // run with UBSan in the checked test build and in fuzzing.
@@ -121,8 +121,8 @@ const webp_encoder = [_][]const u8{
 pub fn build(b: *Build) void {
     const target = b.standardTargetOptions(.{});
     const override = b.option(Optimize, "optimize", "Choose the CLI, benchmark and test optimization mode");
-    const x86_simd = b.option(X86Simd, "x86-simd", "Exclude a zlib-ng dispatch level for x86-64 benchmarks") orelse .baseline;
-    if (x86_simd != .baseline and target.result.cpu.arch != .x86_64) @panic("-Dx86-simd requires an x86_64 target");
+    const x86_simd = b.option(X86Simd, "x86-simd", "Choose a zlib-ng dispatch configuration for x86-64 benchmarks") orelse .shipped;
+    if (x86_simd != .shipped and target.result.cpu.arch != .x86_64) @panic("-Dx86-simd requires an x86_64 target");
     const release: ?Optimize = switch (b.graph.release_mode) {
         .off => null,
         .any => shipped_mode,
@@ -403,8 +403,8 @@ fn addZlibNg(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, x86
             // their prerequisite also removes the dependent dispatch levels.
             const ssse3 = x86_simd != .without_ssse3;
             const sse4 = ssse3 and x86_simd != .without_sse4;
-            const avx2 = sse4 and x86_simd != .without_avx2;
-            const pclmul = sse4 and x86_simd != .without_pclmul;
+            const avx2 = sse4 and x86_simd != .shipped and x86_simd != .without_avx2;
+            const pclmul = sse4 and x86_simd != .shipped and x86_simd != .without_pclmul;
             common.appendSlice(b.allocator, &.{ "-DX86_FEATURES", "-DX86_SSE2", "-DHAVE_CPUID_GNU", "-DX86_HAVE_XSAVE_INTRIN" }) catch @panic("OOM");
             if (ssse3) common.append(b.allocator, "-DX86_SSSE3") catch @panic("OOM");
             if (sse4) common.appendSlice(b.allocator, &.{ "-DX86_SSE41", "-DX86_SSE42" }) catch @panic("OOM");
@@ -552,7 +552,7 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
 }
 
 fn addThreadedTest(b: *Build, target: Build.ResolvedTarget, decoders: Decoders) void {
-    const module = addCheckedLibrary(b, target, .debug, decoders, .baseline);
+    const module = addCheckedLibrary(b, target, .debug, decoders, .shipped);
     module.sanitize_thread = true;
     const tests = b.addTest(.{ .root_module = module, .filters = &.{"overlapped PNG decodes"} });
     const run = b.addRunArtifact(tests);
@@ -635,7 +635,7 @@ fn fixtureGenerator(b: *Build, target: Build.ResolvedTarget, decoders: Decoders)
     const webp_encode = b.addTranslateC(.{ .root_source_file = webp.path("src/webp/encode.h"), .target = target, .optimize = optimize });
     const library = b.createModule(libraryOptions(b, target, optimize, decoders));
     const codecs = b.createModule(.{ .target = target, .optimize = codec_mode, .link_libc = true });
-    addStbDecoder(b, codecs, target, &.{}, .baseline, false);
+    addStbDecoder(b, codecs, target, &.{}, .shipped, false);
     codecs.addIncludePath(webp.path(""));
     const config = b.addWriteFiles();
     _ = config.add("src/webp/config.h", "/* Use the same scalar encoder on every host. */\n");

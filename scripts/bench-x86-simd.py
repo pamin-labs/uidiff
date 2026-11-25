@@ -13,6 +13,7 @@ from pathlib import Path
 from binary_sections import measure
 
 VARIANTS = (
+    "shipped",
     "baseline",
     "without_ssse3",
     "without_sse4",
@@ -105,7 +106,7 @@ def bench_lto():
         binaries = {}
         for arm in ("false", "true"):
             prefix = root / arm
-            build("install", "baseline", "size", target, f"-Dcli-lto={arm}", "--prefix", str(prefix))
+            build("install", "shipped", "size", target, f"-Dcli-lto={arm}", "--prefix", str(prefix))
             binaries[arm] = prefix / "bin" / executable
 
         sizes = {arm: measure(binary) for arm, binary in binaries.items()}
