@@ -15,6 +15,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[2]
 REPOSITORY = "https://github.com/pamin-labs/uidiff"
 NOTICES = ("LICENSE", "THIRD_PARTY_NOTICES")
+NATIVE_ENTRY = "./native"
 
 
 @dataclass(frozen=True)
@@ -136,6 +137,7 @@ def npm_packages(release_version, binaries, output):
             "name": target.npm_name,
             "os": [target.npm_os],
             "cpu": [target.arch],
+            "exports": {NATIVE_ENTRY: f"./{target.binary}"},
             "files": [target.binary, *NOTICES],
         })
         shutil.copy2(binaries / target.release_binary(release_version), package_dir / target.binary)

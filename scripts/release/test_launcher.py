@@ -71,6 +71,15 @@ def main():
         launcher = packages / "uidiff/uidiff.cjs"
         manifest = json.loads(launcher.with_name("package.json").read_text())
         assert manifest["optionalDependencies"] == {target.npm_name: release_version for target in TARGETS}
+        # Exercise Node package resolution for all six staged native packages.
+        resolve = "process.stdout.write(require.resolve(process.argv[1], {paths: [process.argv[2]]}))"
+        for target in TARGETS:
+            target_dir = packages / target.npm_name
+            executable = subprocess.check_output(
+                ["node", "-e", resolve, f"{target.npm_name}/native", launcher.parent],
+                text=True,
+            )
+            assert Path(executable) == (target_dir / target.binary).resolve()
         check_launcher(launcher, binary)
         shutil.rmtree(packages / host.npm_name)
         result = subprocess.run(["node", launcher, "--help"], capture_output=True, text=True)
