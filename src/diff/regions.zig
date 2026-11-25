@@ -375,7 +375,8 @@ const rgb_channels = 3;
 const floating_panel_min_contrast = rgb_channels * 32;
 const floating_panel_inset_divisor = 4;
 const floating_panel_edge_fringe = 3;
-const existing_panel_width_divisor = 2;
+const existing_panel_row_pitch = 4;
+const existing_panel_contrast = 12;
 const floating_shadow_pitch = 1;
 const max_swap_pitch = values.CssPx.init(128);
 const tab_parts = 3;
@@ -734,15 +735,23 @@ fn panelRect(image: Image, area: PixelRect) ?PixelRect {
 }
 
 fn existingPanel(before: Image, area: PixelRect, panel: PixelRect) bool {
-    const minimum = (panel.right - panel.left) / existing_panel_width_divisor;
+    const minimum = panel.bottom - panel.top;
+    const outside_y = if (area.top != 0) area.top - 1 else @min(area.bottom, before.height - 1);
     var y = panel.top;
-    while (y < panel.bottom) : (y += scrim_sample_pitch) {
-        const row = before.row(y)[area.left..area.right];
-        var start: usize = 0;
-        for (row[1..], 1..) |p, i| {
-            if (pixel.same(p, row[start])) continue;
-            if (start != 0 and i - start > minimum and row[start][3] == 255) return true;
-            start = i;
+    while (y < panel.bottom) : (y += existing_panel_row_pitch) {
+        const row = before.row(y);
+        const above = before.row(outside_y);
+        var run: usize = 0;
+        for (area.left..area.right) |x| {
+            const ink = row[x];
+            const left = if (area.left != 0) row[area.left - 1] else if (area.right == before.width) above[x] else row[area.right];
+            const right = if (area.right < before.width) row[area.right] else left;
+            if (ink[3] != 255 or toneDistance(ink, left) < existing_panel_contrast or toneDistance(ink, right) < existing_panel_contrast) {
+                run = 0;
+                continue;
+            }
+            run += 1;
+            if (run >= minimum) return true;
         }
     }
     return false;
@@ -1525,6 +1534,35 @@ test "one-sided stacks join across a blank seam but keep painted rows separate" 
     boxes = parts;
     pixels[20 * width + 20] = ink;
     try std.testing.expectEqual(@as(usize, 2), mergeLogical(&boxes, image, image, .one, &.{}));
+}
+
+test "round 25 audit: existing panel detection uses the backdrop and height" {
+    const allocator = std.testing.allocator;
+    const width = 300;
+    const height = 164;
+    const pixels = try allocator.alloc(values.Pixel, width * height);
+    defer allocator.free(pixels);
+    const image: Image = .{ .width = width, .height = height, .pixels = pixels };
+    const area: PixelRect = .{ .left = 18, .right = 282, .top = 48, .bottom = 120 };
+    const panel: PixelRect = .{ .left = 30, .right = 270, .top = 54, .bottom = 106 };
+    const backdrop: values.Pixel = .{ 240, 240, 240, 255 };
+    @memset(pixels, backdrop);
+    try std.testing.expect(!existingPanel(image, area, panel));
+    const shapes = [_]struct { left: usize, count: usize, gradient: bool }{
+        .{ .left = 70, .count = 100, .gradient = false },
+        .{ .left = area.left, .count = 260, .gradient = false },
+        .{ .left = 60, .count = 176, .gradient = true },
+    };
+    for (shapes) |shape| {
+        @memset(pixels, backdrop);
+        for (57..102) |y| {
+            const row = pixels[y * width ..][0..width];
+            for (row[shape.left..][0..shape.count], 0..) |*ink, x| {
+                ink.* = if (shape.gradient) .{ @intCast(40 + x), 110, 90, 255 } else .{ 255, 255, 255, 255 };
+            }
+        }
+        try std.testing.expect(existingPanel(image, area, panel));
+    }
 }
 
 test {

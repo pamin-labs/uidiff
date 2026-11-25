@@ -2836,6 +2836,32 @@ test "round 25 audit: antialiased fill on the rim of a new toast still allows in
     try std.testing.expectEqual(@as(?Box, bounds), edit.after);
 }
 
+test "round 25 audit: narrow, edge-touching and gradient panels retain the old side" {
+    const before = try sample.Canvas.init(300, 164);
+    defer before.deinit();
+    const after = try sample.Canvas.init(300, 164);
+    defer after.deinit();
+    const bounds = Box.fromPixels(18, 48, 264, 72);
+    const background: values.Pixel = .{ 240, 240, 240, 255 };
+    for ([_]enum { narrow, edge, gradient }{ .narrow, .edge, .gradient }) |profile| {
+        @memset(before.pixels, background);
+        @memset(after.pixels, background);
+        after.fill(18, 48, 264, 72, .{ 225, 225, 225, 255 });
+        after.fill(30, 54, 240, 52, .{ 52, 32, 62, 255 });
+        switch (profile) {
+            .narrow => before.fill(70, 57, 100, 45, .{ 70, 110, 90, 255 }),
+            .edge => before.fill(18, 57, 260, 45, .{ 255, 255, 255, 255 }),
+            .gradient => for (0..176) |x| {
+                before.fill(60 + x, 57, 1, 45, .{ @intCast(40 + x), 110, 90, 255 });
+            },
+        }
+        var edit: Region = .{ .before = bounds, .after = bounds };
+        regions.classifyOverlay(&edit, before.view, after.view, .one);
+        try std.testing.expectEqual(@as(?Box, bounds), edit.before);
+        try std.testing.expectEqual(@as(?Box, bounds), edit.after);
+    }
+}
+
 test "audit: growing or replacing a toast retains the old panel" {
     const before = try sample.Canvas.init(300, 180);
     defer before.deinit();
