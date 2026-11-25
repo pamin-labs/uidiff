@@ -2951,6 +2951,10 @@ test "four corners follow a continuous outline even when its straight edges diff
     for ([_]sample.Canvas{ before, after }) |canvas| {
         canvas.fill(32, 28, 184, 3, .{ 60, 90, 150, 255 });
         canvas.fill(32, 124, 184, 3, .{ 120, 90, 62, 255 });
+        for ([_]usize{ 43, 214 }) |x| {
+            canvas.fill(x, 28, 2, 12, .{ 60, 90, 150, 255 });
+            canvas.fill(x, 116, 2, 11, .{ 120, 90, 62, 255 });
+        }
         canvas.fill(35, 40, 4, 76, sample.inkShade(75, 4));
         canvas.fill(210, 40, 4, 76, sample.inkShade(75, 4));
     }
@@ -2981,7 +2985,9 @@ test "viewport clipped corners join only across a continuous straight edge" {
         .{ .region = .{ .before = b, .after = b }, .pixels = 8 },
     };
     for ([_]sample.Canvas{ before, after }, [_]usize{ 8, 4 }) |canvas, shape| {
-        canvas.fill(46, 48, 156, 5, sample.inkShade(88, 4));
+        canvas.fill(43, 48, 162, 5, sample.inkShade(88, 4));
+        canvas.fill(44, 48, 2, 12, sample.inkShade(88, 4));
+        canvas.fill(202, 48, 2, 12, sample.inkShade(88, 4));
         canvas.fill(34, 55, shape, 9, sample.inkShade(68, 4));
         canvas.fill(205, 55, shape, 9, sample.inkShade(68, 4));
     }
@@ -2989,6 +2995,27 @@ test "viewport clipped corners join only across a continuous straight edge" {
     try std.testing.expectEqual(@as(usize, 1), regions.mergeCorners(&candidates, before.view, after.view, .one));
     for ([_]sample.Canvas{ before, after }) |canvas| canvas.fill(116, 44, 18, 20, sample.inkShade(255, 4));
     candidates = edits;
+    try std.testing.expectEqual(edits.len, regions.mergeCorners(&candidates, before.view, after.view, .one));
+    try std.testing.expectEqualDeep(edits, candidates);
+}
+
+test "audit: unrelated bottom-clipped labels on one footer stay separate" {
+    const before = try sample.Canvas.init(280, 90);
+    defer before.deinit();
+    const after = try sample.Canvas.init(280, 90);
+    defer after.deinit();
+    for ([_]sample.Canvas{ before, after }, [_]usize{ 3, 4 }) |canvas, seed| {
+        canvas.fill(0, 73, 280, 17, .{ 37, 40, 49, 255 });
+        canvas.line(24, 70, 80, seed, 190);
+        canvas.line(204, 250, 80, seed + 6, 190);
+    }
+    const a = Box.fromPixels(24, 73, 46, 17);
+    const b = Box.fromPixels(204, 73, 46, 17);
+    const edits = [_]regions.Candidate{
+        .{ .region = .{ .before = a, .after = a }, .pixels = 8 },
+        .{ .region = .{ .before = b, .after = b }, .pixels = 8 },
+    };
+    var candidates = edits;
     try std.testing.expectEqual(edits.len, regions.mergeCorners(&candidates, before.view, after.view, .one));
     try std.testing.expectEqualDeep(edits, candidates);
 }

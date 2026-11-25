@@ -165,6 +165,8 @@ const Scrim = struct {
     }
 };
 
+const HorizontalExterior = enum { above, below };
+
 /// Rows of a mask, inclusive.
 const RowRange = struct { first: usize, last: usize };
 
@@ -301,6 +303,7 @@ const tab_parts = 3;
 const tab_indicator_height = values.CssPx.init(6);
 const tab_label_gap = values.CssPx.init(16);
 const corner_rail_contrast = 36;
+const corner_join_rounding = 2;
 const max_corner_rail_px = 2048;
 const min_grid_slots = 3;
 const max_grid_slots = 4;
@@ -989,7 +992,7 @@ fn tracedOutline(before: Image, after: Image, top: Box, right: Box, bottom: Box,
         verticalRail(before, after, right, lower_right, .right);
 }
 
-fn horizontalRail(before: Image, after: Image, left: Box, right: Box, exterior: enum { above, below }) bool {
+fn horizontalRail(before: Image, after: Image, left: Box, right: Box, exterior: HorizontalExterior) bool {
     if (left.right() >= right.x or right.x - left.right() > max_corner_rail_px) return false;
     const first: usize = @intFromFloat(@max(left.y, right.y));
     const end: usize = @intFromFloat(@min(left.bottom(), right.bottom()));
@@ -1005,7 +1008,29 @@ fn horizontalRail(before: Image, after: Image, left: Box, right: Box, exterior: 
         if (!sameRow(old, after.row(y)[x..x_end])) continue;
         for (old, outside) |ink, background| {
             if (toneDistance(ink, background) < corner_rail_contrast) break;
-        } else return true;
+        } else if ((railTurns(before, left, y, old[0], .left, exterior) and
+            railTurns(before, right, y, old[old.len - 1], .right, exterior)) or
+            (railTurns(after, left, y, old[0], .left, exterior) and
+                railTurns(after, right, y, old[old.len - 1], .right, exterior))) return true;
+    }
+    return false;
+}
+
+fn railTurns(image: Image, corner_box: Box, y: usize, ink: values.Pixel, side: enum { left, right }, exterior: HorizontalExterior) bool {
+    const left: usize = @intFromFloat(corner_box.x);
+    const right: usize = @intFromFloat(corner_box.right());
+    const outside = switch (side) {
+        .left => if (left != 0) left - 1 else return false,
+        .right => if (right < image.width) right else return false,
+    };
+    const interior_y: usize = @intFromFloat(if (exterior == .above) corner_box.bottom() - 1 else corner_box.y);
+    const leg_y = @min(y, interior_y) + (@max(y, interior_y) - @min(y, interior_y) + 1) / 2;
+    if (leg_y == y) return false;
+    const edge = image.row(y);
+    const leg = image.row(leg_y);
+    if (toneDistance(ink, leg[outside]) < corner_rail_contrast) return false;
+    for (left..right) |x| {
+        if (toneDistance(edge[x], ink) + toneDistance(leg[x], ink) <= corner_join_rounding) return true;
     }
     return false;
 }
