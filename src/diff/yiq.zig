@@ -36,35 +36,62 @@ pub const Raster = struct {
 
     /// Supplies regular pixels, a row margin, or a repeated row.
     pub const Background = union(enum) { none, margin, row: []const Pixel };
+};
 
-    inline fn row(self: Raster, y: usize) []const Pixel {
-        // Validated crops fit the image; the caller bounds y by crop height.
-        // The row is sliced here rather than through Image.row so this
-        // measured opt-out covers it in the mask loop.
-        @setRuntimeSafety(false);
-        const start = (self.top + y) * self.image.width + self.left;
-        return switch (self.background) {
-            .none => self.image.pixels[start..][0..self.width],
-            .margin => self.image.pixels[start..][0..1],
-            .row => |r| r[self.left..][0..self.width],
+const SampledRaster = struct {
+    image: Image,
+    left: usize,
+    top: usize,
+    width: usize,
+    height: usize,
+    pixels: []const Pixel,
+    stride: usize,
+    x_mask: usize,
+    offset: usize,
+    row_len: usize,
+    real: bool,
+
+    fn init(raster: Raster) SampledRaster {
+        const stride, const pixels, const x_mask, const offset, const row_len = switch (raster.background) {
+            .none => .{ raster.image.width, raster.image.pixels, std.math.maxInt(usize), @as(usize, 0), raster.width },
+            .margin => .{ raster.image.width, raster.image.pixels, @as(usize, 0), raster.left, @as(usize, 1) },
+            .row => |row_| .{ @as(usize, 0), row_, std.math.maxInt(usize), @as(usize, 0), raster.width },
+        };
+        return .{
+            .image = raster.image,
+            .left = raster.left,
+            .top = raster.top,
+            .width = raster.width,
+            .height = raster.height,
+            .pixels = pixels,
+            .stride = stride,
+            .x_mask = x_mask,
+            .offset = offset,
+            .row_len = row_len,
+            .real = raster.background == .none,
         };
     }
 
-    inline fn at(self: Raster, x: usize, y: usize) Pixel {
-        // x is within the crop; a one-pixel backdrop repeats across that width.
+    inline fn row(self: SampledRaster, y: usize) []const Pixel {
+        // The crop fits the source image or the selected repeated row.
         @setRuntimeSafety(false);
-        const r = self.row(y);
-        return r[if (r.len == 1) 0 else x];
+        return self.pixels[self.index(self.left, self.top + y)..][0..self.row_len];
     }
-    inline fn sample(self: Raster, x: usize, y: usize) Pixel {
-        // Neighbour callers clamp absolute coordinates to the image and
-        // any borrowed background row.
+
+    inline fn at(self: SampledRaster, x: usize, y: usize) Pixel {
+        return self.sample(self.left + x, self.top + y);
+    }
+
+    inline fn sample(self: SampledRaster, x: usize, y: usize) Pixel {
+        // All neighbour lookups are clamped to the source extent.
         @setRuntimeSafety(false);
-        return switch (self.background) {
-            .none => self.image.pixels[y * self.image.width + x],
-            .margin => self.image.pixels[y * self.image.width + self.left],
-            .row => |r| r[x],
-        };
+        return self.pixels[self.index(x, y)];
+    }
+
+    inline fn index(self: SampledRaster, x: usize, y: usize) usize {
+        // Validated coordinates keep the affine index within the selected
+        // plane. A zero stride or mask repeats its row or column.
+        return y *% self.stride +% (x & self.x_mask) +% self.offset;
     }
 };
 
@@ -83,9 +110,11 @@ const blend_rounding = 2;
 const min_recoloured_stroke = 9;
 
 /// Writes one byte per pixel for the requested rows and reports whether any changed.
-pub fn mask(a: Raster, b: Raster, top: usize, rows: usize, out: []regions.Cell) bool {
+pub fn mask(before: Raster, after: Raster, top: usize, rows: usize, out: []regions.Cell) bool {
+    const a = SampledRaster.init(before);
+    const b = SampledRaster.init(after);
     var found = false;
-    const policy: EdgePolicy = if (a.top == b.top and a.background == .none and b.background == .none) .stationary else .normal;
+    const policy: EdgePolicy = if (a.top == b.top and a.real and b.real) .stationary else .normal;
     for (top..top + rows) |y| {
         const old = a.row(y);
         const new = b.row(y);
@@ -136,7 +165,9 @@ pub fn mask(a: Raster, b: Raster, top: usize, rows: usize, out: []regions.Cell) 
 
 /// Removes local redistributions of coverage from aligned moved rows.
 /// Retains the full extent of a uniform stroke recolour with a flagged pixel.
-pub fn clearMovedCoverage(a: Raster, b: Raster, top: usize, cells: []regions.Cell) void {
+pub fn clearMovedCoverage(before: Raster, after: Raster, top: usize, cells: []regions.Cell) void {
+    const a = SampledRaster.init(before);
+    const b = SampledRaster.init(after);
     var start: usize = 0;
     while (regions.nextCell(cells, start, .changed)) |index| {
         const x = index % a.width;
@@ -167,7 +198,7 @@ fn laneBits(mask_: @Vector(lanes, bool)) LaneBits {
 }
 
 // Keep the sparse walk out of the hot mask and share it between classifiers.
-noinline fn writeChangedLanes(a: Raster, b: Raster, x: usize, y: usize, policy: EdgePolicy, classify: *const @TypeOf(markChange), bits: LaneBits, output: *[lanes]regions.Cell) bool {
+noinline fn writeChangedLanes(a: SampledRaster, b: SampledRaster, x: usize, y: usize, policy: EdgePolicy, classify: *const @TypeOf(markChange), bits: LaneBits, output: *[lanes]regions.Cell) bool {
     @branchHint(.cold);
     output.* = @splat(.clear);
     var remaining = bits;
@@ -195,7 +226,7 @@ fn recolouredStroke(old: []const Pixel, new: []const Pixel, x: usize) ?[2]usize 
 
 // Three equal neighbours rule out anti-aliasing. Check all lanes together
 // in the interior of solid fills and leave crop edges to the full check.
-inline fn flatBlock(raster: Raster, row: []const Pixel, center: @Vector(lanes, u32), x: usize, y: usize) bool {
+inline fn flatBlock(raster: SampledRaster, row: []const Pixel, center: @Vector(lanes, u32), x: usize, y: usize) bool {
     if (x == 0 or x + lanes == raster.width) return false;
     if (row.len != 1 and
         (!@reduce(.And, center == pixel.load(row[x - 1 ..][0..lanes])) or
@@ -209,7 +240,7 @@ inline fn sameBlock(center: @Vector(lanes, u32), row: []const Pixel, x: usize) b
     return @reduce(.And, center == sample);
 }
 
-fn redistributedCoverage(a: Raster, b: Raster, x: usize, y: usize) bool {
+fn redistributedCoverage(a: SampledRaster, b: SampledRaster, x: usize, y: usize) bool {
     const old = a.at(x, y);
     const new = b.at(x, y);
     if (old[3] != 255 or new[3] != 255) return false;
@@ -269,7 +300,7 @@ fn redistributedCoverage(a: Raster, b: Raster, x: usize, y: usize) bool {
 
 // Measure contrast across the edge on the sample's own row. A nearby
 // darker stroke must not lend its contrast to a lighter stroke.
-fn edgeContrast(a: Raster, x: usize, y: usize) i32 {
+fn edgeContrast(a: SampledRaster, x: usize, y: usize) i32 {
     const cx = a.left + x;
     const cy = a.top + y;
     const middle = a.sample(cx, cy);
@@ -287,7 +318,7 @@ fn edgeContrast(a: Raster, x: usize, y: usize) i32 {
     return contrast;
 }
 
-fn coverageEdge(raster: Raster, x: usize, y: usize, center: Pixel) bool {
+fn coverageEdge(raster: SampledRaster, x: usize, y: usize, center: Pixel) bool {
     for (y -| 1..@min(y + 2, raster.height)) |ny| {
         for (raster.row(ny)[x -| 1..@min(x + 2, raster.width)]) |pixel_value| {
             if (!same(center, pixel_value)) return true;
@@ -330,7 +361,7 @@ fn channel(comptime n: usize, pixels: @Vector(n, u32), comptime index: usize) @V
     return @floatFromInt(channelInt(n, pixels, index));
 }
 
-fn scalarChange(a: Raster, b: Raster, x: usize, y: usize, policy: EdgePolicy) regions.Cell {
+fn scalarChange(a: SampledRaster, b: SampledRaster, x: usize, y: usize, policy: EdgePolicy) regions.Cell {
     // The mask loop bounds x and y to both rasters and their validated pixel count.
     @setRuntimeSafety(false);
     const byte_offset = ((a.top + y) * a.image.width + a.left + x) * @sizeOf(Pixel);
@@ -338,7 +369,7 @@ fn scalarChange(a: Raster, b: Raster, x: usize, y: usize, policy: EdgePolicy) re
     return markChange(a, b, x, y, policy);
 }
 
-fn markChange(a: Raster, b: Raster, x: usize, y: usize, policy: EdgePolicy) regions.Cell {
+fn markChange(a: SampledRaster, b: SampledRaster, x: usize, y: usize, policy: EdgePolicy) regions.Cell {
     if (!realChange(a, b, x, y)) return .clear;
     if (policy == .stationary) {
         const old = a.at(x, y);
@@ -358,19 +389,19 @@ fn markChange(a: Raster, b: Raster, x: usize, y: usize, policy: EdgePolicy) regi
     return .changed;
 }
 
-fn stationaryCoverage(a: Raster, b: Raster, x: usize, y: usize) bool {
+fn stationaryCoverage(a: SampledRaster, b: SampledRaster, x: usize, y: usize) bool {
     const old_x = a.left + x;
     const old_y = a.top + y;
     const left = old_x -| moved_coverage_radius;
     const top = old_y -| moved_coverage_radius;
     const width = @min(old_x + moved_coverage_radius + 1, a.image.width, b.image.width) - left;
     const height = @min(old_y + moved_coverage_radius + 1, a.image.height, b.image.height) - top;
-    const before: Raster = .{ .image = a.image, .left = left, .top = top, .width = width, .height = height };
-    const after: Raster = .{ .image = b.image, .left = left, .top = top, .width = width, .height = height };
+    const before = SampledRaster.init(.{ .image = a.image, .left = left, .top = top, .width = width, .height = height });
+    const after = SampledRaster.init(.{ .image = b.image, .left = left, .top = top, .width = width, .height = height });
     return redistributedCoverage(before, after, old_x - left, old_y - top);
 }
 
-fn betweenNeighbours(a: Raster, x: usize, y: usize, color: Pixel) bool {
+fn betweenNeighbours(a: SampledRaster, x: usize, y: usize, color: Pixel) bool {
     const cx = a.left + x;
     const cy = a.top + y;
     const lightness = brightness(color);
@@ -389,17 +420,17 @@ fn betweenNeighbours(a: Raster, x: usize, y: usize, color: Pixel) bool {
     return false;
 }
 
-fn realChange(a: Raster, b: Raster, x: usize, y: usize) bool {
+fn realChange(a: SampledRaster, b: SampledRaster, x: usize, y: usize) bool {
     if (!antialiased(a, b, x, y) and !antialiased(b, a, x, y)) return true;
     const contrast = @max(edgeContrast(a, x, y), edgeContrast(b, x, y));
     if (channelDelta(a.at(x, y), b.at(x, y)) * coverage_divisor <= contrast) return false;
     // Preserve solid stroke edits that touch an anti-aliased edge.
     if (straightStroke(a, x, y) and straightStroke(b, x, y)) return true;
-    if (a.background != .none or b.background != .none) return false;
+    if (!a.real or !b.real) return false;
     return solidPatch(a, b, x, y, contrast) or solidPatch(b, a, x, y, contrast);
 }
 
-fn solidPatch(a: Raster, b: Raster, x: usize, y: usize, contrast: i32) bool {
+fn solidPatch(a: SampledRaster, b: SampledRaster, x: usize, y: usize, contrast: i32) bool {
     const color = a.at(x, y);
     if (color[3] != 255) return false;
     const left: usize = if (@min(a.left, b.left) + x != 0) 1 else 0;
@@ -418,7 +449,7 @@ fn solidPatch(a: Raster, b: Raster, x: usize, y: usize, contrast: i32) bool {
     return false;
 }
 
-fn changedPatch(a: Raster, b: Raster, ax: usize, ay: usize, bx: usize, by: usize, color: Pixel, contrast: i32) bool {
+fn changedPatch(a: SampledRaster, b: SampledRaster, ax: usize, ay: usize, bx: usize, by: usize, color: Pixel, contrast: i32) bool {
     for (0..2) |dy| {
         for (0..2) |dx| {
             if (!same(a.sample(ax + dx, ay + dy), color) or
@@ -428,7 +459,7 @@ fn changedPatch(a: Raster, b: Raster, ax: usize, ay: usize, bx: usize, by: usize
     return true;
 }
 
-fn straightStroke(a: Raster, x: usize, y: usize) bool {
+fn straightStroke(a: SampledRaster, x: usize, y: usize) bool {
     const cx = a.left + x;
     const cy = a.top + y;
     if (cy == 0 or cy + 1 == a.image.height) return false;
@@ -478,7 +509,7 @@ fn yiq(comptime T: type, r: T, g: T, b: T) T {
 }
 
 // The neighborhood check exits as soon as it rules out anti-aliasing.
-fn antialiased(a: Raster, b: Raster, x: usize, y: usize) bool {
+fn antialiased(a: SampledRaster, b: SampledRaster, x: usize, y: usize) bool {
     @setRuntimeSafety(false); // Both centres and their clipped neighbours are valid pixels.
     const cx = a.left + x;
     const cy = a.top + y;
@@ -518,7 +549,7 @@ fn antialiased(a: Raster, b: Raster, x: usize, y: usize) bool {
     return hasSiblings(a, b, dark, y) or hasSiblings(a, b, light, y);
 }
 
-fn hasSiblings(a: Raster, b: Raster, p: Point, y: usize) bool {
+fn hasSiblings(a: SampledRaster, b: SampledRaster, p: Point, y: usize) bool {
     // The extremum is at most one row from the centre in the first image.
     const row = b.top + y + 1;
     const offset = a.top + y + 1 - p.y;
@@ -532,7 +563,7 @@ fn lumaDelta(a: Pixel, b: Pixel, index: usize) f64 {
     return luminance(f64, d[0], d[1], d[2]);
 }
 
-fn siblings(a: Raster, p: Point) bool {
+fn siblings(a: SampledRaster, p: Point) bool {
     // The neighbor selected by antialiased is inside both crops; all offsets are clipped.
     @setRuntimeSafety(false);
     const color = a.sample(p.x, p.y);
@@ -623,6 +654,33 @@ test "opaque RGB delta cube has identical f32 and f64 thresholds" {
             }
         }
     }
+}
+
+test "prepared sampling preserves cropped, repeated-column and repeated-row coordinates" {
+    const pixels = [_]Pixel{
+        .{ 11, 0, 0, 255 }, .{ 22, 0, 0, 255 }, .{ 33, 0, 0, 255 },
+        .{ 44, 0, 0, 255 }, .{ 55, 0, 0, 255 }, .{ 66, 0, 0, 255 },
+    };
+    var raster: Raster = .{
+        .image = .{ .width = 3, .height = 2, .pixels = &pixels },
+        .left = 1,
+        .top = 0,
+        .width = 2,
+        .height = 2,
+    };
+    const cropped = SampledRaster.init(raster);
+    try std.testing.expectEqualSlices(Pixel, pixels[4..6], cropped.row(1));
+    try std.testing.expectEqual(pixels[5], cropped.at(1, 1));
+
+    raster.background = .margin;
+    const margin = SampledRaster.init(raster);
+    try std.testing.expectEqualSlices(Pixel, pixels[4..5], margin.row(1));
+    try std.testing.expectEqual(pixels[4], margin.at(1, 1));
+
+    raster.background = .{ .row = pixels[0..3] };
+    const repeated = SampledRaster.init(raster);
+    try std.testing.expectEqualSlices(Pixel, pixels[1..3], repeated.row(1));
+    try std.testing.expectEqual(pixels[2], repeated.at(1, 1));
 }
 
 test {
