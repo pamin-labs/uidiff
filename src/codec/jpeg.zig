@@ -195,6 +195,7 @@ test "JPEG warnings reject truncated sequential and progressive streams" {
         const bytes = complete[0 .. complete.len - test_images.eoi.len];
         const header = try probe(allocator, bytes, values.max_decode_bytes);
         try std.testing.expectError(error.InvalidImage, decode(allocator, bytes, header, values.max_decode_bytes));
+        try decodeGray(allocator);
     }
 }
 

@@ -376,7 +376,6 @@ fn checkTestFilters(comptime channels: usize, color: u8, filters: []const u8) !v
     }
     var raw: [3 * row_bytes]u8 = undefined;
     for (pixels[0 .. width * filters.len], 0..) |pixel, i| @memcpy(raw[i * channels ..][0..channels], pixel[0..channels]);
-    const average_filter = 3;
     var filtered: [3 * (1 + row_bytes)]u8 = undefined;
     for (filters, 0..) |filter_byte, y| {
         const row = filtered[y * (1 + row_bytes) ..][0 .. 1 + row_bytes];
@@ -385,7 +384,14 @@ fn checkTestFilters(comptime channels: usize, color: u8, filters: []const u8) !v
             const at = y * row_bytes + x;
             const left = if (x >= channels) raw[at - channels] else 0;
             const above = if (y > 0) raw[at - row_bytes] else 0;
-            const predicted: u8 = if (filter_byte == average_filter) @intCast(@divFloor(@as(u16, left) + above, 2)) else 0;
+            const diagonal = if (x >= channels and y > 0) raw[at - row_bytes - channels] else 0;
+            const predicted: u8 = switch (filter_byte) {
+                sub_filter => left,
+                up_filter => above,
+                3 => @intCast((@as(u16, left) + above) / 2),
+                paeth_filter => referencePaeth(left, above, diagonal),
+                else => 0,
+            };
             out.* = raw[at] -% predicted;
         }
     }
@@ -407,19 +413,49 @@ fn checkTestFilters(comptime channels: usize, color: u8, filters: []const u8) !v
     try std.testing.expectEqualSlices(values.Pixel, legacy, found[0..legacy.len]);
 }
 
+fn referencePaeth(left: u8, above: u8, diagonal: u8) u8 {
+    const estimate = @as(i16, left) + above - diagonal;
+    const a = @abs(estimate - left);
+    const b = @abs(estimate - above);
+    const c = @abs(estimate - diagonal);
+    if (a <= b and a <= c) return left;
+    if (b <= c) return above;
+    return diagonal;
+}
+
+fn firstTestIdat(png: []const u8) []const u8 {
+    const header_end = png_format.header_bytes + @sizeOf(u32);
+    const idat = png[header_end..];
+    std.debug.assert(std.mem.eql(u8, idat[4..8], "IDAT"));
+    return idat[8..][0..std.mem.readInt(u32, idat[0..4], .big)];
+}
+
+fn splitTestIdat(out: *Writer, png: []const u8, data: []const u8, at: usize) EncodeError!void {
+    const header_end = png_format.header_bytes + @sizeOf(u32);
+    try out.writeAll(png[0..header_end]);
+    try chunk(out, "IDAT", data[0..at]);
+    try chunk(out, "IDAT", "");
+    try chunk(out, "IDAT", data[at..]);
+    try chunk(out, "IEND", "");
+}
+
 fn fuzzStreamingRows(_: void, smith: *std.testing.Smith) !void {
     const allocator = std.testing.allocator;
-    const width = smith.valueRangeAtMost(u8, 1, 12);
-    const height = smith.valueRangeAtMost(u8, 1, 8);
+    const filter_variants = paeth_filter + 2; // Five filters and the first invalid byte.
+    const seed = smith.valueRangeAtMost(u8, 0, 4 * filter_variants - 1);
+    const max_width = 24;
+    const max_height = 8;
+    const width = smith.valueRangeAtMost(u8, 1, max_width);
+    const height = smith.valueRangeAtMost(u8, 1, max_height);
     const size: values.Size = .{ .width = width, .height = height };
-    const color: u8 = if (smith.value(bool)) png_format.rgb_color else png_format.rgba_color;
+    const color: u8 = if (seed % 2 == 0) png_format.rgb_color else png_format.rgba_color;
     const channels: usize = if (color == png_format.rgb_color) 3 else 4;
-    var rows: [8 * (1 + 12 * 4)]u8 = undefined;
+    var rows: [max_height * (1 + max_width * 4)]u8 = undefined;
     const valid = rows[0 .. size.height * (1 + size.width * channels)];
     const length = if (smith.value(bool)) smith.slice(valid) else complete: {
         for (0..size.height) |y| {
             const at = y * (1 + size.width * channels);
-            valid[at] = smith.valueRangeAtMost(u8, 0, 5);
+            valid[at] = if (y == 0) (seed / 2) % filter_variants else smith.valueRangeAtMost(u8, 0, filter_variants - 1);
             for (valid[at + 1 ..][0 .. size.width * channels]) |*value| value.* = smith.value(u8);
         }
         break :complete valid.len;
@@ -427,10 +463,18 @@ fn fuzzStreamingRows(_: void, smith: *std.testing.Smith) !void {
     var output: Writer.Allocating = .init(allocator);
     defer output.deinit();
     try writeTestPng(allocator, &output.writer, size, color, valid[0..length]);
+    var split: Writer.Allocating = .init(allocator);
+    defer split.deinit();
+    const bytes = if (seed >= 2 * filter_variants) split_bytes: {
+        const payload = firstTestIdat(output.written());
+        const offset = smith.valueRangeAtMost(u16, 0, @intCast(payload.len));
+        try splitTestIdat(&split.writer, output.written(), payload, offset);
+        break :split_bytes split.written();
+    } else output.written();
     const header: stb.Header = .{ .size = size, .sample_bytes = 1 };
-    const found = try loadStreaming(allocator, output.written(), header, values.max_decode_bytes) orelse return;
+    const found = try loadStreaming(allocator, bytes, header, values.max_decode_bytes) orelse return;
     defer stb.free(found);
-    const legacy = try stb.loadLegacy(allocator, output.written(), header, values.max_decode_bytes);
+    const legacy = try stb.loadLegacy(allocator, bytes, header, values.max_decode_bytes);
     defer stb.release(allocator, legacy);
     try std.testing.expectEqualSlices(values.Pixel, legacy, found[0..legacy.len]);
 }
@@ -466,10 +510,53 @@ test "encoding releases each allocation on failure" {
 }
 
 test "PNG filters preserve RGB8 and RGBA8 across streaming and fallback" {
-    try checkTestFilters(3, png_format.rgb_color, &.{ 3, 3, 0 });
-    try checkTestFilters(4, png_format.rgba_color, &.{ 3, 3, 0 });
-    try checkTestFilters(3, png_format.rgb_color, &.{ 3, 0, 5 });
-    try checkTestFilters(4, png_format.rgba_color, &.{ 3, 0, 5 });
+    for ([_][]const u8{ &.{ 3, 3, 0 }, &.{ 1, 2, 4 }, &.{ 4, 1, 2 }, &.{ 3, 0, 5 } }) |filters| {
+        try checkTestFilters(3, png_format.rgb_color, filters);
+        try checkTestFilters(4, png_format.rgba_color, filters);
+    }
+}
+
+test "RGB8 accepts every legal IDAT split and refuses a truncated DEFLATE body" {
+    const allocator = std.testing.allocator;
+    const size: values.Size = .{ .width = 1, .height = 1 };
+    const header: stb.Header = .{ .size = size, .sample_bytes = 1 };
+    var encoded: Writer.Allocating = .init(allocator);
+    defer encoded.deinit();
+    try writeTestPng(allocator, &encoded.writer, size, png_format.rgb_color, &.{ 0, 23, 57, 91 });
+    const payload = firstTestIdat(encoded.written());
+
+    var rebuilt: Writer.Allocating = .init(allocator);
+    defer rebuilt.deinit();
+    for (0..payload.len + 1) |at| {
+        rebuilt.clearRetainingCapacity();
+        try splitTestIdat(&rebuilt.writer, encoded.written(), payload, at);
+        const found = try load(allocator, rebuilt.written(), header, values.max_decode_bytes);
+        defer stb.free(found);
+        try std.testing.expectEqual(values.Pixel{ 23, 57, 91, 255 }, found[0]);
+    }
+    rebuilt.clearRetainingCapacity();
+    try splitTestIdat(&rebuilt.writer, encoded.written(), payload[0..3], 1);
+    try std.testing.expectError(error.InvalidImage, load(allocator, rebuilt.written(), header, values.max_decode_bytes));
+    try std.testing.expectError(error.ImageTooLarge, load(allocator, encoded.written(), header, @sizeOf(values.Pixel)));
+}
+
+test "RGB8 preserves legacy checksum tolerance" {
+    const allocator = std.testing.allocator;
+    const size: values.Size = .{ .width = 1, .height = 1 };
+    const header: stb.Header = .{ .size = size, .sample_bytes = 1 };
+    var encoded: Writer.Allocating = .init(allocator);
+    defer encoded.deinit();
+    try writeTestPng(allocator, &encoded.writer, size, png_format.rgb_color, &.{ 0, 23, 57, 91 });
+    const idat = png_format.header_bytes + @sizeOf(u32);
+    const len = firstTestIdat(encoded.written()).len;
+    const changed = try allocator.dupe(u8, encoded.written());
+    defer allocator.free(changed);
+    // Alter both the zlib checksum payload and the following PNG CRC.
+    changed[idat + 8 + len - 1] ^= 1;
+    changed[idat + 8 + len] ^= 1;
+    const found = try load(allocator, changed, header, values.max_decode_bytes);
+    defer stb.free(found);
+    try std.testing.expectEqual(values.Pixel{ 23, 57, 91, 255 }, found[0]);
 }
 
 test "RGB8 transparent colour keys use the legacy decoder" {
@@ -491,6 +578,50 @@ test "RGB8 transparent colour keys use the legacy decoder" {
     const pixels = try load(allocator, keyed.written(), header, values.max_decode_bytes);
     defer stb.free(pixels);
     try std.testing.expectEqual(values.Pixel{ raw[1], raw[2], raw[3], 0 }, pixels[0]);
+}
+
+test "RGB8 streaming leaves grayscale, indexed, wide and interlaced PNGs to stb" {
+    const allocator = std.testing.allocator;
+    const size: values.Size = .{ .width = 1, .height = 1 };
+    const profiles = [_]struct {
+        color: u8,
+        depth: u8 = png_format.sample_depth,
+        interlace: u8 = 0,
+        raw: []const u8,
+        palette: ?[]const u8 = null,
+        expected: values.Pixel,
+    }{
+        .{ .color = 0, .raw = &.{ 0, 37 }, .expected = .{ 37, 37, 37, 255 } },
+        .{ .color = 4, .raw = &.{ 0, 37, 99 }, .expected = .{ 37, 37, 37, 99 } },
+        .{ .color = 3, .depth = 1, .raw = &.{ 0, 0 }, .palette = &.{ 11, 22, 33 }, .expected = .{ 11, 22, 33, 255 } },
+        .{ .color = png_format.rgb_color, .depth = 16, .raw = &.{ 0, 11, 0, 22, 0, 33, 0 }, .expected = .{ 11, 22, 33, 255 } },
+        .{ .color = png_format.rgba_color, .interlace = 1, .raw = &.{ 0, 11, 22, 33, 44 }, .expected = .{ 11, 22, 33, 44 } },
+    };
+    for (profiles) |profile| {
+        var encoded: Writer.Allocating = .init(allocator);
+        defer encoded.deinit();
+        try writeTestPng(allocator, &encoded.writer, size, profile.color, profile.raw);
+
+        const checksum_start = png_format.signature.len + @sizeOf(u32);
+        const header_end = png_format.header_bytes + @sizeOf(u32);
+        var header = encoded.written()[0..header_end].*;
+        header[png_format.profile_offset] = profile.depth;
+        header[png_format.header_bytes - 1] = profile.interlace;
+        std.mem.writeInt(u32, header[png_format.header_bytes..][0..4], std.hash.Crc32.hash(header[checksum_start..png_format.header_bytes]), .big);
+        try std.testing.expect(!streamingHeader(&header));
+
+        var patched: Writer.Allocating = .init(allocator);
+        defer patched.deinit();
+        try patched.writer.writeAll(&header);
+        if (profile.palette) |palette| try chunk(&patched.writer, "PLTE", palette);
+        try patched.writer.writeAll(encoded.written()[header_end..]);
+
+        const metadata = try probe(allocator, patched.written(), values.max_decode_bytes);
+        try std.testing.expectEqual(@as(?[*]values.Pixel, null), try loadStreaming(allocator, patched.written(), metadata, values.max_decode_bytes));
+        const pixels = try load(allocator, patched.written(), metadata, values.max_decode_bytes);
+        defer stb.free(pixels);
+        try std.testing.expectEqual(profile.expected, pixels[0]);
+    }
 }
 
 test "the streaming probe agrees with the PNG header layout" {
@@ -524,7 +655,9 @@ test "the streaming probe agrees with the PNG header layout" {
 }
 
 test "fuzz streaming PNG reconstruction" {
-    try std.testing.fuzz({}, fuzzStreamingRows, .{});
+    comptime var corpus: []const []const u8 = &.{};
+    inline for (0..4 * (paeth_filter + 2)) |seed| corpus = corpus ++ .{&[_]u8{seed}};
+    try std.testing.fuzz({}, fuzzStreamingRows, .{ .corpus = corpus });
 }
 
 test {
