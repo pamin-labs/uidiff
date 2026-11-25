@@ -25,6 +25,10 @@ Follow the public pamin-labs/skills engineering rules in [core](.agents/skills/p
 - `src/files.zig` is the file pipeline: it checks the options once, decodes both files, compares them and writes the sheet atomically. The CLI calls it and only translates.
 - `src/cli.zig` is the CLI entry and `src/cli/` its argument syntax and usage text.
 - `bench/` measures the public API.
+- `npm/` contains the JavaScript launcher. The release tooling stages its manifest and the native `@uidiff` packages from the build version and target list.
+- `skills/uidiff/` documents screenshot capture, comparison and report interpretation for agents.
+- `scripts/` contains developer tooling. `scripts/release/` packages the CLI, renders the Homebrew formula and tests the launcher and installers. The installers are `install.sh` and `install.ps1` at the repository root.
+- `.github/` contains the release target list and workflows. CI and `.github/workflows/release.yml` share the same ReleaseSafe build. A pushed `v*` tag matching `build.zig.zon` enables GitHub release assets and npm trusted publishing.
 - `tests/` runs the installed CLI (`tests/e2e.zig`), decodes the fixtures through the public API (`tests/decode.zig`), checks the binary size budget, and checks source layout, layering and declaration order. `tests/fuzz/` holds one fuzz target per file, each its own test binary. `tests/fixtures.zig` is the fixture set's root; `tests/fixtures/` holds the synthetic fixture generator, its encoders, the freshness check and the generated images with expected reports. Unit tests live beside the code they exercise.
 
 ## Layers
@@ -79,7 +83,9 @@ The noninterlaced RGB8 and RGBA8 PNG path uses zlib-ng to inflate scanlines into
 - `zig build size`
 - `python3 scripts/generate-font.py --check` (offline, checked against the pinned atlas digest)
 - `zig build -Doptimize=safe` and `zig build test` from an empty dependency and global cache
-- `zig build -Doptimize=safe -Dtarget=<target>` for each target in `.github/workflows/ci.yml`
+- `zig build install size -Doptimize=safe -Dtarget=<target>` for each target in `.github/release-targets.json`
+- After building the CLI, run `python3 -B scripts/release/test_launcher.py` and the offline installer test for your platform, `sh scripts/release/test_install.sh` or `pwsh -File scripts/release/test_install.ps1`.
+- Run `actionlint` and `shellcheck install.sh scripts/release/test_install.sh` for release changes. Before the first automated npm release, each npm package needs a trusted publisher for `release.yml`.
 
 `zig build test` fails when the committed fixtures differ from a fresh generation. `zig build fixtures` regenerates them on the host. `zig build fixture-generator -Dtarget=<target>` builds the generator for a target without running it.
 

@@ -1,97 +1,120 @@
-# uidiff
+<h1 align="center">uidiff</h1>
 
-Screenshot diffs for any front end: pixels in, numbered regions out. uidiff compares two captures of the same screen, aligns rows that only moved, so content pushed down by an insertion is not reported as changed, and boxes the real changes as numbered regions in JSON. It reads only the images, so it needs no DOM or view tree: websites, iOS and Android apps (simulator or emulator captures such as `xcrun simctl io booted screenshot` and `adb exec-out screencap -p`), desktop apps, games and canvas, and mini programs and mini games captured by their dev tools all work the same way.
+<p align="center"><b>What changed between two screenshots, at a glance.</b><br>
+Compare two captures and get a sheet with detected changes boxed, numbered and labelled.</p>
 
-Status: in development, not yet released.
+<p align="center">
+  <img src="docs/images/dashboard-desktop-light.png" alt="uidiff's sheet for a desktop dashboard: before and after side by side, three numbered changes, a gutter showing the rows that moved down, and a close-up of each change" width="100%">
+</p>
 
-## Usage
+You change a UI, or a script does, or an AI agent does, and now you need to know what actually changed. A pixel diff tells you which pixels differ, so one inserted row paints everything below it. uidiff tells you what changed: it lines up rows that only moved, boxes each real edit, labels it **changed**, **inserted** or **removed**, and reports how far the rest moved. It reads nothing but the two images, so the same command works for websites, iOS and Android apps, desktop apps, games, canvas and mini programs. It earns its keep wherever a UI is iterated on, and most of all in vibe coding, where the screen changes every few minutes and you need to see what the agent really did.
 
-Build with the Zig version pinned in `build.zig.zon`.
+## Why uidiff
+
+**One native binary and a report with labelled changes.** In the CLI comparison below, uidiff took less time and peak memory than pixelmatch, odiff and Iris. The accuracy rows cover 115 real and synthetic screenshot pairs with hand-checked ground truth. Pixel masks were grouped into boxes for scoring.
+
+| | uidiff | Iris | odiff | pixelmatch |
+| --- | ---: | ---: | ---: | ---: |
+| Pairs whose changes come out exactly right | **111 / 115** | 60 / 115 | 49 / 115 | 49 / 115 |
+| Boxes on things that did not change | **4** | 46 | 147 | 131 |
+| Moved content found with its offset | **56 / 56** | 56 / 56 | n/a | n/a |
+| What you get | labelled regions, moves, a sheet | a mask | a mask | a mask |
+| CLI time, 2560×1600 pair | **11 ms** | 65 ms | 103 ms | 379 ms |
+| CPU time, same pair | **15 ms** | 80 ms | 127 ms | 419 ms |
+| Peak memory | **35 MB** | 70 MB | 50 MB | 147 MB |
+| Install | **605 KB**, one file | 1.3 MB + Node | 2.4 MB | 0.76 MB + Node |
+
+<sub>Timings are medians from 15 rotated rounds on an Apple M4. Each comparison starts a new process. uidiff writes JSON, and Iris and pixelmatch include Node startup. See the <a href="bench/README.md">benchmark method</a>.</sub>
+
+## The sheet
+
+`--annotate sheet.png` draws before and after panes, with numbered boxes in amber for changed regions, green for insertions and red for removals. The gutter shows stationary and shifted rows. Numbered close-ups appear below the panes. Panoramic captures use stacked overview strips.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/chat-phone-light.png" alt="Phone chat: a new message pushes the thread down; one inserted box, the rest marked as moved"></td>
+    <td width="50%"><img src="docs/images/settings-phone-light.png" alt="Phone settings: a toggle and a label changed in place, each boxed, numbered and shown close up"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>A new message: one green box, and the thread below it shown as moved, not changed.</sub></td>
+    <td align="center"><sub>Edits in place: each one boxed, numbered and shown close up.</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/images/pricing-desktop-dark.png" alt="Desktop pricing page in dark mode with three numbered changes and a moved block"></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><sub>Dark mode, desktop: three changes and a block that moved 128 px, in one picture.</sub></td>
+  </tr>
+</table>
+
+## The report
+
+`--json` prints each region's number, kind and box on each side, the before and after row ranges for moved content, and the canvas size. Subtract the before row's `y` from the after row's `y` for the signed offset. The exit code distinguishes a clean comparison, detected change regions and errors.
+
+## Install
+
+On macOS and Linux (x64 or arm64):
 
 ```sh
-zig build
-zig-out/bin/uidiff before.png after.png --scale 2 --json
-zig-out/bin/uidiff before.png after.png --scale 3 --annotate sheet.png
+curl -fsSLO https://github.com/pamin-labs/uidiff/releases/latest/download/install.sh
+sh install.sh
 ```
 
-Inputs can be PNG, JPEG, or WebP. `--scale` takes the number of device pixels per logical pixel (CSS pixels, points or dp) as a plain decimal (`2`, `1.5`) and defaults to 1. `--scale 0` fails with `InvalidScale`. Other invalid values, including numbers too large for a 64-bit float, print the usage text. Without `--json`, the command prints the region count (`1 region`, `3 regions`).
+On Windows (x64 or arm64) in PowerShell:
 
-`--annotate <out.png>` writes a PNG with labelled before and after panes. Amber marks changes, green marks insertions, and red marks removals. The gutter shows stationary rows in grey and displaced rows in blue with their signed shift. Green and red wedges lead into the shifted rows. When columns align independently, the gutter shows the column with the largest moved block. Below the panes, each region has a numbered close-up with context from each affected side.
-
-Panoramic comparisons use two labelled overview strips and paired focus rows. Focus crops show the original x ranges and retain full-size pixels wherever they fit. Reduced crops show their scale in the caption, and overlapping crops share a focus row. For other aspect ratios, small panes use integer enlargement where the sheet bounds permit it, and tall previews fit within a height cap. Crops use an area filter when downscaled. JSON boxes and shift labels use original device pixels.
-
-The CLI streams the sheet one row at a time and replaces the destination only when the PNG is complete. An identical pair still writes a sheet and exits with status 0. The rendered preview and detail layout must fit within the sheet bounds. An output that exceeds them fails with `SheetTooLarge`. A directory destination fails with `IsDir`.
-
-`--help` prints usage to standard output and exits with 0. The exit code is 0 for no regions, 1 for changed images, and 2 for errors, including a failure to write standard output. Errors are one line on standard error naming the file concerned (or `stdout`) and a stable error name, such as `error(uidiff): after.png: ImageTooLarge`. The CLI's text is English only; programs should read the JSON report and the error names.
-
-### Good input
-
-- Freeze animations, carets, timers and random content before capturing.
-- Fix fonts, the locale and the device scale between the two captures.
-- Compare captures of the same width and scale. Different heights are fine; a different width is reported as added or removed columns.
-
-### JSON report
-
-With `--json`, the command prints one object:
-
-- `version`: the report schema version.
-- `width`, `height`: the larger width and the larger height of the two inputs.
-- `regions`: the changes, numbered from 1 in reading order. Each has a `number`, a `kind` and one box per side:
-  - `kind` is `changed` (the region is on both sides), `inserted` (only on the after side) or `removed` (only on the before side). Later versions may add kinds, so treat an unknown one as `changed`.
-  - `before` and `after` are boxes with `x`, `y`, `width` and `height`. A side the region is not on is `null`.
-- `moves`: aligned blocks whose vertical positions differ. Each block has `before` and `after` row ranges with `y` and `height`, plus `x` and `width` identifying the columns they cover. The signed shift is `after.y - before.y`. The array is empty when the comparison finds no row movement. This field is additive in schema version 1.
-
-All coordinates are device pixels of the input images; divide by `--scale` for logical pixels.
-
-### What counts as a change
-
-- A pixel changes when its YIQ colour distance from the other image's pixel passes `threshold` in `src/diff/yiq.zig`. The anti-aliasing test uses neighbours in the full images. On aligned moved rows, small balanced changes to coverage between shared colours are ignored when they fit the pixel's local edge contrast.
-- Changed pixels join through edge or corner contact. Small groups count together toward `min_region_pixels` only across the tighter `evidence_gap` in `src/diff/regions.zig`. Faint specks and intermediate edge shades on stationary rows need edge-connected support before corners are joined. When either input fits within `single_pixel_area`, a single changed pixel can form a region.
-- Groups merge when their gap is within the logical-pixel `merge_gap` in `src/diff/regions.zig`. Insertions, removals, and two-sided edits use a tighter gap when they meet. The merge gap doubles until the count fits `max_regions` in the same file.
-- Each box uses the logical-pixel `padding` in `src/diff/regions.zig`. Edges round outward to whole device pixels and are clipped to the image.
-- Rows are aligned by content, so an insertion or a deletion that moves the rows below it reports only the inserted or deleted rows. In two captures of the same height (a fixed viewport), a leading shift within `scroll_shift` (`src/diff.zig`) is treated as scroll. A larger leading shift is reported as content added or removed there. Content revealed at the bottom is reported as inserted. Content pushed below the viewport or behind a fixed footer is ignored. When stationary gutters divide the changed columns, the columns can align independently. For different capture heights, gutters are found over the shared rows. Columns with new content in the extension are still compared. The alignment searches up to `max_edits` (`src/diff/rows.zig`) row insertions plus deletions; past that, as for a tall pair of unrelated screenshots, rows are compared by position, which keeps the worst case fast.
-
-### Limits and memory
-
-Inputs are bounded by `max_pixels`, `max_extent`, and `max_encoded_bytes` in `src/value/image.zig`. The default per-image decode cap is `max_decode_bytes` in the same file. The PNG budget accounts for encoded bytes, block-rounded dimensions, sample depth, and workspace. JPEG and WebP charge their RGBA output and decoder allocations against the cap. Over-limit images fail with `ImageTooLarge`.
-
-Noninterlaced RGB8 and RGBA8 PNGs use a fixed DEFLATE dictionary and scanline-sized decode scratch. The CLI can overlap two bounded PNG decodes. The comparison holds both decoded images, and the optional sheet is encoded one row at a time. Run `zig build bench` to measure peak RSS on the fixture pairs or your own captures.
-
-## Library
-
-Add the package to `build.zig.zon` with `zig fetch --save <release tarball URL>`, then import its module:
-
-```zig
-// build.zig
-const uidiff = b.dependency("uidiff", .{ .target = target, .optimize = optimize });
-exe.root_module.addImport("uidiff", uidiff.module("uidiff"));
+```powershell
+Invoke-WebRequest -UseBasicParsing https://github.com/pamin-labs/uidiff/releases/latest/download/install.ps1 -OutFile install.ps1
+.\install.ps1
 ```
 
-```zig
-const std = @import("std");
-const uidiff = @import("uidiff");
+The installers verify the binary against `SHA256SUMS` and print the installed
+path under `~/.local/bin` or `%LOCALAPPDATA%\Programs\uidiff`. Set
+`UIDIFF_VERSION` to select a specific release, with or without the leading `v`.
 
-/// Compares two captures and writes the JSON report.
-fn report(io: std.Io, gpa: std.mem.Allocator, out: *std.Io.Writer) !void {
-    var diagnostics: uidiff.Diagnostics = .{};
-    const result = try uidiff.compareFiles(io, gpa, .{ .before = "before.png", .after = "after.png" }, .{ .scale = 2 }, &diagnostics);
-    defer result.deinit(gpa);
-    try uidiff.report.write(gpa, out, result.regions, result.canvas(), result.moves);
-}
+For npm projects, run `npm install --save-dev uidiff` and use `npx uidiff`.
+npm selects the platform binary through optional dependencies.
+
+The [releases page](https://github.com/pamin-labs/uidiff/releases) also has
+standalone binaries, archives with license notices, checksums and the rendered
+`uidiff.rb` formula for use in a Homebrew tap.
+
+## Use
+
+```text
+uidiff <before> <after> [--scale N] [--json] [--annotate <out.png>]
+uidiff --help
 ```
 
-`uidiff.decode` and `uidiff.compare` work on bytes and borrowed RGBA8 pixels. `uidiff.encodeComparisonSheet` streams the styled PNG to a writer. `uidiff.renderComparisonSheet` takes the comparison's regions and moves and returns the styled sheet in memory. `Options.scale` takes a `uidiff.Scale` in device pixels per CSS pixel. `Options.max_decode_bytes` lets `compareFiles` apply a lower per-image decode cap. On failure, `diagnostics.path` names the file concerned.
+| Argument | Meaning |
+| --- | --- |
+| `<before>`, `<after>` | The two captures: PNG, JPEG or WebP. Different heights are fine; a different width is reported as added or removed columns. |
+| `--scale N` | Device pixels per logical pixel (CSS px, points or dp), as a plain decimal such as `2` or `1.5`. Default `1`. It sets padding and merge distances in logical pixels; boxes stay in device pixels. |
+| `--json` | Print the report as one JSON object instead of the region count. |
+| `--annotate <out.png>` | Also write the sheet to this PNG. The file is replaced only once the sheet is complete. |
+| `--help` | Print usage and exit 0. |
 
-## Development
+| Exit code | Meaning |
+| --- | --- |
+| `0` | No change regions detected. |
+| `1` | Change regions found. |
+| `2` | A comparison or usage error, reported on stderr. |
 
-Run the [repository gates](AGENTS.md#gates) before submitting a contribution. `zig build fixtures` regenerates the synthetic PNG, JPEG, and WebP pairs in `tests/fixtures/images`. The test gate checks that the committed fixtures are current.
+```sh
+uidiff before.png after.png --scale 2                          # "3 regions"
+uidiff before.png after.png --scale 2 --json > report.json
+uidiff before.png after.png --scale 2 --annotate sheet.png
+```
 
-Run `zig build bench` to measure the bundled synthetic phone and desktop pairs: decode, compare, the `--annotate` sheet, the file pipeline and peak RSS. Run `zig build bench -Dbench-before=before.jpg -Dbench-after=after.jpg` to measure your own pair, adding `-Dbench-scale=2` for its device scale (the CLI's default otherwise).
+For the best results, freeze animations, carets and timers, and keep fonts, locale and device scale the same for both captures.
 
-`zig build size` checks the CLI binary against its size budget in `build.zig`. See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+## Agent skill
 
-## License
+The uidiff skill teaches agents that read `SKILL.md` how to capture a comparable pair, run the CLI and interpret the report.
 
-MIT. uidiff includes libjpeg-turbo (IJG, Modified BSD and Zlib), libwebp (BSD 3-Clause), zlib-ng (Zlib), stb_image (MIT or public domain) and code adapted from pixelmatch (ISC). Release archives include [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES) beside `LICENSE`.
+```sh
+npx skills add pamin-labs/uidiff        # install into this project (-g for every project)
+npx skills update                       # update installed skills to their latest version
+npx skills remove uidiff                # remove it
+```
 
-The annotated sheet embeds bitmap glyphs derived from IBM Plex Sans. The glyphs are not distributed as a font named Plex. The full OFL-1.1 text is in [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES). Run `python3 scripts/generate-font.py --check` to verify the [committed table](src/annotate/font-ascii.bin) offline. Use `--verify-generated` for a fresh rasterization with the pinned generator dependencies.
+Inside a project the skill is recorded in `skills-lock.json`; commit it, and `npx skills install` restores the same version on another machine.
