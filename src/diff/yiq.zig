@@ -130,7 +130,7 @@ pub fn mask(before: Raster, after: Raster, top: usize, rows: usize, out: []regio
         const old_blocks = std.mem.bytesAsSlice(PixelBlock, std.mem.sliceAsBytes(old[0..end]));
         const mask_blocks = std.mem.bytesAsSlice(MaskBlock, std.mem.sliceAsBytes(output[0..end]));
         if (new.len == 1) {
-            if (maskBackdrop(a, b, old_blocks, mask_blocks, new[0], y, policy)) found = true;
+            if (maskBackdrop(a, b, old, new, old_blocks, mask_blocks, y, policy)) found = true;
         } else {
             const new_blocks = std.mem.bytesAsSlice(PixelBlock, std.mem.sliceAsBytes(new[0..end]));
             for (old_blocks, new_blocks, mask_blocks, 0..) |*old_block, *new_block, *cells, block| {
@@ -143,22 +143,7 @@ pub fn mask(before: Raster, after: Raster, top: usize, rows: usize, out: []regio
                     continue;
                 }
 
-                const fully_opaque = (channelInt(lanes, pa, 3) & channelInt(lanes, pb, 3)) == @as(@Vector(lanes, u32), @splat(255));
-                if (@reduce(.And, selectBool(lanes, equal, fully_opaque))) {
-                    const r = channel(lanes, pa, 0) - channel(lanes, pb, 0);
-                    const g = channel(lanes, pa, 1) - channel(lanes, pb, 1);
-                    const blue = channel(lanes, pa, 2) - channel(lanes, pb, 2);
-                    const candidates = yiq(ColorLanes, r, g, blue) > constant(ColorLanes, max_delta);
-                    if (@reduce(.And, candidates) and flatBlock(a, old, pa, x, y) and flatBlock(b, new, pb, x, y)) {
-                        cells.* = @splat(.changed);
-                        found = true;
-                        continue;
-                    }
-                    if (writeChangedLanes(a, b, x, y, policy, markChange, laneBits(candidates), cells)) found = true;
-                } else {
-                    const different = @select(bool, equal, @as(@Vector(lanes, bool), @splat(false)), @as(@Vector(lanes, bool), @splat(true)));
-                    if (writeChangedLanes(a, b, x, y, policy, scalarChange, laneBits(different), cells)) found = true;
-                }
+                if (changedBlock(a, b, old, new, pa, pb, equal, x, y, policy, cells)) found = true;
             }
         }
         for (output[end..], end..) |*cell, x| {
@@ -198,16 +183,35 @@ pub inline fn aboveThreshold(a: Pixel, b: Pixel, byte_offset: usize) bool {
     return yiq(f64, d[0], d[1], d[2]) > max_delta;
 }
 
-noinline fn maskBackdrop(a: SampledRaster, b: SampledRaster, before: []const PixelBlock, out: []MaskBlock, backdrop: Pixel, y: usize, policy: EdgePolicy) bool {
-    const fill: @Vector(lanes, u32) = @splat(@bitCast(backdrop));
+noinline fn maskBackdrop(a: SampledRaster, b: SampledRaster, old: []const Pixel, new: []const Pixel, before: []const PixelBlock, out: []MaskBlock, y: usize, policy: EdgePolicy) bool {
+    const fill: @Vector(lanes, u32) = @splat(@bitCast(new[0]));
     var found = false;
     for (before, out, 0..) |*row, *cells, block| {
-        const bits = laneBits(pixel.load(row) != fill);
-        if (bits == 0) {
+        const packed_pixels = pixel.load(row);
+        const equal = packed_pixels == fill;
+        if (@reduce(.And, equal)) {
             cells.* = @splat(.clear);
-        } else if (writeChangedLanes(a, b, block * lanes, y, policy, scalarChange, bits, cells)) found = true;
+        } else if (changedBlock(a, b, old, new, packed_pixels, fill, equal, block * lanes, y, policy, cells)) found = true;
     }
     return found;
+}
+
+noinline fn changedBlock(a: SampledRaster, b: SampledRaster, old: []const Pixel, new: []const Pixel, pa: @Vector(lanes, u32), pb: @Vector(lanes, u32), equal: @Vector(lanes, bool), x: usize, y: usize, policy: EdgePolicy, cells: *MaskBlock) bool {
+    const fully_opaque = (channelInt(lanes, pa, 3) & channelInt(lanes, pb, 3)) == @as(@Vector(lanes, u32), @splat(255));
+    if (@reduce(.And, selectBool(lanes, equal, fully_opaque))) {
+        const r = channel(lanes, pa, 0) - channel(lanes, pb, 0);
+        const g = channel(lanes, pa, 1) - channel(lanes, pb, 1);
+        const blue = channel(lanes, pa, 2) - channel(lanes, pb, 2);
+        const candidates = yiq(ColorLanes, r, g, blue) > constant(ColorLanes, max_delta);
+        if (@reduce(.And, candidates) and flatBlock(a, old, pa, x, y) and flatBlock(b, new, pb, x, y)) {
+            cells.* = @splat(.changed);
+            return true;
+        }
+        return writeChangedLanes(a, b, x, y, policy, markChange, laneBits(candidates), cells);
+    } else {
+        const different = @select(bool, equal, @as(@Vector(lanes, bool), @splat(false)), @as(@Vector(lanes, bool), @splat(true)));
+        return writeChangedLanes(a, b, x, y, policy, scalarChange, laneBits(different), cells);
+    }
 }
 
 fn laneBits(mask_: @Vector(lanes, bool)) LaneBits {
@@ -698,6 +702,34 @@ test "prepared sampling preserves cropped, repeated-column and repeated-row coor
     const repeated = SampledRaster.init(raster);
     try std.testing.expectEqualSlices(Pixel, pixels[1..3], repeated.row(1));
     try std.testing.expectEqual(pixels[2], repeated.at(1, 1));
+}
+
+test "repeated rows and repeated columns agree across vector blocks and the tail" {
+    const width = 2 * lanes + 1;
+    const height = 2;
+    const white: Pixel = @splat(255);
+    const ink: Pixel = .{ 0, 0, 0, 255 };
+    const faded: Pixel = .{ 0, 0, 0, 128 };
+    var pixels: [width * height]Pixel = @splat(white);
+    @memset(pixels[0..lanes], ink);
+    pixels[pixels.len - 1] = faded;
+    const backdrop: [width * height]Pixel = @splat(white);
+    const a: Raster = .{
+        .image = .{ .width = width, .height = height, .pixels = &pixels },
+        .left = 0,
+        .top = 0,
+        .width = width,
+        .height = height,
+    };
+    var b = a;
+    b.image.pixels = &backdrop;
+    b.background = .{ .row = backdrop[0..width] };
+    var rows: [pixels.len]regions.Cell = undefined;
+    try std.testing.expect(mask(a, b, 0, height, &rows));
+    b.background = .margin;
+    var columns: [pixels.len]regions.Cell = undefined;
+    try std.testing.expect(mask(a, b, 0, height, &columns));
+    try std.testing.expectEqualSlices(regions.Cell, &rows, &columns);
 }
 
 test {

@@ -29,7 +29,7 @@ const Paeth = struct {
             const middle = @select(i16, high <= threshold, low, diagonal);
             const prediction = @select(i16, threshold <= low, high, middle);
             // Paeth selects one of the three input bytes.
-            const delta: Pixel = @truncate(@as(@Vector(4, u16), @bitCast(prediction)));
+            const delta: Pixel = @intCast(prediction);
             self.left = @as(Pixel, raw) +% delta;
             self.upper_left = up;
             out.* = self.left;

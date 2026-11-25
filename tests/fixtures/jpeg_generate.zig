@@ -55,7 +55,7 @@ fn generate(io: Io, directory: Io.Dir, profile: fixtures.Profile) GenerateError!
             for (0..count) |channel| {
                 const channel_value = 17 * x + 23 * y + 61 * channel + x * y * (1 + channel);
                 // The fixture pattern repeats modulo the sample depth.
-                samples[x * count + channel] = @truncate(channel_value);
+                samples[x * count + channel] = @intCast(channel_value & std.math.maxInt(u8));
             }
         }
         var row: jpeg.JSAMPROW = &samples;
@@ -63,6 +63,7 @@ fn generate(io: Io, directory: Io.Dir, profile: fixtures.Profile) GenerateError!
     }
     jpeg.jpeg_finish_compress(&encoder);
     if (encoded == null or length == 0) return error.EncodeFailed;
+    // jpeg_mem_dest returns the readable encoded span after finish_compress.
     try directory.writeFile(io, .{ .sub_path = profile.file, .data = encoded[0..length] });
 }
 
