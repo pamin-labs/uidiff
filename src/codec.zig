@@ -52,7 +52,13 @@ pub const Decoded = struct {
 };
 
 /// Malformed, unsupported, or over-limit image inputs.
-pub const DecodeError = stb.DecodeError || webp.DecodeError || error{UnsupportedImageFormat};
+pub const DecodeError = errors: {
+    var result: type = error{UnsupportedImageFormat};
+    for (@typeInfo(@TypeOf(formats)).@"struct".field_names) |name| {
+        result = result || @field(formats, name).DecodeError;
+    }
+    break :errors result;
+};
 
 /// Failures opening or reading an input file.
 pub const ReadError = Io.File.OpenError || Io.File.LengthError || Io.File.ReadPositionalError ||

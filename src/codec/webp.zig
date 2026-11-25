@@ -13,9 +13,14 @@ pub const DecodeError = memory.Error;
 /// Validated dimensions of an encoded WebP image.
 pub const Header = struct { size: Size };
 
+const riff = "RIFF";
+const webp = "WEBP";
+const form_offset = riff.len + @sizeOf(u32);
+const form_end = form_offset + webp.len;
+
 /// Recognizes the WebP RIFF form.
 pub fn matches(prefix: []const u8) bool {
-    return prefix.len >= 12 and std.mem.eql(u8, prefix[0..4], "RIFF") and std.mem.eql(u8, prefix[8..12], "WEBP");
+    return prefix.len >= form_end and std.mem.eql(u8, prefix[0..riff.len], riff) and std.mem.eql(u8, prefix[form_offset..form_end], webp);
 }
 
 /// Probes the WebP image without allocating decoded pixels.

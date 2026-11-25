@@ -8,6 +8,9 @@ const Writer = std.Io.Writer;
 const zlib = @import("zlib_c");
 const Image = values.Image;
 
+/// Malformed PNG bytes, a decode past the memory budget, or allocation failure.
+pub const DecodeError = stb.DecodeError;
+
 /// Probes the dimensions and channel depth.
 pub const probe = stb.probe;
 /// Releases decoded pixels through their PNG or fallback allocator.
