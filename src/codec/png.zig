@@ -104,6 +104,7 @@ const BorrowedRows = struct {
 const up_filter = 2;
 const sub_filter = 1;
 const paeth_filter = 4;
+const sheet_strip_rows = 8;
 const filter_sample_pixels = 6;
 const filter_switch_margin = 4;
 /// Compressed bytes per IDAT chunk.
@@ -133,7 +134,8 @@ pub fn write(allocator: Allocator, image: Image, output: *Writer) EncodeError!vo
 }
 
 /// Encodes a source that supplies one row at a time. BorrowedRows can return
-/// existing pixels. Other sources fill the provided row buffer.
+/// existing pixels. Other sources are consumed in strips and can fill the
+/// provided row buffer or lend a row to copy into the strip.
 /// Sources may supply isOpaque for RGB output.
 pub fn writeRows(allocator: Allocator, size: values.Size, source: anytype, output: *Writer) EncodeError!void {
     if (!@hasDecl(@TypeOf(source), "row"))
@@ -150,7 +152,7 @@ pub fn writeRows(allocator: Allocator, size: values.Size, source: anytype, outpu
     try chunk(output, png_format.header_type, &header);
 
     const row_bytes = size.width * @sizeOf(values.Pixel);
-    const staged_rows: usize = if (@TypeOf(source) == BorrowedRows) 0 else 2;
+    const staged_rows: usize = if (@TypeOf(source) == BorrowedRows) 0 else sheet_strip_rows + 1;
     const buffer = try allocator.alignedAlloc(u8, .@"4", chunk_bytes + row_bytes + staged_rows * row_bytes);
     defer allocator.free(buffer);
     const filtered = buffer[chunk_bytes..][0..row_bytes];
@@ -161,8 +163,19 @@ pub fn writeRows(allocator: Allocator, size: values.Size, source: anytype, outpu
     try compress.init(&backing, output, buffer[0..chunk_bytes]);
     defer compress.deinit();
     for (0..size.height) |y| {
-        const scratch = if (staged_rows == 0) &.{} else staging[(y % 2) * size.width ..][0..size.width];
-        const row = std.mem.sliceAsBytes(source.row(y, scratch));
+        const pixels = if (staged_rows == 0) source.row(y, &.{}) else staged: {
+            if (y % sheet_strip_rows == 0) {
+                // One extra slot preserves the previous filtered row while
+                // the next strip is composed.
+                for (y..@min(size.height, y + sheet_strip_rows)) |index| {
+                    const buffer_row = staging[(index % staged_rows) * size.width ..][0..size.width];
+                    const produced = source.row(index, buffer_row);
+                    if (produced.ptr != buffer_row.ptr) @memcpy(buffer_row, produced);
+                }
+            }
+            break :staged staging[(y % staged_rows) * size.width ..][0..size.width];
+        };
+        const row = std.mem.sliceAsBytes(pixels);
         if (y == 0) {
             try compress.write(&.{up_filter});
             if (rgb_only) {
@@ -640,6 +653,47 @@ test "fuzz streaming PNG reconstruction" {
     comptime var corpus: []const []const u8 = &.{};
     inline for (0..4 * (paeth_filter + 2)) |seed| corpus = corpus ++ .{&[_]u8{seed}};
     try std.testing.fuzz({}, fuzzStreamingRows, .{ .corpus = corpus });
+}
+
+test "staged PNG rows preserve the predictor across two strip boundaries and a tail" {
+    const Source = struct {
+        image: Image,
+
+        pub fn isOpaque(self: @This()) bool {
+            return self.image.isOpaque();
+        }
+
+        pub fn row(self: @This(), y: usize, scratch: []values.Pixel) []const values.Pixel {
+            const pixels = self.image.row(y);
+            if (y % 2 == 1) return pixels;
+            @memcpy(scratch, pixels);
+            return scratch;
+        }
+    };
+
+    const allocator = std.testing.allocator;
+    const width = 17;
+    const height = 2 * sheet_strip_rows + 3;
+    var pixels: [width * height]values.Pixel = undefined;
+    const image: Image = .{ .width = width, .height = height, .pixels = &pixels };
+    for ([_]u8{ 255, 101 }) |alpha| {
+        for (&pixels, 0..) |*pixel, i| {
+            const x = i % width;
+            const y = i / width;
+            pixel.* = .{ @intCast(3 * x + y), @intCast(y * 7), @intCast(x * 7), alpha };
+        }
+        var streamed: Writer.Allocating = .init(allocator);
+        defer streamed.deinit();
+        var borrowed: Writer.Allocating = .init(allocator);
+        defer borrowed.deinit();
+        try writeRows(allocator, image.size(), Source{ .image = image }, &streamed.writer);
+        try write(allocator, image, &borrowed.writer);
+        try std.testing.expectEqualSlices(u8, borrowed.written(), streamed.written());
+        const header = try probe(allocator, streamed.written(), values.max_decode_bytes);
+        const decoded = try load(allocator, streamed.written(), header, values.max_decode_bytes);
+        defer release(allocator, decoded);
+        try std.testing.expectEqualSlices(values.Pixel, image.pixels, decoded);
+    }
 }
 
 test {
