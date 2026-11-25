@@ -26,8 +26,9 @@ class ReadmeImages(HTMLParser):
                 self.sources.append(source)
 
 
-def check():
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+def check(root):
+    root = root.resolve()
+    readme = (root / "README.md").read_text(encoding="utf-8")
     parsed = ReadmeImages()
     parsed.feed(readme)
     sources = parsed.sources + re.findall(r"!\[[^\]\n]*\]\(\s*<?([^\s)>]+)", readme)
@@ -35,8 +36,12 @@ def check():
         raise SystemExit("README.md: expected at least one image reference")
     for ref in sources:
         url = urlsplit(ref)
-        if url.scheme or url.netloc or not (ROOT / unquote(url.path)).is_file():
-            raise SystemExit(f"README.md: missing image {ref}")
+        path = Path(unquote(url.path))
+        image = (root / path).resolve()
+        if url.scheme or url.netloc or path.is_absolute() or not image.is_relative_to(root):
+            raise SystemExit("README.md: expected a relative image in the checkout")
+        if not image.is_file():
+            raise SystemExit(f"README.md: missing image {image.relative_to(root)}")
 
 
 def render(args):
@@ -67,7 +72,7 @@ def main():
         generate.add_argument(f"--{name}", required=True, help="pair directory relative to the corpus")
     args = parser.parse_args()
     if args.command == "check":
-        check()
+        check(ROOT)
     else:
         render(args)
 

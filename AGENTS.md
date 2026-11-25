@@ -82,7 +82,7 @@ The noninterlaced RGB8 and RGBA8 PNG path uses zlib-ng to inflate scanlines into
 - `bash scripts/fuzz.sh` (every fuzz target: the CLI's argument parser and each file in `tests/fuzz/`)
 - `zig build bench`
 - `zig build size`
-- `python3 scripts/readme-images.py check` (validates the local README image links)
+- `python3 scripts/readme-images.py check` and `python3 scripts/test-readme-images.py` (validate local README image links)
 - `python3 scripts/generate-font.py --check` (offline, checked against the pinned atlas digest)
 - `zig build -Doptimize=safe` and `zig build test` from an empty dependency and global cache
 - `zig build install size -Doptimize=safe -Dtarget=<target>` for each target in `.github/release-targets.json`
