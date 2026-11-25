@@ -1,5 +1,6 @@
 //! Public surface of the image comparison domain.
 const std = @import("std");
+const builtin = @import("builtin");
 const engine = @import("diff/compare.zig");
 
 /// Parameters for comparing decoded images.
@@ -20,6 +21,9 @@ pub const max_regions = engine.max_regions;
 pub const compare = engine.compare;
 /// Compares validated images with options already checked.
 pub const compareChecked = engine.compareChecked;
+
+/// Fixtures and bounds for the standalone comparison scenario tests.
+pub const test_support = if (builtin.is_test) @import("diff/test_support.zig") else void;
 
 test {
     std.testing.refAllDecls(@This());

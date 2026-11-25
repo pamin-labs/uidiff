@@ -1,9 +1,22 @@
 //! Procedural canvases and painter patterns for diff tests.
 const std = @import("std");
-const values = @import("../value.zig");
+/// Pixel, geometry and region values used by the scenario fixtures.
+pub const values = @import("../value.zig");
 const regions = @import("regions.zig");
+const engine = @import("compare.zig");
+const row_alignment = @import("rows.zig");
+const pixel_ops = @import("pixel.zig");
 const Image = values.Image;
 const Pixel = values.Pixel;
+
+/// The row alignment edit budget.
+pub const max_edits = row_alignment.max_edits;
+/// The region support threshold used by the scenarios.
+pub const min_region_pixels = regions.min_region_pixels;
+/// The initial grouping gap.
+pub const merge_gap = regions.merge_gap;
+/// Exact equality of two runs of pixels.
+pub const sameRun = pixel_ops.sameRun;
 
 const test_allocator = std.testing.allocator;
 
@@ -263,6 +276,47 @@ pub fn checkRegions(actual: []const values.Region, expected: []const values.Regi
         try std.testing.expectEqual(number, got.number);
         try std.testing.expectEqual(if (want.before == null) values.Kind.inserted else if (want.after == null) values.Kind.removed else values.Kind.changed, got.kind);
     }
+}
+
+/// Checks that an edit is reported within the expected width.
+pub fn expectEditAt(before: Canvas, after: Canvas, x: usize, y: usize, max_box_width: usize) !void {
+    const result = try compareCanvases(before, after, 1);
+    defer result.deinit(std.testing.allocator);
+    for (result.regions) |region| {
+        const box = region.after orelse continue;
+        if (box.x <= @as(f64, @floatFromInt(x)) and box.right() > @as(f64, @floatFromInt(x)) and
+            box.y <= @as(f64, @floatFromInt(y)) and box.bottom() > @as(f64, @floatFromInt(y)))
+        {
+            try std.testing.expect(box.width <= @as(f64, @floatFromInt(max_box_width)));
+            return;
+        }
+    }
+    return error.MissingEdit;
+}
+
+/// Compares two procedural canvases at the supplied scale.
+pub fn compareCanvases(before: Canvas, after: Canvas, scale: f64) !engine.Comparison {
+    return engine.compare(std.testing.allocator, before.view, after.view, .{ .scale = .{ .factor = scale } });
+}
+
+/// Checks all reported regions against the expected boxes.
+pub fn check(before: Canvas, after: Canvas, scale: f64, expected: []const values.Region) !void {
+    const actual = try compareCanvases(before, after, scale);
+    defer actual.deinit(std.testing.allocator);
+    try checkRegions(actual.regions, expected);
+}
+
+/// Checks an insertion and its matching deletion when reversed.
+pub fn checkInsertion(before: Canvas, after: Canvas, expected: values.Box) !void {
+    try check(before, after, 1, &.{.{ .after = expected }});
+    try check(after, before, 1, &.{.{ .before = expected }});
+}
+
+/// Checks the number of reported regions.
+pub fn count(before: Canvas, after: Canvas, expected: usize) !void {
+    const actual = try compareCanvases(before, after, 1);
+    defer actual.deinit(std.testing.allocator);
+    try std.testing.expectEqual(expected, actual.regions.len);
 }
 
 fn insideRounded(x: usize, y: usize, width: usize, height: usize, radius: usize) bool {

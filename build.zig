@@ -663,6 +663,7 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
         // with it the decoders' allocation hooks they link against.
         const filters = b.allocator.dupe([]const u8, &.{pattern}) catch @panic("OOM");
         step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = uidiff, .filters = filters })).step);
+        addDiffScenarios(b, step, target, optimize, filters);
         return;
     }
     const inventory = b.addSystemCommand(&.{ "bash", "scripts/count-fuzz-targets.sh" });
@@ -671,6 +672,7 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
     b.step("fuzz-target-count", "Discover fuzz tests from the compiled runners").dependOn(&fuzz_count_install.step);
     addFuzzInventory(b, inventory, uidiff);
     step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = uidiff })).step);
+    addDiffScenarios(b, step, target, optimize, &.{});
     const fuzz_sources = fuzzSources(b);
     const checked_sources = b.allocator.alloc([]const u8, fuzz_sources.len + 1) catch @panic("OOM");
     @memcpy(checked_sources[0..fuzz_sources.len], fuzz_sources);
@@ -712,6 +714,21 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
         .optimize = optimize,
     }) })).step);
     addFixtures(b, step, host_generator);
+}
+
+fn addDiffScenarios(b: *Build, step: *Build.Step, target: Build.ResolvedTarget, optimize: Optimize, filters: []const []const u8) void {
+    const diff = b.createModule(.{
+        .root_source_file = b.path("src/diff.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const scenarios = b.createModule(.{
+        .root_source_file = b.path("tests/diff.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "diff_scenarios", .module = diff }},
+    });
+    step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = scenarios, .filters = filters })).step);
 }
 
 fn fuzzSources(b: *Build) []const []const u8 {

@@ -30,7 +30,7 @@ Follow the public pamin-labs/skills engineering rules in [core](.agents/skills/p
 - `skills/uidiff/` documents screenshot capture, comparison and report interpretation for agents.
 - `scripts/` contains developer tooling. `scripts/release/` packages the CLI, renders the Homebrew formula and tests the launcher and installers. The installers are `install.sh` and `install.ps1` at the repository root.
 - `.github/` contains the release target list and workflows. CI and `.github/workflows/release.yml` share the same ReleaseSafe build. A pushed `v*` tag matching `build.zig.zon` enables GitHub release assets and npm trusted publishing. Stable releases also update the Homebrew tap from the published formula asset.
-- `tests/` runs the installed CLI (`tests/e2e.zig`), decodes the fixtures through the public API (`tests/decode.zig`), checks the binary size budget, and checks source layout, layering and declaration order. `tests/fuzz/` holds one fuzz target per file, each its own test binary. `tests/fixtures.zig` is the fixture set's root; `tests/fixtures/` holds the synthetic fixture generator, its encoders, the freshness check and the generated images with expected reports. Unit tests live beside the code they exercise.
+- `tests/diff.zig` registers the comparison scenarios in `tests/diff/`, which use the diff facade and shared procedural fixtures. `tests/` runs the installed CLI (`tests/e2e.zig`), decodes the fixtures through the public API (`tests/decode.zig`), checks the binary size budget, and checks source layout, layering and declaration order. `tests/fuzz/` holds one fuzz target per file, each its own test binary. `tests/fixtures.zig` is the fixture set's root; `tests/fixtures/` holds the synthetic fixture generator, its encoders, the freshness check and the generated images with expected reports. Unit tests live beside the code they exercise.
 
 ## Layers
 
@@ -60,6 +60,7 @@ Named build modules, and the only files that may import them. The `export` row n
 | `stb_write_c` | `tests/fixtures/encode.zig` |
 | `webp_encode_c` | `tests/fixtures/encode.zig` |
 | `codec_memory` | `src/codec.zig` `src/codec/png.zig` `src/codec/png_scanlines.zig` `src/codec/stb.zig` `src/codec/jpeg.zig` `src/codec/webp.zig` `tests/fixtures/encode.zig` |
+| `diff_scenarios` | `tests/diff/` |
 | `fixtures` | `tests/e2e.zig` `tests/decode.zig` `tests/fuzz/` |
 | `e2e_options` | `tests/e2e.zig` |
 | `fixture_options` | `tests/fixtures/fresh.zig` |
@@ -72,6 +73,7 @@ Only a submodule's facade and implementation files may import its implementation
 | --- | --- |
 | `src/diff/regions.zig` | `src/diff/regions/` |
 | `src/diff/rows.zig` | `src/diff/rows/` |
+| `tests/diff.zig` | `tests/diff/` |
 
 ## Decoders
 

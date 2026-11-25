@@ -5,6 +5,7 @@ const pending = @import("candidate.zig");
 const bounds = @import("bounds.zig");
 const values = @import("../../value.zig");
 const pixel = @import("../pixel.zig");
+const sample = @import("../test_support.zig");
 const Box = values.Box;
 const Image = values.Image;
 
@@ -77,6 +78,64 @@ fn exchangedRows(before: Image, after: Image, bands: Box, pitch: usize, rows: us
             !pixel.sameRun(after.row(y)[x..right], before.row(y + pitch)[x..right])) return false;
     }
     return true;
+}
+
+test "reciprocal row moves are grouped only when both rows exchange intact" {
+    const before = try sample.Canvas.init(256, 160);
+    defer before.deinit();
+    const after = try sample.Canvas.init(256, 160);
+    defer after.deinit();
+    const upper = 40;
+    const pitch = 40;
+    before.line(22, 212, upper + 10, 4, 60);
+    before.line(22, 212, upper + pitch + 10, 9, 60);
+    after.copyRows(upper, before, upper + pitch, upper + pitch * 2);
+    after.copyRows(upper + pitch, before, upper, upper + pitch);
+    const removed = Box.fromPixels(18, upper + 6, 200, 18);
+    const inserted = Box.fromPixels(18, upper + pitch + 6, 200, 18);
+    const candidates = [_]pending.Candidate{
+        .{ .region = .{ .before = removed }, .pixels = 8 },
+        .{ .region = .{ .after = inserted }, .pixels = 8 },
+    };
+    const move: values.Move = .{
+        .before = .{ .y = upper + pitch, .height = pitch },
+        .after = .{ .y = upper, .height = pitch },
+        .x = .init(18),
+        .width = .init(200),
+    };
+    var copy = candidates;
+    try std.testing.expectEqual(@as(?usize, 1), mergeSwap(&copy, &.{move}, before.view, after.view, .one));
+    try std.testing.expect(copy[0].region.before != null and copy[0].region.after != null);
+    after.fill(22, upper + pitch + 11, 7, 7, .{ 180, 18, 36, 255 });
+    copy = candidates;
+    try std.testing.expectEqual(@as(?usize, null), mergeSwap(&copy, &.{move}, before.view, after.view, .one));
+    try std.testing.expectEqualDeep(candidates, copy);
+}
+
+test "audit: a count edit between the exchanged rows remains a separate change" {
+    const before = try sample.Canvas.init(256, 160);
+    defer before.deinit();
+    const after = try sample.Canvas.init(256, 160);
+    defer after.deinit();
+    before.line(24, 160, 40, 1, 62);
+    before.line(94, 145, 80, 3, 62);
+    before.line(24, 160, 120, 7, 62);
+    after.copyRows(40, before, 120, 134);
+    after.copyRows(120, before, 40, 54);
+    after.line(94, 145, 80, 4, 62);
+    const boxes = [_]Box{
+        Box.fromPixels(24, 40, 136, 14),
+        Box.fromPixels(94, 80, 51, 14),
+        Box.fromPixels(24, 120, 136, 14),
+    };
+    var candidates: [boxes.len]pending.Candidate = undefined;
+    for (boxes, &candidates) |box, *candidate| candidate.* = .{
+        .region = .{ .before = box, .after = box },
+        .pixels = 8,
+    };
+    const original = candidates;
+    try std.testing.expectEqual(@as(?usize, null), mergeSwap(&candidates, &.{}, before.view, after.view, .one));
+    try std.testing.expectEqualDeep(original, candidates);
 }
 
 test {
