@@ -33,7 +33,7 @@ const cli_name = "uidiff";
 const library_fuzz_targets = 1;
 const styled_sheet_fuzz_source = "tests/fuzz/sheet.zig";
 /// Each fuzz target is its own test binary, so `zig build test --fuzz` runs every one.
-const fuzz_targets = [_][]const u8{ "src/cli.zig", "tests/fuzz/decode.zig", "tests/fuzz/compare.zig", styled_sheet_fuzz_source };
+const fuzz_targets = [_][]const u8{ "src/cli.zig", "tests/fuzz/decode.zig", "tests/fuzz/jpeg.zig", "tests/fuzz/compare.zig", styled_sheet_fuzz_source };
 /// Keeps clang's coverage instrumentation out of the C decoders under
 /// `zig build test --fuzz`. Zig 0.17's fuzzer reads one PC per edge counter
 /// from `__sancov_pcs1`, as its own backend writes them; clang writes two
