@@ -1,6 +1,7 @@
 //! Probes JPEG frames and runs the bounded 8-bit libjpeg-turbo decoder.
 const std = @import("std");
 const c = @import("jpeg_c");
+const test_images = @import("jpeg_test_images.zig");
 const memory = @import("codec_memory");
 const values = @import("../value.zig");
 const Allocator = std.mem.Allocator;
@@ -17,18 +18,21 @@ const soi = "\xff\xd8";
 const marker_prefix = 0xff;
 const first_scan = 0xda;
 const end_of_image = 0xd9;
+const baseline_frame = 0xc0;
+const extended_frame = 0xc1;
+const progressive_frame = 0xc2;
+const lossless_frame = 0xc3;
+const differential_frame_first = 0xc5;
+const differential_frame_last = 0xc7;
+const arithmetic_frame_first = 0xc9;
+const arithmetic_frame_last = 0xcb;
+const differential_arithmetic_frame_first = 0xcd;
+const differential_arithmetic_frame_last = 0xcf;
 const sample_precision = 8;
-const minimum_frame_length = 8;
-
-const quantization: [64]u8 = @splat(1);
-const huffman_tail: [16]u8 = @splat(0);
-// A single grayscale block with one Huffman code each for DC zero and EOB.
-const gray_jpeg = "\xff\xd8".* ++
-    "\xff\xdb\x00\x43\x00".* ++ quantization ++
-    "\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x01\x11\x00".* ++
-    "\xff\xc4\x00\x26\x00\x01".* ++ huffman_tail ++
-    "\x10\x01".* ++ huffman_tail ++
-    "\xff\xda\x00\x08\x01\x01\x00\x00\x3f\x00\x3f\xff\xd9".*;
+const precision_offset = @sizeOf(u16);
+const height_offset = precision_offset + @sizeOf(u8);
+const width_offset = height_offset + @sizeOf(u16);
+const minimum_frame_length = width_offset + @sizeOf(u16) + @sizeOf(u8);
 
 /// Recognizes the JPEG start-of-image marker.
 pub fn matches(prefix: []const u8) bool {
@@ -36,7 +40,7 @@ pub fn matches(prefix: []const u8) bool {
 }
 
 /// Reads dimensions without starting entropy decode or allocating the image.
-pub fn probe(_: Allocator, bytes: []const u8, _: usize) DecodeError!Header {
+pub fn probe(_: Allocator, bytes: []const u8, cap: usize) DecodeError!Header {
     if (!matches(bytes)) return error.InvalidImage;
     var offset: usize = soi.len;
     while (offset < bytes.len and bytes[offset] == marker_prefix) {
@@ -48,13 +52,20 @@ pub fn probe(_: Allocator, bytes: []const u8, _: usize) DecodeError!Header {
         const len = std.mem.readInt(u16, bytes[offset..][0..2], .big);
         if (len < @sizeOf(u16) or len > bytes.len - offset) break;
         switch (marker) {
-            // Baseline, extended sequential and progressive Huffman frames.
-            0xc0, 0xc1, 0xc2 => {
-                if (len < minimum_frame_length or bytes[offset + 2] != sample_precision) return error.InvalidImage;
-                const height = std.mem.readInt(u16, bytes[offset + 3 ..][0..2], .big);
-                const width = std.mem.readInt(u16, bytes[offset + 5 ..][0..2], .big);
+            baseline_frame, extended_frame, progressive_frame => {
+                // The trimmed C decoder has no dispatch for wider samples.
+                if (len < minimum_frame_length or bytes[offset + precision_offset] != sample_precision) return error.InvalidImage;
+                const height: usize = std.mem.readInt(u16, bytes[offset + height_offset ..][0..@sizeOf(u16)], .big);
+                const width: usize = std.mem.readInt(u16, bytes[offset + width_offset ..][0..@sizeOf(u16)], .big);
+                if (width == 0 or height == 0) return error.InvalidImage;
+                if (width * height > cap / @sizeOf(Pixel)) return error.ImageTooLarge;
                 return .{ .size = .{ .width = width, .height = height } };
             },
+            lossless_frame,
+            differential_frame_first...differential_frame_last,
+            arithmetic_frame_first...arithmetic_frame_last,
+            differential_arithmetic_frame_first...differential_arithmetic_frame_last,
+            => return error.InvalidImage,
             else => offset += len,
         }
     }
@@ -79,8 +90,8 @@ pub fn release(_: Allocator, pixels: []const Pixel) void {
 }
 
 fn decodeGray(allocator: Allocator) !void {
-    const header = try probe(allocator, &gray_jpeg, values.max_decode_bytes);
-    const pixels = try decode(allocator, &gray_jpeg, header, values.max_decode_bytes);
+    const header = try probe(allocator, &test_images.gray, values.max_decode_bytes);
+    const pixels = try decode(allocator, &test_images.gray, header, values.max_decode_bytes);
     defer release(allocator, pixels);
     try std.testing.expectEqualSlices(Pixel, &.{.{ 128, 128, 128, 255 }}, pixels);
 }
@@ -92,13 +103,47 @@ test "8-bit grayscale decodes to opaque RGBA and releases partial allocations" {
 test "only complete 8-bit Huffman frame headers are accepted" {
     var header = "\xff\xd8\xff\xc2\x00\x0b\x08\x00\x01\x00\x02\x01\x01\x11\x00".*;
     const allocator = std.testing.allocator;
-    try std.testing.expectEqual(Size{ .width = 2, .height = 1 }, (try probe(allocator, &header, 0)).size);
-    try std.testing.expectError(error.InvalidImage, probe(allocator, header[0 .. header.len - 1], 0));
+    const output_bytes = 2 * @sizeOf(Pixel);
+    try std.testing.expectEqual(Size{ .width = 2, .height = 1 }, (try probe(allocator, &header, output_bytes)).size);
+    try std.testing.expectError(error.ImageTooLarge, probe(allocator, &header, output_bytes - 1));
+    try std.testing.expectError(error.InvalidImage, probe(allocator, header[0 .. header.len - 1], output_bytes));
     header[6] = 12;
-    try std.testing.expectError(error.InvalidImage, probe(allocator, &header, 0));
+    try std.testing.expectError(error.InvalidImage, probe(allocator, &header, output_bytes));
     header[6] = sample_precision;
-    header[3] = 0xca;
-    try std.testing.expectError(error.InvalidImage, probe(allocator, &header, 0));
+    const supported = header;
+    for ([_]u8{ 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf }) |marker| {
+        header[3] = marker;
+        try std.testing.expectError(error.InvalidImage, probe(allocator, &(header ++ supported[2..].*), output_bytes));
+    }
+}
+
+test "JPEG warnings reject truncated sequential and progressive streams" {
+    const allocator = std.testing.allocator;
+    const progressive = test_images.progressive(2);
+    for ([_][]const u8{ &test_images.gray, &progressive }) |complete| {
+        const bytes = complete[0 .. complete.len - test_images.eoi.len];
+        const header = try probe(allocator, bytes, values.max_decode_bytes);
+        try std.testing.expectError(error.InvalidImage, decode(allocator, bytes, header, values.max_decode_bytes));
+    }
+}
+
+test "JPEG progressive scan limit accepts the boundary and rejects the next scan" {
+    const allocator = std.testing.allocator;
+    const at_limit = test_images.progressive(c.UIDIFF_JPEG_MAX_SCANS);
+    const header = try probe(allocator, &at_limit, values.max_decode_bytes);
+    const pixels = try decode(allocator, &at_limit, header, values.max_decode_bytes);
+    defer release(allocator, pixels);
+    try std.testing.expectEqual(@as(usize, 1), pixels.len);
+
+    const past_limit = test_images.progressive(c.UIDIFF_JPEG_MAX_SCANS + 1);
+    try std.testing.expectError(error.InvalidImage, decode(allocator, &past_limit, header, values.max_decode_bytes));
+}
+
+test "JPEG rejects header mismatch before allocating output" {
+    var scratch: [64 * 1024]u8 = undefined;
+    var fixed: std.heap.FixedBufferAllocator = .init(&scratch);
+    const header: Header = .{ .size = .{ .width = 512, .height = 512 } };
+    try std.testing.expectError(error.InvalidImage, decode(fixed.allocator(), &test_images.gray, header, values.max_decode_bytes));
 }
 
 test {

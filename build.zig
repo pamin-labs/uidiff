@@ -321,7 +321,7 @@ fn addJpegDecoder(b: *Build, module: *Build.Module, target: Build.ResolvedTarget
         "wrapper/jdpostct-8.c", "wrapper/jdsample-8.c", "wrapper/jidctint-8.c", "wrapper/jutils-8.c",
     } });
 
-    // These generated edits only apply to the pinned upstream revision.
+    // These edits assume the bridge and JPEG probe reject every non-8-bit frame.
     var master = readDependencySource(b, jpeg, "src/jdmaster.c");
     for ([_]struct { []const u8, []const u8, usize }{
         .{ "cinfo->data_precision == 8", "1", 4 },
