@@ -136,15 +136,16 @@ pub fn build(b: *Build) void {
     const lib = libraryOptions(b, target, optimize, decoders);
     const uidiff = b.addModule("uidiff", lib);
     linkShippedCodecs(b, uidiff, target, x86_simd, false);
-    // The arm64 Linux release has native measurements. The x86-64 Linux
-    // release keeps its default until the same comparison runs there.
-    const measured_lto = target.result.cpu.arch == .aarch64;
-    const can_lto = optimize == shipped_mode and target.result.os.tag == .linux and target.result.abi == .musl and
-        (measured_lto or target.result.cpu.arch == .x86_64);
-    const requested_lto = b.option(bool, "cli-lto", "Override LTO for the Linux musl ReleaseSafe CLI");
-    if (requested_lto == true and !can_lto) @panic("-Dcli-lto=true requires an arm64 or x86-64 Linux musl ReleaseSafe target");
+    // Keep the measured arm64 Linux release default. Other targets opt in for benchmarking.
+    const os = target.result.os.tag;
+    const arch = target.result.cpu.arch;
+    const linux_musl = os == .linux and target.result.abi == .musl;
+    const can_lto = optimize == shipped_mode and (linux_musl or os == .windows) and
+        (arch == .aarch64 or arch == .x86_64);
+    const requested_lto = b.option(bool, "cli-lto", "Override LTO for Linux musl or Windows ReleaseSafe CLIs");
+    if (requested_lto == true and !can_lto) @panic("-Dcli-lto=true requires an arm64 or x86-64 Linux musl or Windows ReleaseSafe target");
     // Keep bitcode archives out of the public module consumed by other builds.
-    const use_lto = requested_lto orelse (can_lto and measured_lto);
+    const use_lto = requested_lto orelse (can_lto and linux_musl and arch == .aarch64);
     const cli_library = if (use_lto) b.createModule(lib) else uidiff;
     if (use_lto) linkShippedCodecs(b, cli_library, target, x86_simd, true);
 
@@ -162,7 +163,8 @@ pub fn build(b: *Build) void {
             .imports = &.{.{ .name = "uidiff", .module = cli_library }},
         }),
     });
-    if (use_lto) cli.lto = .full;
+    // Keep the Windows Zig and CRT objects native. LLD can still optimize the C archives.
+    if (use_lto and linux_musl) cli.lto = .full;
     const install_cli = b.addInstallArtifact(cli, .{});
     b.getInstallStep().dependOn(&install_cli.step);
     inline for (.{ "LICENSE", "THIRD_PARTY_NOTICES" }) |notice| b.installFile(notice, "bin/" ++ notice);

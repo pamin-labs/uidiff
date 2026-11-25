@@ -38,6 +38,12 @@ jobs:
           else
             python3 scripts/bench-x86-simd.py
           fi
-      - name: Measure Linux CLI with and without LTO
-        if: runner.os == 'Linux'
-        run: python3 scripts/bench-x86-simd.py --lto
+      - name: Measure native CLI with and without LTO
+        if: runner.os == 'Linux' || runner.os == 'Windows'
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            python scripts/bench-x86-simd.py --lto
+          else
+            python3 scripts/bench-x86-simd.py --lto
+          fi

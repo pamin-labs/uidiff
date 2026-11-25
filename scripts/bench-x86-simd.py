@@ -1,4 +1,4 @@
-"""Measure x86-64 zlib-ng dispatch variants or Linux CLI link-time optimization."""
+"""Measure x86-64 zlib-ng dispatch variants or native CLI link-time optimization."""
 
 import argparse
 import os
@@ -84,12 +84,18 @@ def print_summary(sizes, samples):
 
 
 def bench_lto():
-    if platform.system() != "Linux" or platform.machine() != "x86_64":
-        raise SystemExit("The LTO comparison requires x86-64 Linux")
+    system = platform.system()
+    if system not in ("Linux", "Windows") or platform.machine().lower() not in ("x86_64", "amd64"):
+        raise SystemExit("The LTO comparison requires x86-64 Linux or Windows")
+    if system == "Windows":
+        from windows_process import timed_process
+        target, executable = "-Dtarget=x86_64-windows", "uidiff.exe"
+    else:
+        timed_process = timed_linux
+        target, executable = "-Dtarget=x86_64-linux-musl", "uidiff"
 
     with tempfile.TemporaryDirectory(prefix="uidiff-lto-") as scratch:
         root = Path(scratch)
-        target = "-Dtarget=x86_64-linux-musl"
         build("bench-inputs", "baseline", target, "--prefix", str(root))
         workloads = [
             line.split("\t") for line in (root / "bench-inputs.tsv").read_text().splitlines()
@@ -99,8 +105,8 @@ def bench_lto():
         binaries = {}
         for arm in ("false", "true"):
             prefix = root / arm
-            build("install", "baseline", target, f"-Dcli-lto={arm}", "--prefix", str(prefix))
-            binaries[arm] = prefix / "bin" / "uidiff"
+            build("install", "baseline", "size", target, f"-Dcli-lto={arm}", "--prefix", str(prefix))
+            binaries[arm] = prefix / "bin" / executable
 
         sizes = {arm: measure(binary) for arm, binary in binaries.items()}
         rows = [
@@ -130,22 +136,33 @@ def bench_lto():
                 for i in range(CLI_ROUNDS):
                     offset = i % len(arms)
                     for arm in arms[offset:] + arms[:offset]:
-                        samples[arm].append(time_cli(commands[arm], outputs[arm][0]))
+                        samples[arm].append(time_cli(timed_process, commands[arm], outputs[arm][0]))
                 for arm, values in samples.items():
-                    wall, cpu, rss = (statistics.median(column) for column in zip(*values))
-                    rows.append(f"| {name} | {output} | {arm} | {sizes[arm].file_bytes} | {sizes[arm].code_bytes} | {sizes[arm].data_bytes} | {wall:.3f} | {cpu:.3f} | {rss:.3f} |")
+                    wall, cpu, rss = (distribution(column) for column in zip(*values))
+                    rows.append(f"| {name} | {output} | {arm} | {sizes[arm].file_bytes} | {sizes[arm].code_bytes} | {sizes[arm].data_bytes} | {wall} | {cpu} | {rss} |")
         publish("\n".join(rows) + "\n")
 
 
-def time_cli(command, expected_exit):
+def distribution(samples):
+    if None in samples:
+        return "N/A"
+    return f"{statistics.median(samples):.3f} [{min(samples):.3f}, {max(samples):.3f}]"
+
+
+def time_cli(timed_process, command, expected_exit):
+    status, wall, cpu, rss = timed_process(command)
+    if status != expected_exit:
+        raise RuntimeError(f"Expected exit {expected_exit}, received {status}")
+    return wall, cpu, rss
+
+
+def timed_linux(command):
     start = time.perf_counter_ns()
     process = subprocess.Popen(command, stdout=subprocess.DEVNULL)
     _, status, usage = os.wait4(process.pid, 0)
     wall_ms = (time.perf_counter_ns() - start) / 1_000_000
     process.returncode = os.waitstatus_to_exitcode(status)
-    if process.returncode != expected_exit:
-        raise RuntimeError(f"Expected exit {expected_exit}, received {process.returncode}")
-    return wall_ms, 1_000 * (usage.ru_utime + usage.ru_stime), usage.ru_maxrss / 1024
+    return process.returncode, wall_ms, 1_000 * (usage.ru_utime + usage.ru_stime), usage.ru_maxrss / 1024
 
 
 def publish(table):
@@ -157,7 +174,7 @@ def publish(table):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--lto", action="store_true", help="compare Linux ReleaseSafe CLI LTO variants")
+    parser.add_argument("--lto", action="store_true", help="compare Linux or Windows ReleaseSafe CLI LTO variants")
     if parser.parse_args().lto:
         bench_lto()
     else:
