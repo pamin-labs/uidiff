@@ -1,12 +1,12 @@
 /* Regenerates the small JPEG profile fixtures. See README.md. */
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <jpeglib.h>
 
-enum { width = 37, height = 21, quality = 87 };
+enum { width = UIDIFF_FIXTURE_WIDTH, height = UIDIFF_FIXTURE_HEIGHT, quality = 87 };
 
 struct profile {
-    const char *filename;
     J_COLOR_SPACE color;
     int vertical_sampling;
     int progressive;
@@ -47,17 +47,25 @@ static void generate(const struct profile *profile, FILE *file) {
     jpeg_destroy_compress(&encoder);
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     const struct profile profiles[] = {
-        { "420.jpg", JCS_YCbCr, 2, 0 },
-        { "422.jpg", JCS_YCbCr, 1, 0 },
-        { "progressive.jpg", JCS_YCbCr, 2, 1 },
-        { "gray.jpg", JCS_GRAYSCALE, 1, 0 },
-        { "cmyk.jpg", JCS_CMYK, 1, 0 },
-        { "ycck.jpg", JCS_YCCK, 1, 0 },
+        { JCS_YCbCr, 2, 0 },
+        { JCS_YCbCr, 1, 0 },
+        { JCS_YCbCr, 2, 1 },
+        { JCS_GRAYSCALE, 1, 0 },
+        { JCS_CMYK, 1, 0 },
+        { JCS_YCCK, 1, 0 },
     };
-    for (unsigned i = 0; i < sizeof profiles / sizeof *profiles; ++i) {
-        FILE *file = fopen(profiles[i].filename, "wb");
+    const size_t count = sizeof profiles / sizeof *profiles;
+    if (argc != (int)count + 2) return EXIT_FAILURE;
+    for (size_t i = 0; i < count; ++i) {
+        const char *name = argv[i + 2];
+        const size_t capacity = strlen(argv[1]) + strlen(name) + sizeof "/";
+        char *path = malloc(capacity);
+        if (!path) return EXIT_FAILURE;
+        const int len = snprintf(path, capacity, "%s/%s", argv[1], name);
+        FILE *file = len >= 0 && (size_t)len < capacity ? fopen(path, "wb") : NULL;
+        free(path);
         if (!file) return EXIT_FAILURE;
         generate(&profiles[i], file);
         if (fclose(file)) return EXIT_FAILURE;

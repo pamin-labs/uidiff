@@ -29,6 +29,7 @@ const png_compression_level = 4;
 /// with -Dtarget to measure a specific binary.
 const max_cli_bytes = 1_200_000;
 const cli_name = "uidiff";
+const max_pinned_source_bytes = 256 * 1024;
 // The library unit test binary also fuzzes the streaming PNG decoder.
 const library_fuzz_targets = 1;
 const styled_sheet_fuzz_source = "tests/fuzz/sheet.zig";
@@ -332,11 +333,7 @@ fn addJpegDecoder(b: *Build, module: *Build.Module, target: Build.ResolvedTarget
 
 fn configureJpeg(b: *Build, module: *Build.Module, jpeg: *Build.Dependency, files: *Build.Step.WriteFile, neon: bool) void {
     const source = readDependencySource(b, jpeg, "CMakeLists.txt");
-    const anchor = "\nset(VERSION ";
-    if (std.mem.count(u8, source, anchor) != 1) @panic("pinned JPEG version anchor changed");
-    const begin = std.mem.indexOf(u8, source, anchor).? + anchor.len;
-    const end = std.mem.indexOfScalarPos(u8, source, begin, ')') orelse @panic("pinned JPEG version has no end");
-    const version = source[begin..end];
+    const version = pinnedValue(source, "\nset(VERSION ", ')');
     _ = std.SemanticVersion.parse(version) catch @panic("pinned JPEG version is not a version number");
     module.addCMacro("UIDIFF_JPEG_VERSION", b.fmt("\"{s}\"", .{version}));
     if (neon) module.addCMacro("UIDIFF_JPEG_NEON", "1");
@@ -346,6 +343,13 @@ fn configureJpeg(b: *Build, module: *Build.Module, jpeg: *Build.Dependency, file
     module.addIncludePath(jpeg.path("src"));
     module.addIncludePath(jpeg.path("simd"));
     module.addIncludePath(b.path("src/codec"));
+}
+
+fn pinnedValue(source: []const u8, anchor: []const u8, delimiter: u8) []const u8 {
+    if (std.mem.count(u8, source, anchor) != 1) @panic("pinned source value anchor changed");
+    const begin = std.mem.indexOf(u8, source, anchor).? + anchor.len;
+    const end = std.mem.indexOfScalarPos(u8, source, begin, delimiter) orelse @panic("pinned source value has no end");
+    return source[begin..end];
 }
 
 fn addJpegNeon(b: *Build, jpeg: *Build.Dependency, files: *Build.Step.WriteFile, module: *Build.Module, flags: []const []const u8) void {
@@ -413,7 +417,7 @@ fn zlibHeaders(b: *Build, target: Build.ResolvedTarget) *Build.Step.WriteFile {
 
 fn readDependencySource(b: *Build, dependency: *Build.Dependency, name: []const u8) []u8 {
     b.dependOnFileContents(dependency.path(name));
-    return dependency.builder.root.root_dir.handle.readFileAlloc(b.graph.io, b.pathJoin(&.{ dependency.builder.root.sub_path, name }), b.allocator, .limited(256 * 1024)) catch
+    return dependency.builder.root.root_dir.handle.readFileAlloc(b.graph.io, b.pathJoin(&.{ dependency.builder.root.sub_path, name }), b.allocator, .limited(max_pinned_source_bytes)) catch
         @panic("cannot read pinned decoder source");
 }
 
@@ -804,6 +808,7 @@ fn addFixtures(b: *Build, test_step: *Build.Step, generator: *Build.Step.Compile
 
     const options = b.addOptions();
     options.addOptionPathDirectory("generated", generated);
+    options.addOptionPathDirectory("jpeg_generated", addJpegFixtures(b));
     const fresh = b.addRunArtifact(b.addTest(.{ .root_module = b.createModule(.{
         .root_source_file = b.path("tests/fixtures/fresh.zig"),
         .target = target,
@@ -813,6 +818,36 @@ fn addFixtures(b: *Build, test_step: *Build.Step, generator: *Build.Step.Compile
     // It compares files in the source tree, which the compiler does not track.
     fresh.has_side_effects = true;
     test_step.dependOn(&fresh.step);
+}
+
+fn addJpegFixtures(b: *Build) Build.LazyPath {
+    const jpeg = b.dependency("libjpeg_turbo", .{});
+    const module = b.createModule(.{ .target = b.graph.host, .optimize = .safe, .link_libc = true });
+    const config = b.addWriteFiles();
+    configureJpeg(b, module, jpeg, config, false);
+    module.addCMacro("UIDIFF_FIXTURE_WIDTH", b.fmt("{d}", .{fixtures.jpeg.width}));
+    module.addCMacro("UIDIFF_FIXTURE_HEIGHT", b.fmt("{d}", .{fixtures.jpeg.height}));
+    module.addCSourceFile(.{ .file = b.path(fixtures.jpeg.directory ++ "/generate.c"), .flags = &.{"-ffp-contract=off"} });
+    const source = readDependencySource(b, jpeg, "CMakeLists.txt");
+    const copyright_year = pinnedValue(source, "\nset(COPYRIGHT_YEAR \"", '"');
+    const version_header = readDependencySource(b, jpeg, "src/jversion.h.in");
+    _ = config.add("jversion.h", replaceExactly(b.allocator, version_header, "@COPYRIGHT_YEAR@", copyright_year, 1));
+    var pinned = std.mem.tokenizeAny(u8, pinnedValue(source, "\nset(JPEG_SOURCES ", ')'), " \r\n\t");
+    var files: std.ArrayList([]const u8) = .empty;
+    while (pinned.next()) |file| {
+        if (!std.mem.startsWith(u8, file, "src/") or !std.mem.endsWith(u8, file, ".c")) @panic("pinned JPEG source list contains a non-C entry");
+        files.append(b.allocator, file) catch @panic("OOM");
+    }
+    module.addCSourceFiles(.{ .root = jpeg.path(""), .files = files.items, .flags = &.{"-ffp-contract=off"} });
+    const run = b.addRunArtifact(b.addExecutable(.{ .name = "uidiff-jpeg-fixtures", .root_module = module }));
+    const output = run.addOutputDirectoryArg("jpeg-fixtures");
+    const update = b.addUpdateSourceFiles();
+    for (fixtures.jpeg.profiles) |profile| {
+        run.addArg(profile.file);
+        update.addCopyFileToSource(output.path(b, profile.file), b.fmt("{s}/{s}", .{ fixtures.jpeg.directory, profile.file }));
+    }
+    b.step("jpeg-fixtures", "Regenerate the small JPEG profile fixtures with the pinned encoder").dependOn(&update.step);
+    return output;
 }
 
 test {
