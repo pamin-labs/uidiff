@@ -30,8 +30,6 @@ const png_compression_level = 4;
 const max_cli_bytes = 1_200_000;
 const cli_name = "uidiff";
 const max_pinned_source_bytes = 256 * 1024;
-// The library unit test binary also fuzzes the streaming PNG decoder.
-const library_fuzz_targets = 1;
 const styled_sheet_fuzz_source = "tests/fuzz/sheet.zig";
 /// Each fuzz target is its own test binary, so `zig build test --fuzz` runs every one.
 const fuzz_targets = [_][]const u8{ "src/cli.zig", "tests/fuzz/decode.zig", "tests/fuzz/jpeg.zig", "tests/fuzz/compare.zig", styled_sheet_fuzz_source };
@@ -177,9 +175,6 @@ pub fn build(b: *Build) void {
     addThreadedTest(b, target, decoders);
     addPngTestGates(b, target, test_mode, decoders);
     addBenchmark(b, target, optimize, uidiff);
-    const fuzz_count = b.addWriteFiles().add("fuzz-target-count.txt", b.fmt("{d}\n", .{fuzz_targets.len + library_fuzz_targets}));
-    const fuzz_count_install = b.addInstallFile(fuzz_count, "fuzz-target-count.txt");
-    b.step("fuzz-target-count", "Write the number of fuzz targets including the CLI").dependOn(&fuzz_count_install.step);
     const fixture_build = b.step("fixture-generator", "Build the fixture generator for the selected target");
     fixture_build.dependOn(&generator.step);
 }
@@ -664,21 +659,26 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
         step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = uidiff, .filters = filters })).step);
         return;
     }
+    const inventory = b.addSystemCommand(&.{ "bash", "scripts/count-fuzz-targets.sh" });
+    const fuzz_count = inventory.addOutputFileArg("fuzz-target-count.txt");
+    const fuzz_count_install = b.addInstallFile(fuzz_count, "fuzz-target-count.txt");
+    b.step("fuzz-target-count", "Discover fuzz tests from the compiled runners").dependOn(&fuzz_count_install.step);
+    addFuzzInventory(b, inventory, uidiff);
     step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = uidiff })).step);
-    for (fuzz_targets ++ [_][]const u8{"tests/decode.zig"}) |source| {
+    for (fuzz_targets ++ [_][]const u8{"tests/decode.zig"}, 0..) |source, index| {
         // The styled target encodes its full output. Use safe optimization
         // for this pixel-heavy workload while retaining decoder UBSan.
         const styled = std.mem.eql(u8, source, styled_sheet_fuzz_source);
         const mode = if (styled) Optimize.safe else optimize;
         const tested = if (styled and optimize != .safe) addCheckedLibrary(b, target, .safe, decoders, x86_simd) else uidiff;
-        step.dependOn(&b.addRunArtifact(b.addTest(.{
-            .root_module = b.createModule(.{
-                .root_source_file = b.path(source),
-                .target = target,
-                .optimize = mode,
-                .imports = &.{ .{ .name = "uidiff", .module = tested }, .{ .name = "fixtures", .module = cases } },
-            }),
-        })).step);
+        const test_module = b.createModule(.{
+            .root_source_file = b.path(source),
+            .target = target,
+            .optimize = mode,
+            .imports = &.{ .{ .name = "uidiff", .module = tested }, .{ .name = "fixtures", .module = cases } },
+        });
+        step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = test_module })).step);
+        if (index < fuzz_targets.len) addFuzzInventory(b, inventory, test_module);
     }
     for (source_tests) |source| {
         const run = b.addRunArtifact(b.addTest(.{ .root_module = b.createModule(.{
@@ -702,6 +702,13 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
         .optimize = optimize,
     }) })).step);
     addFixtures(b, step, host_generator);
+}
+
+fn addFuzzInventory(b: *Build, inventory: *Build.Step.Run, module: *Build.Module) void {
+    // Fuzz tests start with "fuzz". Run just their seed checks to get the
+    // runner's actual count without running the other unit tests twice.
+    const filters = b.allocator.dupe([]const u8, &.{"fuzz "}) catch @panic("OOM");
+    inventory.addArtifactArg(b.addTest(.{ .root_module = module, .filters = filters }));
 }
 
 fn addThreadedTest(b: *Build, target: Build.ResolvedTarget, decoders: Decoders) void {

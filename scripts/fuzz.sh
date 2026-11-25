@@ -10,7 +10,6 @@ run_dir=$(mktemp -d "$cache_dir/tmp/uidiff-fuzz.XXXXXX")
 trap 'rm -f -- "$run_dir/fuzz-target-count.txt" "$run_dir/report.log"; rmdir -- "$run_dir"' EXIT
 zig build fuzz-target-count --prefix "$run_dir"
 expected=$(cat "$run_dir/fuzz-target-count.txt")
-# The count includes the library PNG test and the dedicated JPEG decoder target.
 # Workers lock a numbered input file, so precreate their cold-cache slots.
 for ((worker=0; worker<expected; worker++)); do
     printf -v input 'in%x' "$worker"
@@ -27,7 +26,7 @@ if grep -Eq '^Runs:[[:space:]]+0 -> 0([[:space:]]|$)' "$log"; then
     exit 1
 fi
 reports=$(grep -c '^Fuzz test:' "$log" || :)
-if (( reports < expected )); then
+if (( reports != expected )); then
     printf 'Expected %s fuzz reports, saw %s.\n' "$expected" "$reports" >&2
     exit 1
 fi
