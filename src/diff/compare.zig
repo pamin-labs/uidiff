@@ -160,6 +160,10 @@ pub fn compareChecked(allocator: Allocator, before: Image, after: Image, options
         collector.addOn(if (old) .before else .after, box);
     }
     collector.growGap();
+    if (regions.mergeSwap(storage[0..collector.len], moves.items, before, after, options.scale)) |len| {
+        collector.len = len;
+        moves.clearRetainingCapacity();
+    }
     if (collector.len >= regions.outline_corners) collector.len = regions.mergeCorners(storage[0..collector.len], before, options.scale);
     if (collector.len > 1) collector.len = regions.mergeLogical(storage[0..collector.len], before, after, options.scale, moves.items);
     const out = try allocator.alloc(values.Region, collector.len);
@@ -2782,6 +2786,65 @@ test "a colored edit next to a floating panel remains visible on both sides" {
     const result = try compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(sample.hasRegion(result.regions, .before, 26, 52, .changed));
+}
+
+test "reciprocal row moves are grouped only when both rows exchange intact" {
+    const before = try sample.Canvas.init(256, 160);
+    defer before.deinit();
+    const after = try sample.Canvas.init(256, 160);
+    defer after.deinit();
+    const upper = 40;
+    const pitch = 40;
+    before.line(22, 212, upper + 10, 4, 60);
+    before.line(22, 212, upper + pitch + 10, 9, 60);
+    after.copyRows(upper, before, upper + pitch, upper + pitch * 2);
+    after.copyRows(upper + pitch, before, upper, upper + pitch);
+    const removed = Box.fromPixels(18, upper + 6, 200, 18);
+    const inserted = Box.fromPixels(18, upper + pitch + 6, 200, 18);
+    const candidates = [_]regions.Candidate{
+        .{ .region = .{ .before = removed }, .pixels = 8 },
+        .{ .region = .{ .after = inserted }, .pixels = 8 },
+    };
+    const move: values.Move = .{
+        .before = .{ .y = upper + pitch, .height = pitch },
+        .after = .{ .y = upper, .height = pitch },
+        .x = .init(18),
+        .width = .init(200),
+    };
+    var copy = candidates;
+    try std.testing.expectEqual(@as(?usize, 1), regions.mergeSwap(&copy, &.{move}, before.view, after.view, .one));
+    try std.testing.expect(copy[0].region.before != null and copy[0].region.after != null);
+    after.fill(22, upper + pitch + 11, 7, 7, .{ 180, 18, 36, 255 });
+    copy = candidates;
+    try std.testing.expectEqual(@as(?usize, null), regions.mergeSwap(&copy, &.{move}, before.view, after.view, .one));
+    try std.testing.expectEqualDeep(candidates, copy);
+}
+
+test "separate table cell edits stay separate unless both rows exchange intact" {
+    const before = try sample.Canvas.init(256, 160);
+    defer before.deinit();
+    const after = try sample.Canvas.init(256, 160);
+    defer after.deinit();
+    const upper = 40;
+    const pitch = 40;
+    const left = 24;
+    const right = 140;
+    for ([_]usize{ left, right }) |x| {
+        before.fill(x, upper, 30, 16, sample.inkShade(44, 4));
+        before.fill(x, upper + pitch, 30, 16, sample.inkShade(126, 4));
+    }
+    after.copyRows(upper, before, upper + pitch, upper + pitch * 2);
+    after.copyRows(upper + pitch, before, upper, upper + pitch);
+    const table = try compareCanvases(before, after, 1);
+    defer table.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 1), table.regions.len);
+    try std.testing.expect(sample.hasRegion(table.regions, .after, left + 1, upper + 1, .changed));
+    try std.testing.expect(sample.hasRegion(table.regions, .after, right + 1, upper + pitch + 1, .changed));
+    after.fill(right, upper + pitch, 30, 16, sample.inkShade(172, 4));
+    const independent = try compareCanvases(before, after, 1);
+    defer independent.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 4), independent.regions.len);
+    try std.testing.expect(sample.hasRegion(independent.regions, .after, right + 1, upper + pitch + 1, .changed));
 }
 
 test "a modal does not hide a changed page behind its scrim" {

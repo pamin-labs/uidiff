@@ -295,6 +295,8 @@ const floating_panel_min_contrast = 32;
 const floating_panel_inset_divisor = 4;
 const floating_panel_shadow_rounding = 3;
 const floating_panel_edge_fringe = 3;
+const max_swap_pitch = values.CssPx.init(128);
+const max_swap_candidates = 16;
 const blank_tolerance = 24;
 const max_sideways_shift = 256;
 const shift_samples = 9;
@@ -308,6 +310,14 @@ pub const max_fill_seeds = 64 * 1024;
 pub fn minPixels(before: Size, after: Size) usize {
     const smallest = @min(before.width * before.height, after.width * after.height);
     return if (smallest <= single_pixel_area) 1 else min_region_pixels;
+}
+
+/// Puts a byte-exact exchange of two adjacent row bands into one delta.
+pub fn mergeSwap(boxes: []Candidate, moves: []const values.Move, before: Image, after: Image, scale: values.Scale) ?usize {
+    if (before.width != after.width or before.height != after.height) return null;
+    if (moves.len == 1 and boxes.len == 2) return reciprocalMove(boxes, moves[0], before, after);
+    if (moves.len != 0 or boxes.len < 3 or boxes.len > max_swap_candidates) return null;
+    return positionalSwap(boxes, before, after, scale.devicePixels(max_swap_pitch));
 }
 
 /// Joins the retained boxes that together describe a single visible edit.
@@ -728,6 +738,70 @@ fn join(boxes: []Candidate, len: usize, i: usize, j: usize) usize {
     boxes[i].region.after = unite(boxes[i].region.after, boxes[j].region.after);
     std.mem.copyForwards(Candidate, boxes[j .. len - 1], boxes[j + 1 .. len]);
     return len - 1;
+}
+
+fn reciprocalMove(boxes: []Candidate, move: values.Move, before: Image, after: Image) ?usize {
+    const old, const new = if (boxes[0].region.before != null)
+        .{ boxes[0].region, boxes[1].region }
+    else
+        .{ boxes[1].region, boxes[0].region };
+    const removed = old.before orelse return null;
+    const inserted = new.after orelse return null;
+    if (old.after != null or new.before != null) return null;
+    const pitch = move.shift();
+    if (pitch == 0 or move.before.height != pitch or move.after.height != pitch) return null;
+    const x: usize = @min(move.x.count(), @as(usize, @intFromFloat(@min(removed.x, inserted.x))));
+    const right: usize = @max(move.x.count() + move.width.count(), @as(usize, @intFromFloat(@max(removed.right(), inserted.right()))));
+    const upper = @min(move.before.y, move.after.y);
+    const cover = Box.fromPixels(x, upper, right - x, 2 * pitch);
+    if (cover.overlap(removed) != removed.width * removed.height or cover.overlap(inserted) != inserted.width * inserted.height) return null;
+    if (right > before.width or upper + 2 * pitch > before.height or !exchangedRows(before, after, cover, pitch, pitch)) return null;
+    boxes[0].region = .{ .before = cover, .after = cover };
+    return 1;
+}
+
+fn positionalSwap(boxes: []Candidate, before: Image, after: Image, max_pitch: f64) ?usize {
+    var top = stationaryBox(boxes[0].region) orelse return null;
+    var whole = top;
+    for (boxes[1..]) |candidate| {
+        const box = stationaryBox(candidate.region) orelse return null;
+        if (box.y < top.y) top = box;
+        whole = unite(whole, box).?;
+    }
+    for (boxes) |candidate| {
+        const opposite = stationaryBox(candidate.region) orelse return null;
+        const pitch = opposite.y - top.y;
+        if (pitch <= top.height or pitch > max_pitch or opposite.x != top.x or
+            opposite.width != top.width or opposite.height != top.height) continue;
+        const step: usize = @intFromFloat(pitch);
+        const rows = whole.height - pitch;
+        if (rows <= 0 or rows > pitch) continue;
+        if (!exchangedRows(before, after, whole, step, @intFromFloat(rows))) continue;
+        boxes[0].region = .{ .before = whole, .after = whole };
+        return 1;
+    }
+    return null;
+}
+
+fn stationaryBox(region: Region) ?Box {
+    const before = region.before orelse return null;
+    const after = region.after orelse return null;
+    return if (std.meta.eql(before, after)) before else null;
+}
+
+fn exchangedRows(before: Image, after: Image, bands: Box, pitch: usize, rows: usize) bool {
+    const x: usize = @intFromFloat(bands.x);
+    const right: usize = @intFromFloat(bands.right());
+    const first: usize = @intFromFloat(bands.y);
+    for (first..first + rows) |y| {
+        if (!sameRow(before.row(y)[x..right], after.row(y + pitch)[x..right]) or
+            !sameRow(after.row(y)[x..right], before.row(y + pitch)[x..right])) return false;
+    }
+    return true;
+}
+
+fn sameRow(a: []const values.Pixel, b: []const values.Pixel) bool {
+    return std.mem.eql(u8, std.mem.sliceAsBytes(a), std.mem.sliceAsBytes(b));
 }
 
 fn corner(region: Region, limit: f64) ?Box {
