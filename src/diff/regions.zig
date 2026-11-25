@@ -1,5 +1,6 @@
 //! Coalesces and orders change boxes from the comparison domain.
 const std = @import("std");
+const builtin = @import("builtin");
 const values = @import("../value.zig");
 const pixel = @import("pixel.zig");
 const column_bounds = @import("columns.zig");
@@ -185,7 +186,7 @@ const PixelRect = struct {
     }
 
     fn fromBox(box: Box) PixelRect {
-        return .{ .left = @intFromFloat(box.x), .right = @intFromFloat(box.right()), .top = @intFromFloat(box.y), .bottom = @intFromFloat(box.bottom()) };
+        return .{ .left = deviceIndex(box.x), .right = deviceIndex(box.right()), .top = deviceIndex(box.y), .bottom = deviceIndex(box.bottom()) };
     }
 };
 
@@ -367,6 +368,7 @@ const scrim_shadow_radius = values.CssPx.init(24);
 const max_scrim_shadow_radius = 72;
 const scrim_min_shadow_transmission = 0.82;
 const scrim_window_contrast = 12.0;
+const deviceIndex = if (builtin.cpu.arch == .x86_64) sharedDeviceIndex else directDeviceIndex;
 const floating_panel_height = values.CssPx.init(96);
 const floating_panel_width_to_height = 3;
 const floating_panel_min_width = 4;
@@ -449,8 +451,8 @@ pub fn pairCardGrid(boxes: []Candidate, before: Image, after: Image, scale: valu
         top = @min(top, slot.y);
         bottom = @max(bottom, slot.bottom());
     }
-    const old_to_left = shiftedGrid(before, after, row, @intFromFloat(top), @intFromFloat(bottom));
-    if (!old_to_left and !shiftedGrid(after, before, row, @intFromFloat(top), @intFromFloat(bottom))) return;
+    const old_to_left = shiftedGrid(before, after, row, deviceIndex(top), deviceIndex(bottom));
+    if (!old_to_left and !shiftedGrid(after, before, row, deviceIndex(top), deviceIndex(bottom))) return;
     // Each translated slot has an exact counterpart. The only unpaired
     // slot is the card at the start of the row, in either direction.
     boxes[0].region = if (old_to_left) .{ .before = first } else .{ .after = first };
@@ -534,7 +536,7 @@ pub fn classifyOverlay(region: *Region, before: Image, after: Image, scale: valu
     const old = region.before orelse return;
     const new = region.after orelse return;
     if (!std.meta.eql(old, new)) return;
-    const radius: usize = @intFromFloat(@min(scale.devicePixels(scrim_shadow_radius), max_scrim_shadow_radius));
+    const radius: usize = deviceIndex(@min(scale.devicePixels(scrim_shadow_radius), max_scrim_shadow_radius));
     if (!std.meta.eql(old, viewport)) {
         const max_height = scale.devicePixels(floating_panel_height);
         if (floatingPanel(before, after, new, max_height, radius)) region.before = null else if (floatingPanel(after, before, old, max_height, radius)) region.after = null;
@@ -760,6 +762,14 @@ fn existingPanel(before: Image, area: PixelRect, panel: PixelRect) bool {
 
 fn boxPixelInset(length: usize) usize {
     return length / floating_panel_inset_divisor;
+}
+
+inline fn directDeviceIndex(coordinate: f64) usize {
+    return @intFromFloat(coordinate);
+}
+
+noinline fn sharedDeviceIndex(coordinate: f64) usize {
+    return directDeviceIndex(coordinate);
 }
 
 fn toneDistance(a: values.Pixel, b: values.Pixel) f32 {
@@ -989,8 +999,8 @@ fn reciprocalMove(boxes: []Candidate, move: values.Move, before: Image, after: I
     if (old.after != null or new.before != null) return null;
     const pitch = move.shift();
     if (pitch == 0 or move.before.height != pitch or move.after.height != pitch) return null;
-    const x: usize = @min(move.x.count(), @as(usize, @intFromFloat(@min(removed.x, inserted.x))));
-    const right: usize = @max(move.x.count() + move.width.count(), @as(usize, @intFromFloat(@max(removed.right(), inserted.right()))));
+    const x: usize = @min(move.x.count(), @as(usize, deviceIndex(@min(removed.x, inserted.x))));
+    const right: usize = @max(move.x.count() + move.width.count(), @as(usize, deviceIndex(@max(removed.right(), inserted.right()))));
     const upper = @min(move.before.y, move.after.y);
     const cover = Box.fromPixels(x, upper, right - x, 2 * pitch);
     if (cover.overlap(removed) != removed.width * removed.height or cover.overlap(inserted) != inserted.width * inserted.height) return null;
@@ -1011,10 +1021,10 @@ fn positionalSwap(boxes: []Candidate, before: Image, after: Image, max_pitch: f6
         const pitch = opposite.y - top.y;
         if (pitch > max_pitch or opposite.x != top.x or
             opposite.width != top.width or opposite.height != top.height) continue;
-        const step: usize = @intFromFloat(pitch);
+        const step: usize = deviceIndex(pitch);
         const rows = whole.height - pitch;
         if (!inSwapBands(stationary, top.y, opposite.y, rows)) continue;
-        if (!exchangedRows(before, after, whole, step, @intFromFloat(rows))) continue;
+        if (!exchangedRows(before, after, whole, step, deviceIndex(rows))) continue;
         return collapse(boxes, whole);
     }
     return null;
@@ -1048,9 +1058,9 @@ fn stationaryBox(region: Region) ?Box {
 }
 
 fn exchangedRows(before: Image, after: Image, bands: Box, pitch: usize, rows: usize) bool {
-    const x: usize = @intFromFloat(bands.x);
-    const right: usize = @intFromFloat(bands.right());
-    const first: usize = @intFromFloat(bands.y);
+    const x: usize = deviceIndex(bands.x);
+    const right: usize = deviceIndex(bands.right());
+    const first: usize = deviceIndex(bands.y);
     for (first..first + rows) |y| {
         if (!pixel.sameRun(before.row(y)[x..right], after.row(y + pitch)[x..right]) or
             !pixel.sameRun(after.row(y)[x..right], before.row(y + pitch)[x..right])) return false;
@@ -1063,14 +1073,14 @@ fn boxAbove(_: void, a: Box, b: Box) bool {
 }
 
 fn indicatorTransfer(before: Image, after: Image, a: Box, b: Box) ?values.Pixel {
-    const ax: usize = @intFromFloat(a.x + a.width / 2);
-    const bx: usize = @intFromFloat(b.x + b.width / 2);
-    const y: usize = @intFromFloat(a.y + a.height / 2);
+    const ax: usize = deviceIndex(a.x + a.width / 2);
+    const bx: usize = deviceIndex(b.x + b.width / 2);
+    const y: usize = deviceIndex(a.y + a.height / 2);
     const old_indicator = before.row(y)[ax];
     const new_indicator = after.row(y)[ax];
     if (pixel.same(old_indicator, new_indicator) or !pixel.same(old_indicator, after.row(y)[bx]) or
         !pixel.same(new_indicator, before.row(y)[bx])) return null;
-    const gap: usize = @intFromFloat((a.right() + b.x) / 2);
+    const gap: usize = deviceIndex((a.right() + b.x) / 2);
     const background = before.row(y)[gap];
     if (!pixel.same(background, after.row(y)[gap]) or
         (!pixel.same(background, old_indicator) and !pixel.same(background, new_indicator))) return null;
@@ -1086,12 +1096,12 @@ fn labelTransfer(before: Image, after: Image, label: Box, a: Box, b: Box, backgr
 }
 
 fn labelInk(image: Image, label: Box, indicator: Box, background: values.Pixel) values.Pixel {
-    const x: usize = @intFromFloat(@max(indicator.x, label.x));
-    const right: usize = @intFromFloat(@min(indicator.right(), label.right()));
+    const x: usize = deviceIndex(@max(indicator.x, label.x));
+    const right: usize = deviceIndex(@min(indicator.right(), label.right()));
     var ink = background;
     var contrast: f32 = 0;
     if (x >= right) return ink;
-    for (@as(usize, @intFromFloat(label.y))..@as(usize, @intFromFloat(label.bottom()))) |y| {
+    for (@as(usize, deviceIndex(label.y))..@as(usize, deviceIndex(label.bottom()))) |y| {
         for (image.row(y)[x..right]) |p| {
             const distance = toneDistance(p, background);
             if (distance > contrast) {
@@ -1108,15 +1118,15 @@ fn boxLeftOf(_: void, a: Box, b: Box) bool {
 }
 
 fn shiftedGrid(before: Image, after: Image, slots: []const Box, top: usize, bottom: usize) bool {
-    const width: usize = @intFromFloat(slots[0].width);
-    const last: usize = @intFromFloat(slots[slots.len - 1].x);
+    const width: usize = deviceIndex(slots[0].width);
+    const last: usize = deviceIndex(slots[slots.len - 1].x);
     const background = after.row(top)[last];
     for (top..bottom) |y| {
         for (after.row(y)[last..][0..width]) |p| if (!pixel.same(p, background)) return false;
     }
     for (slots[1..], slots[0 .. slots.len - 1]) |old, new| {
-        const from: usize = @intFromFloat(old.x);
-        const to: usize = @intFromFloat(new.x);
+        const from: usize = deviceIndex(old.x);
+        const to: usize = deviceIndex(new.x);
         for (top..bottom) |y| {
             if (!pixel.sameRun(before.row(y)[from..][0..width], after.row(y)[to..][0..width])) return false;
         }
@@ -1168,17 +1178,17 @@ fn tracedOutline(before: Image, after: Image, top: Box, right: Box, bottom: Box,
         rail(before, after, right, lower_right, .{ .axis = .vertical, .exterior = .end }, max_rail)) return true;
 
     // Collector boxes use whole non-negative coordinates within the source image.
-    const mid_x: usize = @intFromFloat((top.right() + right.x) / 2);
-    const mid_y: usize = @intFromFloat((top.bottom() + bottom.y) / 2);
-    const top_y: usize = @intFromFloat(top.y);
-    const top_end: usize = @intFromFloat(top.bottom());
-    const bottom_y: usize = @intFromFloat(bottom.y);
-    const bottom_end: usize = @intFromFloat(bottom.bottom());
+    const mid_x: usize = deviceIndex((top.right() + right.x) / 2);
+    const mid_y: usize = deviceIndex((top.bottom() + bottom.y) / 2);
+    const top_y: usize = deviceIndex(top.y);
+    const top_end: usize = deviceIndex(top.bottom());
+    const bottom_y: usize = deviceIndex(bottom.y);
+    const bottom_end: usize = deviceIndex(bottom.bottom());
     const row = before.row(mid_y);
-    const left_x: usize = @intFromFloat(top.x);
-    const left_end: usize = @intFromFloat(top.right());
-    const right_x: usize = @intFromFloat(right.x);
-    const right_end: usize = @intFromFloat(right.right());
+    const left_x: usize = deviceIndex(top.x);
+    const left_end: usize = deviceIndex(top.right());
+    const right_x: usize = deviceIndex(right.x);
+    const right_end: usize = deviceIndex(right.right());
     const above = before.row(top_y -| 1)[mid_x];
     const outside = row[left_x -| 1];
     for (top_y..top_end) |y| {
@@ -1226,13 +1236,13 @@ fn rail(before: Image, after: Image, start: Box, end: Box, direction: RailDirect
 }
 
 fn railTurns(image: Image, corner_box: Box, y: usize, ink: values.Pixel, side: enum { left, right }, exterior: RailEnd) bool {
-    const left: usize = @intFromFloat(corner_box.x);
-    const right: usize = @intFromFloat(corner_box.right());
+    const left: usize = deviceIndex(corner_box.x);
+    const right: usize = deviceIndex(corner_box.right());
     const outside = switch (side) {
         .left => if (left != 0) left - 1 else return false,
         .right => if (right < image.width) right else return false,
     };
-    const interior_y: usize = @intFromFloat(if (exterior == .start) corner_box.bottom() - 1 else corner_box.y);
+    const interior_y: usize = deviceIndex(if (exterior == .start) corner_box.bottom() - 1 else corner_box.y);
     const leg_y = @min(y, interior_y) + (@max(y, interior_y) - @min(y, interior_y) + 1) / 2;
     if (leg_y == y) return false;
     const leg = image.row(leg_y);
@@ -1270,11 +1280,11 @@ fn betweenDividers(before: Image, after: Image, p: Box, q: Box, r: Box, s: Box) 
     const end = @min(@max(p.x, q.x), @max(r.x, s.x));
     if (start >= end) return false;
     // Boxes come from the collector and are within each validated image.
-    const left: usize = @max(1, @as(usize, @intFromFloat(start)));
-    const right: usize = @intFromFloat(end);
+    const left: usize = @max(1, @as(usize, deviceIndex(start)));
+    const right: usize = deviceIndex(end);
     if (left >= right) return false;
-    const top: usize = @intFromFloat(@min(p.y, q.y, r.y, s.y));
-    const bottom: usize = @intFromFloat(@max(p.bottom(), q.bottom(), r.bottom(), s.bottom()));
+    const top: usize = deviceIndex(@min(p.y, q.y, r.y, s.y));
+    const bottom: usize = deviceIndex(@max(p.bottom(), q.bottom(), r.bottom(), s.bottom()));
     const height = @min(before.height, after.height);
     if (top < divider_context or bottom + divider_context >= height) return false;
     const samples = [_]usize{ top - divider_context, (top + bottom) / 2, bottom + divider_context };
@@ -1313,11 +1323,11 @@ noinline fn commonCard(a: Region, b: Region, before: Image, after: Image, scale:
     const max_height = scale.devicePixels(compact_card_height);
     const max_width = scale.devicePixels(compact_card_width);
     if (ink.height >= max_height or ink.width >= max_width) return null;
-    const span: column_bounds.Span = .{ .left = @intFromFloat(ink.x), .width = @intFromFloat(ink.width) };
-    const y: usize = @intFromFloat(ink.y);
+    const span: column_bounds.Span = .{ .left = deviceIndex(ink.x), .width = deviceIndex(ink.width) };
+    const y: usize = deviceIndex(ink.y);
     const search = column_bounds.CardSearch.compact(span, max_height, scale.devicePixels(card_corner_reach));
     const old_card = column_bounds.enclosingCard(before, span, .{ .left = 0, .width = before.width }, y, search) orelse return null;
-    if (old_card.top + old_card.height < @as(usize, @intFromFloat(ink.bottom())) or
+    if (old_card.top + old_card.height < @as(usize, deviceIndex(ink.bottom())) or
         @as(f64, @floatFromInt(old_card.columns.width)) > max_width) return null;
     const new_card = column_bounds.enclosingCard(after, span, .{ .left = 0, .width = after.width }, y, search) orelse return null;
     if (!std.meta.eql(old_card, new_card)) return null;
@@ -1352,11 +1362,11 @@ fn stacked(a: Region, b: Region, before: Image, after: Image, max_gap_px: f64) b
     if (gap_px > max_gap_px) return false;
     if (gap_px <= 0) return true;
     // The collector has already bounded these whole pixel boxes to their image.
-    const left: usize = @intFromFloat(@min(p.x, q.x));
-    const right: usize = @intFromFloat(@max(p.right(), q.right()));
+    const left: usize = deviceIndex(@min(p.x, q.x));
+    const right: usize = deviceIndex(@max(p.right(), q.right()));
     // Edge coverage can finish one row beyond the component bounds.
-    const first: usize = @intFromFloat(upper.bottom() + 1);
-    const end: usize = @intFromFloat(@max(upper.bottom() + 1, lower.y - 1));
+    const first: usize = deviceIndex(upper.bottom() + 1);
+    const end: usize = deviceIndex(@max(upper.bottom() + 1, lower.y - 1));
     for (first..end) |y| {
         const row = image.row(y)[left..right];
         for (row[1..]) |p_ink| {
@@ -1375,12 +1385,12 @@ noinline fn shiftedSideways(a: Region, b: Region, before: Image, after: Image) b
     const qa = b.after orelse return false;
     if (@abs(p.y - q.y) > 1 or @abs(p.bottom() - q.bottom()) > 1 or p.y != pa.y or q.y != qa.y) return false;
     // The collector has already bounded these whole pixel boxes to their image.
-    const left: usize = @intFromFloat(@min(p.x, q.x));
-    const right: usize = @intFromFloat(@min(@max(p.right(), q.right()), @as(f64, @floatFromInt(@min(before.width, after.width)))));
-    const top: usize = @intFromFloat(@min(p.y, q.y));
-    const height: usize = @intFromFloat(@max(p.bottom(), q.bottom()) - @as(f64, @floatFromInt(top)));
+    const left: usize = deviceIndex(@min(p.x, q.x));
+    const right: usize = deviceIndex(@min(@max(p.right(), q.right()), @as(f64, @floatFromInt(@min(before.width, after.width)))));
+    const top: usize = deviceIndex(@min(p.y, q.y));
+    const height: usize = deviceIndex(@max(p.bottom(), q.bottom()) - @as(f64, @floatFromInt(top)));
     if (right <= left + 2 or height == 0 or top + height > @min(before.height, after.height)) return false;
-    const reach: usize = @intFromFloat(@min(max_sideways_shift, @max(p.width, q.width)));
+    const reach: usize = deviceIndex(@min(max_sideways_shift, @max(p.width, q.width)));
     const count: usize = @min(shift_samples, height);
     for (1..reach + 1) |distance| {
         for ([_]bool{ false, true }) |rightward| {
