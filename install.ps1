@@ -2,7 +2,7 @@ $ErrorActionPreference = 'Stop'
 
 # Release metadata is checked against the packager.
 $program = 'uidiff'
-$releases = 'https://github.com/pamin-labs/uidiff/releases'
+$downloads = 'https://uidiff.paminlabs.com'
 $checksums = 'SHA256SUMS'
 $releaseOs = 'windows'
 $extension = '.exe'
@@ -14,14 +14,14 @@ $arch = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitect
     default { throw "${program}: unsupported architecture" }
 }
 
-$manifestUrl = "$releases/latest/download"
+$manifestUrl = "$downloads/latest/download"
 $selectedVersion = $versionPattern
 if ($env:UIDIFF_VERSION) {
     $version = $env:UIDIFF_VERSION -creplace '^v', ''
     if ($version -cnotmatch "\A$versionPattern\z") {
         throw "${program}: invalid UIDIFF_VERSION"
     }
-    $manifestUrl = "$releases/download/v$version"
+    $manifestUrl = "$downloads/download/v$version"
     $selectedVersion = [regex]::Escape($version)
 }
 
@@ -45,7 +45,7 @@ try {
     $version = $entries[0].Groups['version'].Value
     $expected = $entries[0].Groups['hash'].Value
     $download = Join-Path $tmp $asset
-    Invoke-WebRequest -UseBasicParsing -Uri "$releases/download/v$version/$asset" -OutFile $download
+    Invoke-WebRequest -UseBasicParsing -Uri "$downloads/download/v$version/$asset" -OutFile $download
     if ((Get-FileHash -Algorithm SHA256 -LiteralPath $download).Hash -ine $expected) {
         throw "${program}: ${asset}: SHA-256 mismatch"
     }

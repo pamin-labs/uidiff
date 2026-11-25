@@ -96,6 +96,36 @@ jobs:
           FORMULA: ${{ needs.github.outputs.tap_formula }}
           VERSION: ${{ needs.github.outputs.version }}
 
+  r2:
+    needs: github
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      AWS_ENDPOINT_URL: https://${{ vars.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+      BUCKET: s3://uidiff
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - run: gh release download "$TAG" --dir release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+      - run: python3 scripts/release/package.py mirror release mirror
+      # Tagged files never change; latest and the installers move with each stable release,
+      # and they go up last so they never name files the bucket lacks.
+      - run: |
+          aws s3 cp --recursive mirror/download "$BUCKET/download" --cache-control "public, max-age=31536000, immutable"
+          if [[ -d mirror/latest ]]; then
+            aws s3 cp --recursive mirror/latest "$BUCKET/latest" --cache-control "public, max-age=300"
+            for installer in install.sh install.ps1; do
+              aws s3 cp "mirror/$installer" "$BUCKET/$installer" --cache-control "public, max-age=300" --content-type "text/plain; charset=utf-8"
+            done
+          fi
+
   npm:
     needs: github
     runs-on: ubuntu-latest

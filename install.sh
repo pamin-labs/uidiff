@@ -3,7 +3,7 @@ set -eu
 
 # Release metadata is checked against the packager.
 program=uidiff
-releases=https://github.com/pamin-labs/uidiff/releases
+downloads=https://uidiff.paminlabs.com
 checksums=SHA256SUMS
 pattern="[0-9]+[.][0-9]+[.][0-9]+(-[0-9A-Za-z.-]+)?"
 
@@ -28,9 +28,9 @@ version=${version#v}
 if [ -n "${UIDIFF_VERSION:-}" ]; then
     printf "%s\n" "$version" | awk -v pattern="$pattern" '$0 ~ ("^" pattern "$") { ok = 1 } END { exit !ok || NR != 1 }' ||
         fail "invalid UIDIFF_VERSION"
-    manifest_url="$releases/download/v$version"
+    manifest_url="$downloads/download/v$version"
 else
-    manifest_url="$releases/latest/download"
+    manifest_url="$downloads/latest/download"
 fi
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/$program.XXXXXX")
@@ -59,7 +59,7 @@ asset=${entry#* }
 version=${asset#"$prefix"}
 version=${version%"$suffix"}
 
-download "$releases/download/v$version/$asset" "$tmp/$asset"
+download "$downloads/download/v$version/$asset" "$tmp/$asset"
 if command -v sha256sum >/dev/null 2>&1; then
     actual=$(sha256sum < "$tmp/$asset")
 else

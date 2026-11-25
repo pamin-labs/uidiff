@@ -14,7 +14,7 @@ $env:LOCALAPPDATA = Join-Path $root 'appdata'
 # Keep the production URL selection and replace only the download transport.
 function Invoke-WebRequest {
     param([switch]$UseBasicParsing, [string]$Uri, [string]$OutFile)
-    $prefix = 'https://github.com/pamin-labs/uidiff/releases/'
+    $prefix = 'https://uidiff.paminlabs.com/'
     if (!$Uri.StartsWith($prefix)) { throw "Unexpected release URL: $Uri" }
     Copy-Item -LiteralPath (Join-Path $fixtureRelease $Uri.Substring($prefix.Length)) -Destination $OutFile
 }

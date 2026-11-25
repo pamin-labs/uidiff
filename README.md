@@ -77,14 +77,14 @@ npx uidiff before.png after.png
 Without a package manager on macOS and Linux (x64 or arm64):
 
 ```sh
-curl -fsSLO https://github.com/pamin-labs/uidiff/releases/latest/download/install.sh
+curl -fsSLO https://uidiff.paminlabs.com/install.sh
 sh install.sh
 ```
 
 On Windows (x64 or arm64) in PowerShell:
 
 ```powershell
-Invoke-WebRequest -UseBasicParsing https://github.com/pamin-labs/uidiff/releases/latest/download/install.ps1 -OutFile install.ps1
+Invoke-WebRequest -UseBasicParsing https://uidiff.paminlabs.com/install.ps1 -OutFile install.ps1
 .\install.ps1
 ```
 

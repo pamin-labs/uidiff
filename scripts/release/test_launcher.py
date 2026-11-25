@@ -11,8 +11,8 @@ from tempfile import TemporaryDirectory
 import zipfile
 
 from package import (
-    CHECKSUMS, FORMULA_ASSET, NOTICES, NPM_PACKAGE, PROGRAM, RELEASES, ROOT,
-    TARGETS, VERSION_PATTERN, digest, finalize, npm_packages, pack, version,
+    CHECKSUMS, DOWNLOADS, FORMULA_ASSET, INSTALLERS, NOTICES, NPM_PACKAGE, PROGRAM, RELEASES, ROOT,
+    TARGETS, VERSION_PATTERN, digest, finalize, mirror, npm_packages, pack, version,
 )
 
 
@@ -28,7 +28,7 @@ def check_installers():
     powershell = (ROOT / "install.ps1").read_text()
     windows = [target for target in TARGETS if target.os == "windows"]
     posix = [target for target in TARGETS if target.os != "windows"]
-    literal = dict(program=PROGRAM, releases=RELEASES, checksums=CHECKSUMS)
+    literal = dict(program=PROGRAM, downloads=DOWNLOADS, checksums=CHECKSUMS)
     sh_version = VERSION_PATTERN.replace(r"\.", "[.]").replace("(?:", "(")
     check_literals(shell, "install.sh", {**literal, "pattern": sh_version})
     check_literals(powershell, "install.ps1", {
@@ -88,6 +88,18 @@ def check_assets(release, release_version):
         assert names == [target.binary, *NOTICES], archive.name
 
 
+def check_mirror(release, release_version, temp):
+    stable, pre = temp / "mirror-stable", temp / "mirror-pre"
+    mirror(release_version, release, stable)
+    tagged = stable / "download" / f"v{release_version}"
+    assert sorted(p.name for p in tagged.iterdir()) == sorted(p.name for p in release.iterdir())
+    assert (stable / "latest/download" / CHECKSUMS).read_bytes() == (release / CHECKSUMS).read_bytes()
+    for installer in INSTALLERS:
+        assert (stable / installer).read_bytes() == (ROOT / installer).read_bytes()
+    mirror(f"{release_version}-rc.1", release, pre)
+    assert [p.name for p in pre.iterdir()] == ["download"]
+
+
 def main():
     check_installers()
     dist_os = {"Darwin": "macos", "Linux": "linux", "Windows": "windows"}[platform.system()]
@@ -110,6 +122,7 @@ def main():
             pack(target, release_version, bin_dir, release)
         finalize(release_version, release)
         check_assets(release, release_version)
+        check_mirror(release, release_version, temp)
         if shutil.which("ruby"):
             subprocess.run(["ruby", "-c", release / FORMULA_ASSET], check=True)
         publish_order = npm_packages(release_version, release, packages)

@@ -33,8 +33,8 @@ set -eu
 while [ "$1" != --output ]; do shift; done
 output=$2
 case "$3" in
-    https://github.com/pamin-labs/uidiff/releases/*)
-        cp "$FIXTURE_RELEASE/${3#*"/releases/"}" "$output" ;;
+    https://uidiff.paminlabs.com/*)
+        cp "$FIXTURE_RELEASE/${3#https://uidiff.paminlabs.com/}" "$output" ;;
     *) exit 1 ;;
 esac
 MOCK

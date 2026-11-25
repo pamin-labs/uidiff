@@ -16,6 +16,9 @@ ROOT = Path(__file__).resolve().parents[2]
 PROGRAM = "uidiff"
 REPOSITORY = "https://github.com/pamin-labs/uidiff"
 RELEASES = f"{REPOSITORY}/releases"
+# The R2 bucket `uidiff` mirrors the release layout for hosts that cannot reach GitHub.
+DOWNLOADS = "https://uidiff.paminlabs.com"
+INSTALLERS = ("install.sh", "install.ps1")
 CHECKSUMS = "SHA256SUMS"
 VERSION_PATTERN = r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?"
 NOTICES = ("LICENSE", "THIRD_PARTY_NOTICES")
@@ -130,9 +133,9 @@ def finalize(release_version, output):
         version=release_version, repository=REPOSITORY, platforms=formula_platforms(release_version, output)
     )
     (output / FORMULA_ASSET).write_text(formula)
-    for installer in ("install.sh", "install.ps1"):
+    for installer in INSTALLERS:
         shutil.copy2(ROOT / installer, output / installer)
-    assets = [FORMULA_ASSET, "install.sh", "install.ps1"]
+    assets = [FORMULA_ASSET, *INSTALLERS]
     for target in TARGETS:
         assets.extend((target.release_binary(release_version), target.archive(release_version)))
     write_checksums(output, assets)
@@ -145,14 +148,33 @@ def write_checksums(output, assets):
     return manifest
 
 
-def installer_fixture(target, release_version, bin_dir, output):
-    """Stage the same offline release fixture for both installer tests."""
-    tagged = output / "download" / f"v{release_version}"
+def tagged_dir(release_version, output):
+    return output / "download" / f"v{release_version}"
+
+
+def publish_latest(sums, output):
     latest = output / "latest" / "download"
-    asset = pack(target, release_version, bin_dir, tagged)
-    sums = write_checksums(tagged, [asset])
     latest.mkdir(parents=True, exist_ok=True)
     shutil.copy2(sums, latest / sums.name)
+
+
+def mirror(release_version, release, output):
+    """Lay out the R2 bucket: every release under its tag, and a stable one as latest."""
+    tagged = tagged_dir(release_version, output)
+    shutil.copytree(release, tagged)
+    if "-" in release_version:
+        return
+    publish_latest(tagged / CHECKSUMS, output)
+    for installer in INSTALLERS:
+        shutil.copy2(tagged / installer, output / installer)
+
+
+def installer_fixture(target, release_version, bin_dir, output):
+    """Stage the same offline release fixture for both installer tests."""
+    tagged = tagged_dir(release_version, output)
+    asset = pack(target, release_version, bin_dir, tagged)
+    sums = write_checksums(tagged, [asset])
+    publish_latest(sums, output)
     checksum, _ = sums.read_text().split()
     return release_version, asset, checksum
 
@@ -212,6 +234,9 @@ def main():
         package.add_argument("bin_dir", type=Path)
         package.add_argument("output", type=Path)
     commands.add_parser("finalize").add_argument("output", type=Path)
+    bucket = commands.add_parser("mirror")
+    bucket.add_argument("release", type=Path)
+    bucket.add_argument("output", type=Path)
     npm = commands.add_parser("npm")
     npm.add_argument("binaries", type=Path)
     npm.add_argument("output", type=Path)
@@ -235,6 +260,8 @@ def main():
         print("\t".join(installer_fixture(Target(args.target), release_version, args.bin_dir, args.output)))
     elif args.command == "finalize":
         finalize(release_version, args.output)
+    elif args.command == "mirror":
+        mirror(release_version, args.release, args.output)
     elif args.command == "npm":
         for package_dir in npm_packages(release_version, args.binaries, args.output):
             print(package_dir)
