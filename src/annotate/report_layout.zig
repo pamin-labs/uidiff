@@ -72,6 +72,9 @@ const Labels = struct {
     body_size: usize,
 };
 
+const DetailPlacement = struct { layout: Layout, panes: [2]Rect, top: usize, slot: usize, x: [2]usize };
+const DetailPlan = struct { details: []Detail, focuses: []Focus, end: usize, kinds: u8 };
+
 /// Owns placements and borrows the source images. Release with deinit.
 pub const Plan = struct {
     before: Pane,
@@ -106,96 +109,24 @@ pub const Plan = struct {
         const slot = layout.px(max_crop_w);
         const after_detail_x = detail_x + slot + layout.px(crop_gap);
         if (regions.len != 0) size.width = @max(size.width, after_detail_x + slot + layout.px(margin));
-        const details = try allocator.alloc(Detail, regions.len);
+        const content = try planDetails(allocator, before, after, regions, .{
+            .layout = layout,
+            .panes = panes,
+            .top = pane_end + layout.px(detail_header),
+            .slot = slot,
+            .x = .{ detail_x, after_detail_x },
+        });
+        const details = content.details;
+        const focuses = content.focuses;
         errdefer allocator.free(details);
-        var top = pane_end + layout.px(detail_header);
-        var kinds: u8 = 0;
-        const focuses = try allocator.alloc(Focus, if (layout.wide) regions.len else 0);
         errdefer allocator.free(focuses);
-        for (regions, details, 0..) |region, *detail, index| {
-            const old = imageRect(before, region.before);
-            const new = imageRect(after, region.after);
-            if ((region.before != null and old == null) or (region.after != null and new == null)) return error.InvalidRegionBox;
-            if (region.number == 0 and (old != null or new != null)) return error.InvalidRegionNumber;
-            kinds |= kindBit(region.kind);
-            const a = if (layout.wide) null else crop(before, old, detail_x, top, slot, layout);
-            const b = if (layout.wide) null else crop(after, new, after_detail_x, top, slot, layout);
-            const height = @max(layout.px(min_slot_h), if (a) |p| p.to.h + 2 * layout.px(3) else 0, if (b) |p| p.to.h + 2 * layout.px(3) else 0);
-            const before_mark = offsetMark(old, panes[0], before.size());
-            const after_mark = offsetMark(new, panes[1], after.size());
-            detail.* = .{
-                .region = region,
-                .before = a,
-                .after = b,
-                .before_mark = before_mark,
-                .after_mark = after_mark,
-                .before_badge = null,
-                .after_badge = null,
-                .focus = index,
-                .number = try Text.format(copy.number_format, .{region.number}),
-                .top = top,
-                .height = height,
-            };
-            if (layout.wide) {
-                focuses[index] = .{ .windows = .{ focusWindow(old orelse new, before.size()), focusWindow(new orelse old, after.size()) } };
-            } else {
-                top = std.math.add(usize, top, height + layout.px(detail_gap)) catch return error.SheetTooLarge;
-                if (top > values.max_extent) return error.SheetTooLarge;
-            }
-        }
-        if (layout.wide) top = try layoutFocus(details, focuses, .{ before.size(), after.size() }, top);
         const captions = layoutCaptions(layout, panes, size.width);
         try placeBadges(allocator, details, focuses, panes, size, layout, captions.bounds, if (moves.len != 0 and !layout.wide) .alignment else .plain);
-        if (details.len != 0) size.height = top + layout.px(margin) - layout.px(detail_gap);
+        if (details.len != 0) size.height = content.end + layout.px(margin) - layout.px(detail_gap);
         if (size.width > max_sheet_width or size.pixelCount() == null) return error.SheetTooLarge;
 
-        // A single gutter represents a single vertical path. For independent
-        // columns depict the path that covers the most moved pixels.
-        var area: usize = 0;
-        var column: ?Move = null;
-        for (moves) |move| {
-            if (move.before.y > before.height or move.before.height > before.height - move.before.y or
-                move.after.y > after.height or move.after.height > after.height - move.after.y or
-                move.before.height == 0 or move.before.height != move.after.height or move.before.y == move.after.y or
-                move.x.count() > @min(before.width, after.width) or move.width.count() > @min(before.width, after.width) - move.x.count() or
-                move.width.count() == 0) return error.InvalidImage;
-            const weight = move.width.count() *| move.before.height;
-            if (weight > area) {
-                area = weight;
-                column = move;
-            }
-        }
-        var count: usize = 0;
-        if (!layout.wide) if (column) |chosen| {
-            for (moves) |move| {
-                if (move.x == chosen.x and move.width == chosen.width and previewMove(move, layout) != null) count += 1;
-            }
-        };
-        const ribbons = try allocator.alloc(Ribbon, count);
+        const ribbons = try planRibbons(allocator, moves, details, before.size(), after.size(), layout);
         errdefer allocator.free(ribbons);
-        var index: usize = 0;
-        if (!layout.wide) if (column) |chosen| {
-            for (moves) |move| {
-                if (move.x != chosen.x or move.width != chosen.width) continue;
-                const drawn = previewMove(move, layout) orelse continue;
-                const delta = displacement(move);
-                const wedge = wedgeTop(details, move, delta > 0);
-                ribbons[index] = .{ .move = drawn, .wedge_top = if (wedge) |y| layout.position(y) else null, .label = if (delta >= 0)
-                    try Text.format(copy.positive_shift_format, .{delta})
-                else
-                    try Text.format(copy.shift_format, .{delta}) };
-                index += 1;
-            }
-        };
-        std.sort.heap(Ribbon, ribbons, {}, earlierRibbonEnd);
-        var down: usize = 0;
-        for (moves) |move| if (displacement(move) > 0) {
-            down += 1;
-        };
-        const changes = if (regions.len == 1) copy.change else copy.changes;
-        const blocks = if (moves.len == 1) copy.block else copy.blocks;
-        const direction = if (down == moves.len) copy.down else if (down == 0) copy.up else "";
-        const heading = if (moves.len == 0) try Text.format(copy.heading_format, .{ regions.len, changes }) else try Text.format(copy.moved_heading_format, .{ regions.len, changes, moves.len, blocks, direction });
         return .{
             .before = before_pane,
             .after = after_pane,
@@ -209,8 +140,8 @@ pub const Plan = struct {
             .detail_slot_width = slot,
             .detail_x = .{ detail_x, after_detail_x },
             .captions = captions,
-            .labels = layoutLabels(layout, panes[0].x, pane_end, kinds),
-            .heading = heading,
+            .labels = layoutLabels(layout, panes[0].x, pane_end, content.kinds),
+            .heading = try layoutHeading(regions.len, moves),
         };
     }
 
@@ -256,6 +187,106 @@ pub fn minimumSize(before: Size, after: Size) error{SheetTooLarge}!Size {
     };
     if (size.width > max_sheet_width or size.pixelCount() == null) return error.SheetTooLarge;
     return size;
+}
+
+fn planDetails(allocator: Allocator, before: Image, after: Image, regions: []const Region, placement: DetailPlacement) RenderError!DetailPlan {
+    const layout = placement.layout;
+    const panes = placement.panes;
+    const slot = placement.slot;
+    const detail_x, const after_detail_x = placement.x;
+    const details = try allocator.alloc(Detail, regions.len);
+    errdefer allocator.free(details);
+    var top = placement.top;
+    var kinds: u8 = 0;
+    const focuses = try allocator.alloc(Focus, if (layout.wide) regions.len else 0);
+    errdefer allocator.free(focuses);
+    for (regions, details, 0..) |region, *detail, index| {
+        const old = imageRect(before, region.before);
+        const new = imageRect(after, region.after);
+        if ((region.before != null and old == null) or (region.after != null and new == null)) return error.InvalidRegionBox;
+        if (region.number == 0 and (old != null or new != null)) return error.InvalidRegionNumber;
+        kinds |= kindBit(region.kind);
+        const a = if (layout.wide) null else crop(before, old, detail_x, top, slot, layout);
+        const b = if (layout.wide) null else crop(after, new, after_detail_x, top, slot, layout);
+        const height = @max(layout.px(min_slot_h), if (a) |p| p.to.h + 2 * layout.px(3) else 0, if (b) |p| p.to.h + 2 * layout.px(3) else 0);
+        const before_mark = offsetMark(old, panes[0], before.size());
+        const after_mark = offsetMark(new, panes[1], after.size());
+        detail.* = .{
+            .region = region,
+            .before = a,
+            .after = b,
+            .before_mark = before_mark,
+            .after_mark = after_mark,
+            .before_badge = null,
+            .after_badge = null,
+            .focus = index,
+            .number = try Text.format(copy.number_format, .{region.number}),
+            .top = top,
+            .height = height,
+        };
+        if (layout.wide) {
+            focuses[index] = .{ .windows = .{ focusWindow(old orelse new, before.size()), focusWindow(new orelse old, after.size()) } };
+        } else {
+            top = std.math.add(usize, top, height + layout.px(detail_gap)) catch return error.SheetTooLarge;
+            if (top > values.max_extent) return error.SheetTooLarge;
+        }
+    }
+    if (layout.wide) top = try layoutFocus(details, focuses, .{ before.size(), after.size() }, top);
+    return .{ .details = details, .focuses = focuses, .end = top, .kinds = kinds };
+}
+
+fn planRibbons(allocator: Allocator, moves: []const Move, details: []const Detail, before: Size, after: Size, layout: Layout) RenderError![]Ribbon {
+    // A single gutter represents a single vertical path. For independent
+    // columns depict the path that covers the most moved pixels.
+    var area: usize = 0;
+    var column: ?Move = null;
+    for (moves) |move| {
+        if (move.before.y > before.height or move.before.height > before.height - move.before.y or
+            move.after.y > after.height or move.after.height > after.height - move.after.y or
+            move.before.height == 0 or move.before.height != move.after.height or move.before.y == move.after.y or
+            move.x.count() > @min(before.width, after.width) or move.width.count() > @min(before.width, after.width) - move.x.count() or
+            move.width.count() == 0) return error.InvalidImage;
+        const weight = move.width.count() *| move.before.height;
+        if (weight > area) {
+            area = weight;
+            column = move;
+        }
+    }
+    var count: usize = 0;
+    if (!layout.wide) if (column) |chosen| {
+        for (moves) |move| {
+            if (move.x == chosen.x and move.width == chosen.width and previewMove(move, layout) != null) count += 1;
+        }
+    };
+    const ribbons = try allocator.alloc(Ribbon, count);
+    errdefer allocator.free(ribbons);
+    var index: usize = 0;
+    if (!layout.wide) if (column) |chosen| {
+        for (moves) |move| {
+            if (move.x != chosen.x or move.width != chosen.width) continue;
+            const drawn = previewMove(move, layout) orelse continue;
+            const delta = displacement(move);
+            const wedge = wedgeTop(details, move, delta > 0);
+            ribbons[index] = .{ .move = drawn, .wedge_top = if (wedge) |y| layout.position(y) else null, .label = if (delta >= 0)
+                try Text.format(copy.positive_shift_format, .{delta})
+            else
+                try Text.format(copy.shift_format, .{delta}) };
+            index += 1;
+        }
+    };
+    std.sort.heap(Ribbon, ribbons, {}, earlierRibbonEnd);
+    return ribbons;
+}
+
+fn layoutHeading(region_count: usize, moves: []const Move) RenderError!Text {
+    var down: usize = 0;
+    for (moves) |move| if (displacement(move) > 0) {
+        down += 1;
+    };
+    const changes = if (region_count == 1) copy.change else copy.changes;
+    const blocks = if (moves.len == 1) copy.block else copy.blocks;
+    const direction = if (down == moves.len) copy.down else if (down == 0) copy.up else "";
+    return if (moves.len == 0) Text.format(copy.heading_format, .{ region_count, changes }) else Text.format(copy.moved_heading_format, .{ region_count, changes, moves.len, blocks, direction });
 }
 
 fn layoutLabels(ui: Layout, left: usize, pane_end: usize, kinds: u8) Labels {
