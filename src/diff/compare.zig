@@ -68,8 +68,8 @@ const Scope = struct {
     span: columns.Span,
     /// Where to draw a gap with no changed pixels against its background.
     bounds: columns.Span,
+    /// The independently aligned column lane, if this is a column group.
     frame: ?columns.Span = null,
-    kind: enum { whole, column } = .whole,
 };
 
 /// Rows one side has and the other does not.
@@ -218,7 +218,7 @@ fn spanRegions(allocator: Allocator, collector: *Collector, moves: *std.ArrayLis
             var has_movement = false;
             var part = first;
             while (true) {
-                const local: Scope = .{ .before = before, .after = after, .span = part.span, .bounds = part.span, .frame = part.lane, .kind = .column };
+                const local: Scope = .{ .before = before, .after = after, .span = part.span, .bounds = part.span, .frame = part.lane };
                 // A strip as narrow as the replacement gap may be only the
                 // edge of a card. Give it the same positional comparison as
                 // a stationary group unless the whole span explains a move.
@@ -372,12 +372,12 @@ fn alignSpan(allocator: Allocator, scope: Scope, scroll_limit_px: usize, local_l
     const new_keys = keys[scope.before.height..];
     row_diff.keys(scope.before, scope.span.left, scope.span.width, old_keys);
     row_diff.keys(scope.after, scope.span.left, scope.span.width, new_keys);
-    if (scope.kind == .column and (std.mem.allEqual(u64, old_keys, old_keys[0]) or
+    if (scope.frame != null and (std.mem.allEqual(u64, old_keys, old_keys[0]) or
         std.mem.allEqual(u64, new_keys, new_keys[0]))) return null;
     // A compact change is local motion, even if re-pairing its two edges
     // happens to match a few rows at a different offset.
-    const narrow_view = (scope.kind == .column or old_keys.len == new_keys.len) and scope.span.width <= local_limit_px;
-    const growing_column = scope.kind == .column and old_keys.len != new_keys.len;
+    const narrow_view = (scope.frame != null or old_keys.len == new_keys.len) and scope.span.width <= local_limit_px;
+    const growing_column = scope.frame != null and old_keys.len != new_keys.len;
     if (narrow_view or growing_column) {
         var end = @min(old_keys.len, new_keys.len);
         const first = std.mem.indexOfDiff(u64, old_keys[0..end], new_keys[0..end]) orelse return null;
@@ -408,7 +408,7 @@ fn compareSpan(allocator: Allocator, collector: *Collector, scope: Scope, aligne
     const changes: []const row_diff.Band = if (aligned) |value| pruneMatched(scope, value) else &.{.{ .before = 0, .after = 0, .removed = overlap, .added = overlap }};
 
     const extension = @max(before.height, after.height) - overlap;
-    var max_rows: usize = if (scope.kind == .column and aligned == null) extension else 0;
+    var max_rows: usize = if (scope.frame != null and aligned == null) extension else 0;
     for (changes) |band| max_rows = @max(max_rows, band.removed, band.added);
     // Each band lies within at least one validated image, so its area fits the pixel cap.
     const scratch = try buffers.prepare(allocator, width * max_rows);
@@ -444,7 +444,7 @@ fn compareSpan(allocator: Allocator, collector: *Collector, scope: Scope, aligne
     }
     if (aligned == null and extension != 0) {
         const old_is_taller = before.height > after.height;
-        if (scope.kind == .column) {
+        if (scope.frame != null) {
             const short = if (old_is_taller) after else before;
             unpaired(collector, scope, scratch, .{
                 .side = if (old_is_taller) .before else .after,
