@@ -52,6 +52,13 @@ jobs:
         if: ${{ !matrix.rows_only }}
       - run: zig build e2e
         if: ${{ !matrix.rows_only }}
+      - run: python -B scripts/release/test_launcher.py
+        if: ${{ !matrix.rows_only }}
+      - run: sh scripts/release/test_install.sh
+        if: ${{ !matrix.rows_only && runner.os != 'Windows' }}
+      - run: ./scripts/release/test_install.ps1
+        if: ${{ !matrix.rows_only && runner.os == 'Windows' }}
+        shell: pwsh
       - run: zig build test-threaded
         if: runner.os == 'Linux' && !matrix.rows_only
       - run: zig build test-x86-fallback
@@ -77,26 +84,7 @@ jobs:
           ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/uidiff-clean-zig-cache
 
   release-build:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # wasm32-wasi joins the matrix when the WASM entry point is implemented.
-        target:
-          - x86_64-linux-musl
-          - aarch64-linux-musl
-          - x86_64-macos
-          - aarch64-macos
-          - x86_64-windows
-          - aarch64-windows
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          persist-credentials: false
-      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
-        with:
-          cache-key: ${{ matrix.target }}
-      - run: zig build size -Doptimize=safe -Dtarget="${{ matrix.target }}"
+    uses: ./.github/workflows/build-release-targets.yml
 
   font:
     if: github.event_name == 'pull_request'

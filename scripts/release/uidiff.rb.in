@@ -1,0 +1,17 @@
+class Uidiff < Formula
+  desc "Align moved screenshot content and box visual changes"
+  homepage "https://github.com/pamin-labs/uidiff"
+  version "$version"
+  license "MIT"
+
+$platforms
+
+  def install
+    bin.install "uidiff"
+    pkgshare.install "LICENSE", "THIRD_PARTY_NOTICES"
+  end
+
+  test do
+    assert_match "uidiff", shell_output("#{bin}/uidiff --help")
+  end
+end
