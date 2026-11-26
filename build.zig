@@ -748,7 +748,7 @@ fn addDiffScenarios(b: *Build, step: *Build.Step, target: Build.ResolvedTarget, 
         .optimize = optimize,
     });
     const scenarios = b.createModule(.{
-        .root_source_file = b.path("tests/diff.zig"),
+        .root_source_file = b.path("tests/compare.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{.{ .name = "diff_scenarios", .module = diff }},

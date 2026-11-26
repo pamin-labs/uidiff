@@ -30,7 +30,7 @@ Follow the public pamin-labs/skills engineering rules in [core](.agents/skills/p
 - `skills/uidiff/` documents screenshot capture, comparison and report interpretation for agents.
 - `scripts/` contains developer tooling. `scripts/release/` packages the CLI, renders the Homebrew formula and tests the launcher and installers. The installers are `install.sh` and `install.ps1` at the repository root.
 - `.github/` contains the release target list and workflows. Dispatch `release.yml` from `main` with a `version` input. The workflow commits that version to `build.zig.zon`, builds the ReleaseSafe matrix shared with CI, creates the tagged GitHub release, mirrors assets to R2 and publishes npm packages through OIDC with provenance. Stable releases also update the Homebrew tap from the published formula asset.
-- `tests/diff.zig` registers the comparison scenarios in `tests/diff/`, which use the diff facade and shared procedural fixtures. `tests/` runs the installed CLI (`tests/e2e.zig`), decodes the fixtures through the public API (`tests/decode.zig`), checks the binary size budget, and checks source layout, layering and declaration order. `tests/fuzz/` holds one fuzz target per top-level file, each its own test binary. Shared RGBA inputs live in `tests/fuzz/fixtures/`. `tests/fixtures.zig` is the fixture set's root; `tests/fixtures/` holds the synthetic fixture generator, its encoders, the freshness check and the generated images with expected reports. Unit tests live beside the code they exercise.
+- `tests/compare.zig` registers the comparison scenarios in `tests/compare/`, which use the diff facade and shared procedural fixtures. `tests/` runs the installed CLI (`tests/e2e.zig`), decodes the fixtures through the public API (`tests/decode.zig`), checks the binary size budget, and checks source layout, layering and declaration order. `tests/fuzz/` holds one fuzz target per top-level file, each its own test binary. Shared RGBA inputs live in `tests/fuzz/fixtures/`. `tests/fixtures.zig` is the fixture set's root; `tests/fixtures/` holds the synthetic fixture generator, its encoders, the freshness check and the generated images with expected reports. Unit tests live beside the code they exercise.
 
 ## Layers
 
@@ -62,7 +62,7 @@ Named build modules, and the only files that may import them. The `export` row n
 | `stb_write_c` | `tests/fixtures/encode.zig` |
 | `webp_encode_c` | `tests/fixtures/encode.zig` |
 | `codec_memory` | `src/codec.zig` `src/codec/png/deflate.zig` `src/codec/png/scanlines.zig` `src/codec/stb.zig` `src/codec/jpeg.zig` `src/codec/webp.zig` `tests/fixtures/encode.zig` |
-| `diff_scenarios` | `tests/diff/` (comparison API and test-only fixture support) |
+| `diff_scenarios` | `tests/compare/` (comparison API and test-only fixture support) |
 | `fixtures` | `tests/e2e.zig` `tests/decode.zig` `tests/fuzz/` |
 | `e2e_options` | `tests/e2e.zig` |
 | `cli_options` | `src/cli.zig` |
@@ -78,7 +78,7 @@ Only a submodule's facade and implementation files may import its implementation
 | `src/diff/rows.zig` | `src/diff/rows/` |
 | `src/annotate/badges.zig` | `src/annotate/badges/` |
 | `src/codec/png.zig` | `src/codec/png/` |
-| `tests/diff.zig` | `tests/diff/` |
+| `tests/compare.zig` | `tests/compare/` |
 
 Each unit of the diff internals, with its tier. A unit imports another only if that unit's tier is lower; files inside one unit import each other under the rules above. `src/diff.zig` sits above every tier and `src/diff/test_support.zig` outside them. A file under `src/diff/` that this table does not name fails the test.
 
