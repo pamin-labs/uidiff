@@ -280,16 +280,27 @@ fn paeth(dst: []u8, src: []const u8, above: []const u8) void {
     var raw = src[channels..];
     var up = above[channels..];
     while (out.len != 0) {
-        const step: usize = if (out.len >= vector_bytes and @reduce(.And, @as(Block, up[0..vector_bytes].*) == repeatPixel(predictor.upper_left))) flat: {
-            predictor.left = firstPixel(prefixAdd(out[0..vector_bytes], raw[0..vector_bytes], repeatPixel(predictor.left)));
-            break :flat vector_bytes;
-        } else pixel: {
-            predictor.pixels(std.mem.bytesAsSlice(values.Pixel, out[0..channels]), std.mem.bytesAsSlice(values.Pixel, raw[0..channels]), std.mem.bytesAsSlice(values.Pixel, up[0..channels]));
-            break :pixel channels;
-        };
-        out = out[step..];
-        raw = raw[step..];
-        up = up[step..];
+        const corner = repeatPixel(predictor.upper_left);
+        if (out.len >= vector_bytes and @reduce(.And, @as(Block, up[0..vector_bytes].*) == corner)) {
+            // Over a flat row above, Paeth predicts the left pixel: keep the
+            // carry in a vector for the whole run.
+            var carry = repeatPixel(predictor.left);
+            var i: usize = 0;
+            while (true) {
+                carry = prefixAdd(out[i..][0..vector_bytes], raw[i..][0..vector_bytes], carry);
+                i += vector_bytes;
+                if (out.len - i < vector_bytes or !@reduce(.And, @as(Block, up[i..][0..vector_bytes].*) == corner)) break;
+            }
+            predictor.left = firstPixel(carry);
+            out = out[i..];
+            raw = raw[i..];
+            up = up[i..];
+            continue;
+        }
+        predictor.pixels(std.mem.bytesAsSlice(values.Pixel, out[0..channels]), std.mem.bytesAsSlice(values.Pixel, raw[0..channels]), std.mem.bytesAsSlice(values.Pixel, up[0..channels]));
+        out = out[channels..];
+        raw = raw[channels..];
+        up = up[channels..];
     }
 }
 
