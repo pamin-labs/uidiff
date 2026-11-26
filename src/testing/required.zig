@@ -4,7 +4,7 @@ const builtin = @import("builtin");
 const options = @import("required_test_options");
 
 /// Fails if the required filter selected only the guard itself.
-pub fn check() !void {
+pub fn check() error{NoSelectedTests}!void {
     const filter = options.filter;
     if (filter.len == 0) return;
     for (builtin.test_functions) |entry| {

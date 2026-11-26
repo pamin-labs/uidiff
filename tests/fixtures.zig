@@ -34,7 +34,7 @@ pub const blank = find(.identical);
 pub const max_sample_bytes = 4096;
 
 /// Reads a blank screenshot in the given format into test-allocator storage.
-pub fn readSample(comptime format: Format) ![]u8 {
+pub fn readSample(comptime format: Format) std.Io.Dir.ReadFileAllocError![]u8 {
     const testing = std.testing;
     return std.Io.Dir.cwd().readFileAlloc(testing.io, blank.path(.before, format), testing.allocator, .limited(max_sample_bytes));
 }

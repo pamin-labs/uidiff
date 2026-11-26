@@ -4,6 +4,9 @@ const uidiff = @import("../root.zig");
 const canvas = @import("canvas.zig");
 const Canvas = canvas.Canvas;
 
+const CompareCheckError = uidiff.CompareError || error{TestExpectedEqual};
+const LocateEditError = uidiff.CompareError || error{ MissingEdit, TestUnexpectedResult };
+
 /// Checks that a reported region of the requested kind covers a test point.
 pub fn hasRegion(found: []const uidiff.Region, side: uidiff.Side, x: usize, y: usize, kind: ?uidiff.Kind) bool {
     const px: f64 = @floatFromInt(x);
@@ -34,7 +37,7 @@ pub fn paddedBox(x: usize, y: usize, w: usize, h: usize) uidiff.Box {
 }
 
 /// Checks region geometry, kind and report numbering in order.
-pub fn checkRegions(actual: []const uidiff.Region, expected: []const uidiff.Region) !void {
+pub fn checkRegions(actual: []const uidiff.Region, expected: []const uidiff.Region) error{TestExpectedEqual}!void {
     try std.testing.expectEqual(expected.len, actual.len);
     for (actual, expected, 1..) |got, want, number| {
         try std.testing.expectEqual(want.before, got.before);
@@ -45,7 +48,7 @@ pub fn checkRegions(actual: []const uidiff.Region, expected: []const uidiff.Regi
 }
 
 /// Checks that an edit is reported within the expected width.
-pub fn expectEditAt(before: Canvas, after: Canvas, x: usize, y: usize, max_box_width: usize) !void {
+pub fn expectEditAt(before: Canvas, after: Canvas, x: usize, y: usize, max_box_width: usize) LocateEditError!void {
     const result = try compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
     for (result.regions) |region| {
@@ -66,27 +69,27 @@ pub fn compareCanvases(before: Canvas, after: Canvas, scale: f64) uidiff.Compare
 }
 
 /// Checks all reported regions against the expected boxes.
-pub fn check(before: Canvas, after: Canvas, scale: f64, expected: []const uidiff.Region) !void {
+pub fn check(before: Canvas, after: Canvas, scale: f64, expected: []const uidiff.Region) CompareCheckError!void {
     const actual = try compareCanvases(before, after, scale);
     defer actual.deinit(std.testing.allocator);
     try checkRegions(actual.regions, expected);
 }
 
 /// Checks an insertion and its matching deletion when reversed.
-pub fn checkInsertion(before: Canvas, after: Canvas, expected: uidiff.Box) !void {
+pub fn checkInsertion(before: Canvas, after: Canvas, expected: uidiff.Box) CompareCheckError!void {
     try check(before, after, 1, &.{.{ .after = expected }});
     try check(after, before, 1, &.{.{ .before = expected }});
 }
 
 /// Checks the number of reported regions.
-pub fn count(before: Canvas, after: Canvas, expected: usize) !void {
+pub fn count(before: Canvas, after: Canvas, expected: usize) CompareCheckError!void {
     const actual = try compareCanvases(before, after, 1);
     defer actual.deinit(std.testing.allocator);
     try std.testing.expectEqual(expected, actual.regions.len);
 }
 
 /// Checks the insertion fixture using the allocator supplied by the failure runner.
-pub fn comparePair(allocator: std.mem.Allocator, before: uidiff.Image, after: uidiff.Image) !void {
+pub fn comparePair(allocator: std.mem.Allocator, before: uidiff.Image, after: uidiff.Image) CompareCheckError!void {
     const result = try uidiff.compare(allocator, before, after, .{});
     defer result.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 1), result.regions.len);

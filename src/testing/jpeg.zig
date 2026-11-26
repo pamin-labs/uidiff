@@ -4,6 +4,7 @@ const decoder = @import("../codec/jpeg.zig");
 const values = @import("../value.zig");
 
 const Frame = enum(u8) { baseline = 0xc0, progressive = 0xc2 };
+const CheckError = decoder.DecodeError || error{TestExpectedEqual};
 
 /// End-of-image marker.
 pub const eoi = "\xff\xd9".*;
@@ -34,7 +35,7 @@ pub fn progressive(comptime scans: usize) [header_bytes + scans * scan_bytes + e
 }
 
 /// Checks the baseline grayscale fixture with the supplied allocator.
-pub fn checkGray(allocator: std.mem.Allocator) !void {
+pub fn checkGray(allocator: std.mem.Allocator) CheckError!void {
     const header = try decoder.probe(allocator, &gray, values.max_decode_bytes);
     const pixels = try decoder.decode(allocator, &gray, header, values.max_decode_bytes);
     defer decoder.release(allocator, pixels);

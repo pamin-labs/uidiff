@@ -3,11 +3,12 @@ const std = @import("std");
 const values = @import("../value.zig");
 const regions = @import("../diff/regions.zig");
 const palette = @import("../annotate/palette.zig");
+const Allocator = std.mem.Allocator;
 const Image = values.Image;
 const Pixel = values.Pixel;
-const test_allocator = std.testing.allocator;
 /// The opaque white used for blank test canvases.
 pub const white = palette.white;
+const test_allocator = std.testing.allocator;
 
 /// A procedurally painted image owned by the test allocator.
 pub const Canvas = struct {
@@ -15,7 +16,7 @@ pub const Canvas = struct {
     pixels: []Pixel,
 
     /// Allocates a blank procedural image.
-    pub fn init(width: usize, height: usize) !Canvas {
+    pub fn init(width: usize, height: usize) Allocator.Error!Canvas {
         const pixels = try test_allocator.alloc(Pixel, width * height);
         @memset(pixels, white);
         return .{ .view = .{ .width = width, .height = height, .pixels = pixels }, .pixels = pixels };
@@ -27,7 +28,7 @@ pub const Canvas = struct {
     }
 
     /// Allocates the default square used by small tests.
-    pub fn square() !Canvas {
+    pub fn square() Allocator.Error!Canvas {
         return init(64, 64);
     }
 
@@ -120,7 +121,7 @@ pub const Canvas = struct {
     }
 
     /// Allocates a copy with added rows.
-    pub fn insert(self: Canvas, y: usize, rows: usize, growth: usize) !Canvas {
+    pub fn insert(self: Canvas, y: usize, rows: usize, growth: usize) Allocator.Error!Canvas {
         const after = try init(self.view.width, self.view.height + growth);
         after.copyRows(0, self, 0, y);
         after.copyRows(y + rows, self, y, after.view.height - rows);
@@ -139,7 +140,7 @@ pub const RowExchange = struct {
     pub const pitch = 40;
 
     /// Allocates both canvases at the same size.
-    pub fn init() !RowExchange {
+    pub fn init() Allocator.Error!RowExchange {
         const before = try Canvas.init(256, 160);
         errdefer before.deinit();
         return .{ .before = before, .after = try Canvas.init(before.view.width, before.view.height) };
@@ -168,7 +169,7 @@ pub fn inkShade(ink: u8, coverage: u16) Pixel {
 }
 
 /// Paints an antialiased diagonal at the given horizontal offset.
-pub fn diagonal(shift: usize) !Canvas {
+pub fn diagonal(shift: usize) Allocator.Error!Canvas {
     const png = try Canvas.square();
     const samples = 8;
     for (0..png.view.height) |y| {

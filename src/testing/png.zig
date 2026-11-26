@@ -10,6 +10,8 @@ const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
 const Profile = scanlines.Profile;
 
+const CheckError = deflate.EncodeError || decoder.DecodeError || error{ TestExpectedEqual, TestExpectedError, TestUnexpectedError };
+
 /// Offset after the IHDR checksum.
 pub const header_end = png_format.header_bytes + @sizeOf(u32); // Includes the IHDR checksum.
 
@@ -61,7 +63,7 @@ pub fn writeTestData(allocator: Allocator, out: *Writer, filtered_rows: []const 
 }
 
 /// Checks streaming and fallback reconstruction for a filter sequence.
-pub fn checkTestFilters(comptime channels: usize, color: u8, filters: []const u8) !void {
+pub fn checkTestFilters(comptime channels: usize, color: u8, filters: []const u8) CheckError!void {
     const allocator = std.testing.allocator;
     const width = 7;
     const row_bytes = width * channels;
@@ -131,7 +133,7 @@ pub fn splitTestIdat(out: *Writer, prefix: []const u8, data: []const u8, at: usi
 }
 
 /// Checks streaming reconstruction against the fallback for a Smith input.
-pub fn fuzzStreamingRows(_: void, smith: *std.testing.Smith) !void {
+pub fn fuzzStreamingRows(_: void, smith: *std.testing.Smith) CheckError!void {
     const allocator = std.testing.allocator;
     const profile_count: u8 = fuzz_profiles.len;
     const seed = smith.valueRangeAtMost(u8, 0, 2 * fuzz_split_seed - 1);
