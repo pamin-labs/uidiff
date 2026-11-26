@@ -63,6 +63,13 @@ pub const checkInsertion = expect.checkInsertion;
 /// Checks the number of reported regions.
 pub const count = expect.count;
 
+/// Scratch space for a row-alignment regression.
+pub const RowWorkspace = rows.Workspace;
+/// Hashes rows for an alignment fixture.
+pub const rowKeys = rows.keys;
+/// Aligns row hashes to exercise row rules in combination.
+pub const matchBands = rows.matchBands;
+
 /// Compares the full RGBA pixels of two runs.
 pub fn sameRun(a: []const values.Pixel, b: []const values.Pixel) bool {
     return std.mem.eql(u8, std.mem.sliceAsBytes(a), std.mem.sliceAsBytes(b));

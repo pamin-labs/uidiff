@@ -5,6 +5,7 @@ const band_model = @import("band.zig");
 const search = @import("search.zig");
 const paint = @import("paint.zig");
 const columns = @import("../columns.zig");
+const values = @import("../../value.zig");
 
 const min_panel_evidence = 4;
 
@@ -84,6 +85,52 @@ pub fn clippedInsertion(problem: search.Problem, limit: usize, bands: []band_mod
     bands[1] = .{ .before = prefix, .after = prefix, .removed = 0, .added = shift };
     bands[2] = .{ .before = prefix, .after = prefix + shift, .removed = old.len - shift, .added = old.len - shift, .mode = .hash_match };
     return bands[0..3];
+}
+
+test "inserting and deleting above a divider preserves the deletion" {
+    const sample = @import("../../testing.zig");
+    const width = 96;
+    const height = 120;
+    const first = 24;
+    const pitch = 16;
+    const edge = 72;
+    const white = sample.white;
+    const rule: values.Pixel = .{ 130, 134, 140, 255 };
+    var old: [height][width]values.Pixel = @splat(@splat(white));
+    var new = old;
+    for (old[first..edge], first..) |*row, y| {
+        @memset(row[24..72], .{ @intCast(y), 90, 40, 255 });
+    }
+    @memcpy(new[first + pitch .. edge], old[first .. edge - pitch]);
+    for (new[first .. first + pitch]) |*row| @memset(row[24..72], .{ 224, 36, 80, 255 });
+    for ([_]*[height][width]values.Pixel{ &old, &new }) |pixels| {
+        @memset(pixels[edge][20..76], rule);
+        for (edge - pitch / 2..edge - pitch / 2 + 2) |y| {
+            pixels[y][12] = rule;
+            pixels[y][83] = rule;
+        }
+    }
+    const a: values.Image = .{ .width = width, .height = height, .pixels = std.mem.bytesAsSlice(values.Pixel, std.mem.asBytes(&old)) };
+    const b: values.Image = .{ .width = width, .height = height, .pixels = std.mem.bytesAsSlice(values.Pixel, std.mem.asBytes(&new)) };
+    const limits: band_model.Limits = .{ .scroll = 2, .replacement = 24, .images = .{ a, b }, .left = 24, .width = 48 };
+    var before: [height]u64 = undefined;
+    var after: [height]u64 = undefined;
+    sample.rowKeys(a, limits.left, limits.width, &before);
+    sample.rowKeys(b, limits.left, limits.width, &after);
+    var bands: [2 * height + 1]band_model.Band = undefined;
+    try std.testing.expect(panelInsertion(&before, &after, first, limits, &bands) == null);
+    var workspace: sample.RowWorkspace = .{};
+    defer workspace.deinit(std.testing.allocator);
+    var filtered: [2 * height]u64 = undefined;
+    const aligned = (try sample.matchBands(std.testing.allocator, &before, &after, limits, &bands, &filtered, &workspace)) orelse return error.TestUnexpectedResult;
+    var removed: usize = 0;
+    var added: usize = 0;
+    for (aligned) |band| {
+        removed += band.removed -| band.added;
+        added += band.added -| band.removed;
+    }
+    try std.testing.expectEqual(@as(usize, pitch), removed);
+    try std.testing.expectEqual(@as(usize, pitch), added);
 }
 
 test {
