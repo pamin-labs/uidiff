@@ -336,7 +336,7 @@ fn addJpegDecoder(b: *Build, module: *Build.Module, target: Build.ResolvedTarget
     module.addCSourceFile(.{ .file = files.add("jdmaster.c", modifiedJpeg(b, master)), .flags = vendor_flags });
 
     var backing = readDependencySource(b, jpeg, "src/jmemnobs.c");
-    backing = replaceExactly(b.allocator, backing, "#include \"jmemsys.h\"", "#include \"codec_memory.h\"\n#include \"jmemsys.h\"", 1);
+    backing = replaceExactly(b.allocator, backing, "#include \"jmemsys.h\"", "#include \"memory.h\"\n#include \"jmemsys.h\"", 1);
     backing = replaceExactly(b.allocator, backing, "MALLOC(sizeofobject)", "uidiff_codec_malloc(sizeofobject)", 2);
     backing = replaceExactly(b.allocator, backing, "free(object);", "uidiff_codec_free(object);", 2);
     module.addCSourceFile(.{ .file = files.add("jmemnobs.c", modifiedJpeg(b, backing)), .flags = vendor_flags });
