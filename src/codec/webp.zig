@@ -9,8 +9,8 @@ const Pixel = values.Pixel;
 const Size = values.Size;
 const Header = decoded_size.Header;
 
-/// Malformed bytes, an exceeded budget, or a failed allocation.
-pub const DecodeError = memory.Error;
+/// Malformed or unsupported input, an exceeded budget, or a failed allocation.
+pub const DecodeError = memory.Error || error{UnsupportedImageFormat};
 
 const riff = "RIFF";
 const webp = "WEBP";
@@ -58,15 +58,21 @@ fn load(allocator: Allocator, bytes: []const u8, size: Size, cap: usize) DecodeE
 }
 
 /// Returns dimensions without decoding the pixels.
-fn dimensions(bytes: []const u8) values.Image.Invalid!Size {
-    var width: c_int = 0;
-    var height: c_int = 0;
-    if (c.WebPGetInfo(bytes.ptr, bytes.len, &width, &height) == 0) return error.InvalidImage;
-    return decoded_size.fromC(width, height);
+fn dimensions(bytes: []const u8) (values.Image.Invalid || error{UnsupportedImageFormat})!Size {
+    var features: c.WebPBitstreamFeatures = undefined;
+    if (c.WebPGetFeatures(bytes.ptr, bytes.len, &features) != c.VP8_STATUS_OK) return error.InvalidImage;
+    if (features.has_animation != 0) return error.UnsupportedImageFormat;
+    return decoded_size.fromC(features.width, features.height);
 }
 
 test "a RIFF header without a WebP image is rejected" {
     try std.testing.expectError(error.InvalidImage, dimensions("RIFF\x04\x00\x00\x00WEBP"));
+}
+
+test "the animated WebP flag is rejected as unsupported" {
+    const animated = "RIFF\x16\x00\x00\x00WEBP" ++
+        "VP8X\x0a\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+    try std.testing.expectError(error.UnsupportedImageFormat, probe(std.testing.allocator, animated, values.max_decode_bytes));
 }
 
 test {
