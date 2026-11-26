@@ -4,7 +4,7 @@ const std = @import("std");
 const values = @import("../value.zig");
 const Pixel = values.Pixel;
 const Io = std.Io;
-const deflate = @import("png/deflate.zig");
+const zlib = @import("png/zlib.zig");
 const encoder = @import("png/encoder.zig");
 const decoder = @import("png/decoder.zig");
 const png_format = @import("png/format.zig");
@@ -13,7 +13,7 @@ const stb = @import("png/stb.zig");
 /// Malformed PNG bytes, a decode past the memory budget, or allocation failure.
 pub const DecodeError = decoder.DecodeError;
 /// Allocation, invalid image or output failures.
-pub const EncodeError = deflate.EncodeError;
+pub const EncodeError = zlib.EncodeError;
 /// Decodes the probed dimensions through the scanline or legacy decoder.
 pub const decode = decoder.decode;
 /// Encodes a valid image. Allocates the compressor's window and one filtered row.

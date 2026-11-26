@@ -1,7 +1,7 @@
 //! Encodes borrowed pixel rows and composed sheet strips as PNG.
 
 const std = @import("std");
-const deflate = @import("deflate.zig");
+const zlib = @import("zlib.zig");
 const decoder = @import("decoder.zig");
 const values = @import("../../value.zig");
 const png_format = @import("format.zig");
@@ -40,7 +40,7 @@ const filter_sample_pixels = 6;
 const filter_switch_margin = 4;
 
 /// Encodes a valid image. Allocates the compressor's window and one filtered row.
-pub fn write(allocator: Allocator, image: Image, output: *Writer) deflate.EncodeError!void {
+pub fn write(allocator: Allocator, image: Image, output: *Writer) zlib.EncodeError!void {
     if (!image.valid()) return error.InvalidImage;
     return writeRows(allocator, image.size(), BorrowedRows{ .image = image }, output);
 }
@@ -49,13 +49,13 @@ pub fn write(allocator: Allocator, image: Image, output: *Writer) deflate.Encode
 /// existing pixels. Other sources are consumed in strips and can fill the
 /// provided row buffer or lend a row to copy into the strip.
 /// Sources may supply isOpaque for RGB output.
-pub fn writeRows(allocator: Allocator, size: values.Size, source: anytype, output: *Writer) deflate.EncodeError!void {
+pub fn writeRows(allocator: Allocator, size: values.Size, source: anytype, output: *Writer) zlib.EncodeError!void {
     return writeRowsWithIo(null, allocator, size, source, output);
 }
 
 /// Encodes large sheets with parallel deflate strips when given an I/O backend.
 /// A borrowed row must remain readable through the next source call.
-pub fn writeRowsWithIo(io: ?Io, allocator: Allocator, size: values.Size, source: anytype, output: *Writer) deflate.EncodeError!void {
+pub fn writeRowsWithIo(io: ?Io, allocator: Allocator, size: values.Size, source: anytype, output: *Writer) zlib.EncodeError!void {
     if (!@hasDecl(@TypeOf(source), "row"))
         @compileError("a PNG row source must provide row(y, scratch)");
     if (size.pixelCount() == null) return error.InvalidImage;
@@ -66,7 +66,7 @@ pub fn writeRowsWithIo(io: ?Io, allocator: Allocator, size: values.Size, source:
     std.mem.writeInt(u32, header[0..4], @intCast(size.width), .big);
     std.mem.writeInt(u32, header[4..8], @intCast(size.height), .big);
     header[8..13].* = .{ png_format.sample_depth, if (rgb_only) png_format.rgb_color else png_format.rgba_color, 0, 0, 0 };
-    try deflate.chunk(output, png_format.header_type, &header);
+    try zlib.chunk(output, png_format.header_type, &header);
 
     const encoded_row_bytes = 1 + size.width * @as(usize, if (rgb_only) 3 else @sizeOf(values.Pixel));
     const workers = if (io != null and encoded_row_bytes * size.height >= parallel_min_bytes)
@@ -79,20 +79,20 @@ pub fn writeRowsWithIo(io: ?Io, allocator: Allocator, size: values.Size, source:
     } else {
         try writeSerial(allocator, size, source, output, rgb_only);
     }
-    try deflate.chunk(output, "IEND", "");
+    try zlib.chunk(output, "IEND", "");
 }
 
-fn writeSerial(allocator: Allocator, size: values.Size, source: anytype, output: *Writer, rgb_only: bool) deflate.EncodeError!void {
+fn writeSerial(allocator: Allocator, size: values.Size, source: anytype, output: *Writer, rgb_only: bool) zlib.EncodeError!void {
     const row_bytes = size.width * @sizeOf(values.Pixel);
     const staged_rows: usize = if (@TypeOf(source) == BorrowedRows) 0 else sheet_strip_rows + 1;
-    const buffer = try allocator.alignedAlloc(u8, .@"4", deflate.chunk_bytes + row_bytes + staged_rows * row_bytes);
+    const buffer = try allocator.alignedAlloc(u8, .@"4", zlib.chunk_bytes + row_bytes + staged_rows * row_bytes);
     defer allocator.free(buffer);
-    const filtered = buffer[deflate.chunk_bytes..][0..row_bytes];
-    const staging = std.mem.bytesAsSlice(values.Pixel, buffer[deflate.chunk_bytes + row_bytes ..]);
+    const filtered = buffer[zlib.chunk_bytes..][0..row_bytes];
+    const staging = std.mem.bytesAsSlice(values.Pixel, buffer[zlib.chunk_bytes + row_bytes ..]);
     var above: []const u8 = &.{};
-    var compress: deflate.Deflater = undefined;
+    var compress: zlib.Deflater = undefined;
     var backing = allocator;
-    try compress.init(&backing, output, buffer[0..deflate.chunk_bytes]);
+    try compress.init(&backing, output, buffer[0..zlib.chunk_bytes]);
     defer compress.deinit();
     for (0..size.height) |y| {
         const pixels = if (staged_rows == 0) source.row(y, &.{}) else staged: {
@@ -116,11 +116,11 @@ fn writeSerial(allocator: Allocator, size: values.Size, source: anytype, output:
     try compress.finish();
 }
 
-fn writeStrips(io: Io, allocator: Allocator, size: values.Size, source: anytype, output: *Writer, rgb_only: bool, encoded_row_bytes: usize, workers: usize) deflate.EncodeError!void {
+fn writeStrips(io: Io, allocator: Allocator, size: values.Size, source: anytype, output: *Writer, rgb_only: bool, encoded_row_bytes: usize, workers: usize) zlib.EncodeError!void {
     const strip_rows = @max(1, target_strip_bytes / encoded_row_bytes);
     const strip_bytes = strip_rows * encoded_row_bytes;
-    const compressed_bytes = deflate.Strip.outputBound(strip_bytes);
-    const slot_bytes = deflate.history_bytes + strip_bytes + compressed_bytes;
+    const compressed_bytes = zlib.Strip.outputBound(strip_bytes);
+    const slot_bytes = zlib.history_bytes + strip_bytes + compressed_bytes;
     const row_bytes = size.width * @sizeOf(values.Pixel);
     const buffer = try allocator.alignedAlloc(u8, .@"4", 3 * row_bytes + workers * slot_bytes);
     defer allocator.free(buffer);
@@ -129,14 +129,14 @@ fn writeStrips(io: Io, allocator: Allocator, size: values.Size, source: anytype,
     const slots = buffer[3 * row_bytes ..];
 
     var backing = allocator;
-    var streams: [max_strip_workers]deflate.Strip = undefined;
+    var streams: [max_strip_workers]zlib.Strip = undefined;
     var initialized: usize = 0;
     defer for (streams[0..initialized]) |*stream| stream.deinit();
     for (streams[0..workers]) |*stream| {
         try stream.init(&backing);
         initialized += 1;
     }
-    var pending: [max_strip_workers]?Io.Future(deflate.EncodeError!deflate.Strip.Result) = @splat(null);
+    var pending: [max_strip_workers]?Io.Future(zlib.EncodeError!zlib.Strip.Result) = @splat(null);
     defer for (pending[0..workers]) |*slot| {
         if (slot.*) |*task| {
             // The primary operation already returned its error. Wait before
@@ -145,7 +145,7 @@ fn writeStrips(io: Io, allocator: Allocator, size: values.Size, source: anytype,
         }
     };
 
-    var stream: deflate.StripStream = .{ .output = output };
+    var stream: zlib.StripStream = .{ .output = output };
     try stream.start();
     var previous: []const u8 = &.{};
     var above: []const u8 = &.{};
@@ -158,12 +158,12 @@ fn writeStrips(io: Io, allocator: Allocator, size: values.Size, source: anytype,
             pending[slot] = null;
         }
         const workspace = slots[slot * slot_bytes ..][0..slot_bytes];
-        const history = workspace[0..@min(deflate.history_bytes, previous.len)];
+        const history = workspace[0..@min(zlib.history_bytes, previous.len)];
         // Different slots own consecutive strips, so the previous input
         // remains available even while its worker is compressing it.
         @memcpy(history, previous[previous.len - history.len ..]);
         const end = @min(size.height, first + strip_rows);
-        const input = workspace[deflate.history_bytes..][0 .. (end - first) * encoded_row_bytes];
+        const input = workspace[zlib.history_bytes..][0 .. (end - first) * encoded_row_bytes];
         for (first..end) |y| {
             const scratch = rows[(y % 2) * size.width ..][0..size.width];
             const row = std.mem.sliceAsBytes(source.row(y, scratch));
@@ -173,9 +173,9 @@ fn writeStrips(io: Io, allocator: Allocator, size: values.Size, source: anytype,
             @memcpy(encoded_row[1..], encoded.bytes);
             above = row;
         }
-        const out = workspace[deflate.history_bytes + strip_bytes ..];
-        const flush: deflate.Strip.Flush = if (end == size.height) .finish else .sync;
-        pending[slot] = io.async(deflate.Strip.compress, .{ &streams[slot], history, input, out, flush });
+        const out = workspace[zlib.history_bytes + strip_bytes ..];
+        const flush: zlib.Strip.Flush = if (end == size.height) .finish else .sync;
+        pending[slot] = io.async(zlib.Strip.compress, .{ &streams[slot], history, input, out, flush });
         previous = input;
         first = end;
     }

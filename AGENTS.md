@@ -60,10 +60,10 @@ Named build modules, and the only files that may import them. The `export` row n
 | `jpeg_encode_c` | `tests/fixtures/jpeg_generate.zig` |
 | `jpeg_c` | `src/codec/jpeg.zig` |
 | `webp_c` | `src/codec/webp.zig` |
-| `zlib_c` | `src/codec/png/deflate.zig` `src/codec/png/scanlines.zig` |
+| `zlib_c` | `src/codec/png/zlib.zig` `src/codec/png/scanlines.zig` |
 | `stb_write_c` | `tests/fixtures/encode.zig` |
 | `webp_encode_c` | `tests/fixtures/encode.zig` |
-| `codec_memory` | `src/codec.zig` `src/codec/png/deflate.zig` `src/codec/png/scanlines.zig` `src/codec/png/stb.zig` `src/codec/jpeg.zig` `src/codec/webp.zig` `tests/fixtures/encode.zig` |
+| `codec_memory` | `src/codec.zig` `src/codec/png/zlib.zig` `src/codec/png/scanlines.zig` `src/codec/png/stb.zig` `src/codec/jpeg.zig` `src/codec/webp.zig` `tests/fixtures/encode.zig` |
 | `uidiff_test_canvas` | `src/testing.zig` `src/testing/expect.zig` `src/diff.zig` `src/diff/` `src/annotate/report_layout.zig` |
 | `uidiff_testing` | `tests/compare/` `tests/sheet/` `tests/decode.zig` `tests/e2e.zig` `tests/fuzz/` |
 | `fixtures` | `tests/e2e.zig` `tests/decode.zig` `tests/fuzz/` |
