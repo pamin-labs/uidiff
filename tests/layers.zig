@@ -220,24 +220,25 @@ fn isRoot(row: *const Layer, path: []const u8) bool {
     return false;
 }
 
-fn testOnlyImport(tree: *const Ast, node: Ast.Node.Index, allow_gated_export: bool) bool {
+fn enclosingDeclaration(tree: *const Ast, node: Ast.Node.Index) ?Ast.Node.Index {
     const token = tree.nodeMainToken(node);
     for (tree.rootDecls()) |decl| {
-        if (token < tree.firstToken(decl) or token > tree.lastToken(decl)) continue;
-        if (tree.nodeTag(decl) == .test_decl) return true;
-        if (!allow_gated_export) return false;
-
-        // The facade export must import helpers only in the test branch.
-        const variable = tree.fullVarDecl(decl) orelse return false;
-        const gated = tree.fullIf(variable.ast.init_node.unwrap() orelse return false) orelse return false;
-        const condition = tree.firstToken(gated.ast.cond_expr);
-        return tree.lastToken(gated.ast.cond_expr) == condition + 2 and
-            std.mem.eql(u8, tree.tokenSlice(condition), "builtin") and
-            tree.tokenTag(condition + 1) == .period and
-            std.mem.eql(u8, tree.tokenSlice(condition + 2), "is_test") and
-            token >= tree.firstToken(gated.ast.then_expr) and token <= tree.lastToken(gated.ast.then_expr);
+        if (token >= tree.firstToken(decl) and token <= tree.lastToken(decl)) return decl;
     }
-    return false;
+    return null;
+}
+
+fn guardedTestingExport(tree: *const Ast, decl: Ast.Node.Index, node: Ast.Node.Index) bool {
+    const variable = tree.fullVarDecl(decl) orelse return false;
+    if (variable.visib_token == null or !std.mem.eql(u8, tree.tokenSlice(variable.ast.mut_token + 1), "testing")) return false;
+    const gated = tree.fullIf(variable.ast.init_node.unwrap() orelse return false) orelse return false;
+    const condition = tree.firstToken(gated.ast.cond_expr);
+    const token = tree.nodeMainToken(node);
+    return tree.lastToken(gated.ast.cond_expr) == condition + 2 and
+        std.mem.eql(u8, tree.tokenSlice(condition), "builtin") and
+        tree.tokenTag(condition + 1) == .period and
+        std.mem.eql(u8, tree.tokenSlice(condition + 2), "is_test") and
+        token >= tree.firstToken(gated.ast.then_expr) and token <= tree.lastToken(gated.ast.then_expr);
 }
 
 fn allowedImport(allocator: Allocator, rules: Rules, source: *const Source, node: Ast.Node.Index, target: []const u8) !bool {
@@ -250,8 +251,11 @@ fn allowedImport(allocator: Allocator, rules: Rules, source: *const Source, node
     const to = rules.layerOf(resolved) orelse return false;
     if (std.mem.eql(u8, to.paths[0], testing_root) and from != to) {
         if (sources.inDirectory(from_path, tests_directory)) return true;
-        const export_testing = std.mem.eql(u8, from_path, api_root) and std.mem.eql(u8, resolved, testing_root);
-        return testOnlyImport(&source.tree, node, export_testing);
+        const tree = &source.tree;
+        const decl = enclosingDeclaration(tree, node) orelse return false;
+        if (tree.nodeTag(decl) == .test_decl) return true;
+        return std.mem.eql(u8, from_path, api_root) and std.mem.eql(u8, resolved, testing_root) and
+            guardedTestingExport(tree, decl, node);
     }
     if (std.mem.eql(u8, from.paths[0], testing_root) and contains(from.imports, resolved)) return true;
     if (try rules.diffUnitOf(from_path)) |from_unit| {
@@ -401,9 +405,12 @@ test "diff units only import lower tiers and fixtures stay in test scope" {
     try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/regions/moves.zig", "test { _ = @import(\"../span.zig\"); }"));
     try testing.expectError(error.ForbiddenImport, checkWithText("src/codec.zig", "const sample = @import(\"testing/jpeg.zig\");"));
     try testing.expectError(error.ForbiddenImport, checkWithText(api_root, "const sample = @import(\"testing.zig\");"));
-    try testing.expectError(error.ForbiddenImport, checkWithText(api_root, "const sample = if (builtin.is_test) void else @import(\"testing.zig\");"));
+    try testing.expectError(error.ForbiddenImport, checkWithText(api_root, "pub const testing = if (builtin.is_test) void else @import(\"testing.zig\");"));
     try checkWithText(api_root, "pub const testing = if (builtin.is_test) @import(\"testing.zig\") else void;");
     try checkWithText("src/codec.zig", "test { _ = @import(\"testing/jpeg.zig\"); }");
+    try checkWithText("tests/decode.zig", "const sample = @import(\"../src/testing/jpeg.zig\");");
+    try testing.expectError(error.ForbiddenImport, checkWithText("bench/main.zig", "const sample = @import(\"../src/testing/jpeg.zig\");"));
+    try testing.expectError(error.ForbiddenImport, checkWithText("src/codec.zig", "fn f() void { _ = @import(\"testing/jpeg.zig\"); }"));
     try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/rows.zig", "const regions = @import(\"regions.zig\");"));
     try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/regions/logical.zig", "test { _ = @import(\"../rows.zig\"); }"));
     try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/mask.zig", "const pixel = @import(\"pixel.zig\");"));
