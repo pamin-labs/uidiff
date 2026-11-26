@@ -9,7 +9,6 @@ const pixel = @import("../pixel.zig");
 const column_bounds = @import("../columns.zig");
 const sample = @import("../test_support.zig");
 const moves_for_test = @import("moves.zig");
-const engine_for_test = @import("../compare.zig");
 const Scale = values.Scale;
 const Box = values.Box;
 const Region = values.Region;
@@ -229,6 +228,7 @@ test "one-sided stacks join across a blank seam but keep painted rows separate" 
 }
 
 test "a compact outline joins edits to its label and value without spanning cards" {
+    const motion = @import("../motion.zig");
     const before = try sample.Canvas.init(480, 164);
     defer before.deinit();
     const after = try sample.Canvas.init(480, 164);
@@ -267,7 +267,7 @@ test "a compact outline joins edits to its label and value without spanning card
     const len = mergeLogical(&candidates, before.view, after.view, .one, &moves);
     var edits: [candidates.len]values.Region = undefined;
     for (edits[0..len], candidates[0..len]) |*edit, candidate| edit.* = candidate.region;
-    try std.testing.expectEqual(@as(usize, 1), moves_for_test.keepMoves(&moves, edits[0..len], .one, Scale.one.devicePixels(engine_for_test.scroll_shift)));
+    try std.testing.expectEqual(@as(usize, 1), moves_for_test.keepMoves(&moves, edits[0..len], .one, Scale.one.devicePixels(motion.scroll_shift)));
 }
 
 test {

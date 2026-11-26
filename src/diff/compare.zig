@@ -3,6 +3,7 @@ const std = @import("std");
 const values = @import("../value.zig");
 const row_diff = @import("rows.zig");
 const columns = @import("columns.zig");
+const motion = @import("motion.zig");
 const pixel_ops = @import("pixel.zig");
 const yiq = @import("yiq.zig");
 const change_mask = @import("mask.zig");
@@ -93,16 +94,10 @@ const CompareBuffers = struct {
 
 /// Space added around each reported box, in CSS pixels.
 pub const region_padding = regions.padding.count();
-// Scroll tolerance in CSS pixels. A shift this small is not a change.
-/// Maximum displacement treated as a short scroll.
-pub const scroll_shift = values.CssPx.init(2);
 // Short conflicting offsets can come from independent column groups.
 const short_shift_rows = 16;
 /// Rows on each side of a replacement that may hold part of a split edit.
 const replacement_context_rows = 4;
-const min_column_motion_rows = 4;
-const column_motion_scroll_factor = 2;
-
 /// Compares packed RGBA8 images. The caller owns the returned comparison.
 pub fn compare(allocator: Allocator, before: Image, after: Image, options: Options) CompareError!Comparison {
     return compareChecked(allocator, before, after, try options.check());
@@ -130,14 +125,14 @@ pub fn compareChecked(allocator: Allocator, before: Image, after: Image, options
     defer moves.deinit(allocator);
     if (span.width != 0) {
         const scope: columns.Scope = .{ .before = before, .after = after, .span = span, .bounds = .{ .left = 0, .width = overlap_width } };
-        try spanRegions(allocator, &collector, &moves, scope, @intFromFloat(@min(max_gap_px, options.scale.devicePixels(scroll_shift))));
+        try spanRegions(allocator, &collector, &moves, scope, @intFromFloat(@min(max_gap_px, options.scale.devicePixels(motion.scroll_shift))));
     }
     if (before.width != after.width) {
         const old = before.width > after.width;
         const box = Box.fromPixels(overlap_width, 0, width - overlap_width, if (old) before.height else after.height);
         collector.addOn(if (old) .before else .after, box);
     }
-    const out = try regions.resolve(allocator, &collector, &moves, before, after, options.scale, options.scale.devicePixels(scroll_shift));
+    const out = try regions.resolve(allocator, &collector, &moves, before, after, options.scale, options.scale.devicePixels(motion.scroll_shift));
     errdefer allocator.free(out);
     return .{ .regions = out, .moves = try moves.toOwnedSlice(allocator), .width = width, .height = height };
 }
@@ -184,7 +179,7 @@ fn spanRegions(allocator: Allocator, collector: *Collector, moves: *std.ArrayLis
                 else
                     try alignSpan(allocator, local, scroll_limit_px, local_limit_px, keys, bands, filtered, &buffers.alignment);
                 const column_moved = if (local_bands) |alignment|
-                    try gatherColumnMoves(allocator, moves, local, alignment, keys, scroll_limit_px)
+                    try motion.gatherColumnMoves(allocator, moves, local, alignment, keys, scroll_limit_px)
                 else
                     false;
                 has_movement = has_movement or column_moved;
@@ -201,7 +196,7 @@ fn spanRegions(allocator: Allocator, collector: *Collector, moves: *std.ArrayLis
         };
     }
     buffers.alignment.deinit(allocator);
-    if (aligned) |alignment| try gatherMoves(allocator, moves, scope, alignment);
+    if (aligned) |alignment| try motion.gatherMoves(allocator, moves, scope, alignment);
     try compareSpan(allocator, collector, scope, aligned, &buffers);
 }
 
@@ -246,82 +241,6 @@ fn hasWideColumn(first: columns.Group, tail: columns.Partition, limit: usize) bo
     var rest = tail;
     while (group.span.width <= limit) group = rest.next() orelse return false;
     return true;
-}
-
-fn columnMotion(scope: columns.Scope, keys: []const u64, move: values.Move, scroll_limit_px: usize) bool {
-    // A matching edge that remains at its old position gives no evidence
-    // that the column moved. Require several content rows at the new offset.
-    const before = keys[0..scope.before.height];
-    const after = keys[scope.before.height..];
-    const minimum: usize = @max(min_column_motion_rows, column_motion_scroll_factor * scroll_limit_px);
-    var supported: usize = 0;
-    for (0..move.before.height) |i| {
-        const old = move.before.y + i;
-        const new = move.after.y + i;
-        if (before[old] != after[new] or (old < after.len and before[old] == after[old]) or unpaired.blankBand(scope.before, old, 1, scope.span)) continue;
-        supported += 1;
-        if (supported == minimum) return true;
-    }
-    return false;
-}
-
-fn gatherColumnMoves(allocator: Allocator, moves: *std.ArrayList(values.Move), scope: columns.Scope, bands: []const row_diff.Band, keys: []const u64, limit: usize) !bool {
-    const first = moves.items.len;
-    try gatherMoves(allocator, moves, scope, bands);
-    var kept = first;
-    for (moves.items[first..]) |move| {
-        if (move.shift() <= limit or !columnMotion(scope, keys, move, limit)) continue;
-        moves.items[kept] = move;
-        kept += 1;
-    }
-    moves.items.len = kept;
-    return kept != first;
-}
-
-fn gatherMoves(allocator: Allocator, moves: *std.ArrayList(values.Move), scope: columns.Scope, bands: []const row_diff.Band) !void {
-    const span = scope.span;
-    const first = moves.items.len;
-    var previous: ?usize = null;
-    for (bands, 0..) |band, i| {
-        var height = @min(band.removed, band.added);
-        if (height == 0 or band.before == band.after) {
-            previous = null;
-            continue;
-        }
-        if (i + 1 < bands.len) {
-            const next = bands[i + 1];
-            height += @min(next.before -| (band.before + band.removed), next.after -| (band.after + band.added));
-        }
-        if (previous) |index| {
-            const move = &moves.items[index];
-            if (move.before.y + move.before.height == band.before and move.after.y + move.after.height == band.after) {
-                move.before.height += height;
-                move.after.height += height;
-                continue;
-            }
-        }
-        previous = moves.items.len;
-        try moves.append(allocator, .{
-            .before = .{ .y = band.before, .height = height },
-            .after = .{ .y = band.after, .height = height },
-            .x = .init(span.left),
-            .width = .init(span.width),
-        });
-    }
-    var kept = first;
-    for (moves.items[first..]) |move| {
-        if (unpaired.blankBand(scope.before, move.before.y, move.before.height, span) and
-            unpaired.blankBand(scope.after, move.after.y, move.after.height, span)) continue;
-        var full = move;
-        const pitch = move.shift();
-        if (columns.enclosingCard(scope.before, span, scope.frame orelse scope.bounds, move.before.y, columns.CardSearch.motion(span, pitch))) |card| {
-            full.x = .init(card.columns.left);
-            full.width = .init(card.columns.width);
-        }
-        moves.items[kept] = full;
-        kept += 1;
-    }
-    moves.items.len = kept;
 }
 
 fn alignSpan(allocator: Allocator, scope: columns.Scope, scroll_limit_px: usize, local_limit_px: usize, keys: []u64, bands: []row_diff.Band, filtered: []u64, workspace: *row_diff.Workspace) Allocator.Error!?[]row_diff.Band {
@@ -581,24 +500,6 @@ test "a taller button excludes unchanged card borders on unpaired rows" {
     try std.testing.expect(new.bottom() > old.bottom());
     try std.testing.expect(new.x > 25 and new.right() < 320);
     try std.testing.expect(new.right() >= 162);
-}
-
-test "an aligned blank tail contributes no phantom move" {
-    const before = try sample.Canvas.init(64, 32);
-    defer before.deinit();
-    const after = try sample.Canvas.init(64, 64);
-    defer after.deinit();
-    const span: columns.Span = .{ .left = 0, .width = 64 };
-    const scope: columns.Scope = .{ .before = before.view, .after = after.view, .span = span, .bounds = span };
-    const band: row_diff.Band = .{ .before = 26, .after = 58, .removed = 6, .added = 6 };
-    var moves: std.ArrayList(values.Move) = .empty;
-    defer moves.deinit(std.testing.allocator);
-    try gatherMoves(std.testing.allocator, &moves, scope, &.{band});
-    try std.testing.expectEqual(@as(usize, 0), moves.items.len);
-    before.fill(3, 28, 8, 2, sample.inkShade(70, 4));
-    after.fill(3, 60, 8, 2, sample.inkShade(70, 4));
-    try gatherMoves(std.testing.allocator, &moves, scope, &.{band});
-    try std.testing.expectEqual(@as(usize, 1), moves.items.len);
 }
 
 test "invalid borrowed shapes and non-finite scales fail at the comparison boundary" {

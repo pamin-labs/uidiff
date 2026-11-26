@@ -4,7 +4,6 @@ const std = @import("std");
 const pending = @import("candidate.zig");
 const values = @import("../../value.zig");
 const sample = @import("../test_support.zig");
-const engine_for_test = @import("../compare.zig");
 const Scale = values.Scale;
 const Box = values.Box;
 const Region = values.Region;
@@ -52,6 +51,7 @@ fn containsMove(box: Box, rows: values.RowRange, move: values.Move, slack: f64, 
 }
 
 test "replacement regions suppress enclosed and sub-line displacement" {
+    const motion = @import("../motion.zig");
     const before = try sample.Canvas.init(120, 140);
     defer before.deinit();
     const after = try sample.Canvas.init(120, 140);
@@ -69,7 +69,7 @@ test "replacement regions suppress enclosed and sub-line displacement" {
         .{ .before = .{ .y = 49, .height = 12 }, .after = .{ .y = 50, .height = 12 }, .x = .init(10), .width = .init(50) },
         .{ .before = .{ .y = 4, .height = 125 }, .after = .{ .y = 6, .height = 125 }, .x = .init(10), .width = .init(50) },
     };
-    try std.testing.expectEqual(@as(usize, 3), keepMoves(&moves, result.regions, .one, Scale.one.devicePixels(engine_for_test.scroll_shift)));
+    try std.testing.expectEqual(@as(usize, 3), keepMoves(&moves, result.regions, .one, Scale.one.devicePixels(motion.scroll_shift)));
     try std.testing.expectEqual(@as(usize, 62), moves[0].before.y);
     try std.testing.expectEqual(@as(usize, 80), moves[1].x.count());
 }
