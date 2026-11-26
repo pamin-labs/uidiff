@@ -17,11 +17,14 @@ change regions and, for 56 moved cases, their vertical offsets.
   Each comparison launched a fresh CLI process, including Node startup for
   Iris and pixelmatch. uidiff wrote its JSON report without rendering a sheet.
   The table reports the median of 15 rounds, rotating tool order between
-  rounds. The uidiff column uses a separate remeasurement on the same pair
-  and the same rotation. Elapsed time is measured around process launch and
-  exit. CPU time is user plus system time and peak RSS is in MiB, both from
-  child process usage. The install row reports tool size with Node listed
-  separately where it is required.
+  rounds after one warm-up per command. The uidiff column was refreshed
+  independently on the original `real-chat-noa-desktop-light-insert-message`
+  pair at its recorded scale, alternating the final ReleaseSafe CLI and
+  v0.0.2. The competitor measurements and versions come from the original
+  run. Elapsed time is measured around process launch and exit. CPU time is
+  user plus system time and peak RSS is in MiB, both from child process
+  usage. The install row reports tool size with Node listed separately
+  where it is required.
 
 The full comparison corpus and raw results are outside this repository.
 For a local CLI measurement, build with `zig build -Doptimize=safe` and run

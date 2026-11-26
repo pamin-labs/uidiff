@@ -187,7 +187,10 @@ pub fn minimumSize(before: Size, after: Size) error{SheetTooLarge}!Size {
     const ui = Layout.init(before, after);
     const panes = ui.panes(before, after);
     const size: Size = .{
-        .width = @max(panes[0].right(), panes[1].right()) + ui.px(margin),
+        .width = if (ui.wide)
+            geometry.overview_width + 2 * ui.px(margin)
+        else
+            @max(panes[0].right(), panes[1].right()) + ui.px(margin),
         .height = @max(panes[0].bottom(), panes[1].bottom()) + ui.px(margin),
     };
     if (size.width > max_sheet_width or size.pixelCount() == null) return error.SheetTooLarge;

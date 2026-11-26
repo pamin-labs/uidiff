@@ -1,5 +1,6 @@
 //! Runs the installed CLI against committed images and checks its process contract.
 const std = @import("std");
+const builtin = @import("builtin");
 const uidiff = @import("uidiff");
 const options = @import("e2e_options");
 const fixtures = @import("fixtures");
@@ -71,6 +72,14 @@ test "the count output names one region in the singular" {
     try testing.expectEqualStrings(single_region_output, result.stdout);
 }
 
+test "the CLI prints the package version from build.zig.zon" {
+    const result = try run(.inherit, 1, .{"--version"});
+    defer free(result);
+    try status(result, 0);
+    try testing.expectEqualStrings(options.version ++ "\n", result.stdout);
+    try testing.expectEqualStrings("", result.stderr);
+}
+
 test "an annotated sheet is written atomically beside a normal report" {
     const spec = comptime fixtures.find(.edit);
     var tmp = testing.tmpDir(.{});
@@ -87,6 +96,17 @@ test "an annotated sheet is written atomically beside a normal report" {
     }
     const bytes = try tmp.dir.readFileAlloc(testing.io, "sheet.png", allocator, .limited(uidiff.max_encoded_bytes));
     defer allocator.free(bytes);
+    try testing.expect(bytes.len >= 8);
+    var chunks = bytes[8..]; // Skip the PNG signature.
+    while (chunks.len != 0) {
+        try testing.expect(chunks.len >= 12); // Length, tag, and checksum.
+        const data_len = std.mem.readInt(u32, chunks[0..4], .big);
+        try testing.expect(data_len <= chunks.len - 12);
+        const payload = chunks[4..][0 .. 4 + @as(usize, data_len)];
+        const stored = std.mem.readInt(u32, chunks[4 + payload.len ..][0..4], .big);
+        try testing.expectEqual(std.hash.Crc32.hash(payload), stored);
+        chunks = chunks[8 + payload.len ..];
+    }
     var sheet = try uidiff.decode(allocator, bytes);
     defer sheet.deinit();
     var source = try uidiff.decodeFile(testing.io, allocator, before);
@@ -106,6 +126,36 @@ test "an annotated sheet is written atomically beside a normal report" {
     const directory = try run(.{ .dir = tmp.dir }, 4, .{ before, after, "--annotate", "." });
     defer free(directory);
     try failure(directory, "error(uidiff): .: IsDir");
+}
+
+test "annotation refuses input paths and preserves both captures" {
+    const spec = comptime fixtures.find(.edit);
+    const before = @embedFile(comptime spec.path(.before, .png)["tests/".len..]);
+    const after = @embedFile(comptime spec.path(.after, .png)["tests/".len..]);
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "before.png", .data = before });
+    try tmp.dir.writeFile(io, .{ .sub_path = "after.png", .data = after });
+    const linked = linked: {
+        tmp.dir.symLink(io, "after.png", "alias.png", .{}) catch |err| {
+            if (builtin.os.tag == .windows and (err == error.PermissionDenied or err == error.AccessDenied)) break :linked false;
+            return err;
+        };
+        break :linked true;
+    };
+    inline for (.{ "before.png", "./after.png", "alias.png" }) |sheet| {
+        if (!std.mem.eql(u8, sheet, "alias.png") or linked) {
+            const result = try run(.{ .dir = tmp.dir }, 4, .{ "before.png", "after.png", "--annotate", sheet });
+            defer free(result);
+            try failure(result, "error(uidiff): " ++ sheet ++ ": SheetIsInput");
+            for ([_][]const u8{ "before.png", "after.png" }, [_][]const u8{ before, after }) |path, expected| {
+                const actual = try tmp.dir.readFileAlloc(io, path, allocator, .limited(uidiff.max_encoded_bytes));
+                defer allocator.free(actual);
+                try testing.expectEqualSlices(u8, expected, actual);
+            }
+        }
+    }
 }
 
 test "JSON includes moved device-pixel rows without changing version one" {
@@ -235,16 +285,24 @@ test "missing and sparse oversized files fail before decoding" {
 }
 
 test "malformed arguments and invalid scale return usage errors" {
-    const usage = std.mem.trimEnd(u8, options.usage, "\r\n");
-    const huge: [400]u8 = @splat('9');
-    for ([_][]const u8{ "--unknown", "nan", "1_0", &huge }) |bad| {
-        const result = try run(.inherit, 4, .{ "before.png", "after.png", "--scale", bad });
+    const usage = comptime std.mem.trimEnd(u8, options.usage, "\r\n");
+    const cases = .{
+        .{ .{ "before.png", "after.png", "--unknown" }, "unknown option: --unknown" },
+        .{ .{ "before.png", "after.png", "--json", "--json" }, "option was repeated: --json" },
+        .{ .{ "before.png", "after.png", "--scale" }, "option requires a value: --scale" },
+        .{ .{ "before.png", "after.png", "--scale", "nan" }, "scale must be a positive decimal: nan" },
+        .{ .{ "before.png", "after.png", "--scale", "0" }, "scale must be a positive decimal: 0" },
+        .{ .{ "before.png", "after.png", "--annotate", "--json" }, "option requires a value: --annotate" },
+        .{ .{ "--json", "before.png", "after.png" }, "options must follow both paths: --json" },
+        .{ .{ "before.png", "--json", "after.png" }, "options must follow both paths: --json" },
+        .{ .{ "--help", "x" }, "option must be used on its own: --help" },
+        .{ .{"before.png"}, "expected before and after paths: before.png" },
+    };
+    inline for (cases) |case| {
+        const result = try run(.inherit, case[0].len, case[0]);
         defer free(result);
-        try failure(result, usage);
+        try failure(result, "uidiff: " ++ case[1] ++ "\n" ++ usage);
     }
-    const result = try run(.inherit, 4, .{ "before.png", "after.png", "--scale", "0" });
-    defer free(result);
-    try failure(result, "error(uidiff): InvalidScale");
 }
 
 test "help prints usage on stdout and exits successfully" {
@@ -253,12 +311,6 @@ test "help prints usage on stdout and exits successfully" {
     try status(result, 0);
     try testing.expectEqualStrings(options.usage, result.stdout);
     try testing.expectEqualStrings("", result.stderr);
-}
-
-test "an option cannot be used as the annotated sheet path" {
-    const result = try run(.inherit, 4, .{ "before.png", "after.png", "--annotate", "--json" });
-    defer free(result);
-    try failure(result, std.mem.trimEnd(u8, options.usage, "\r\n"));
 }
 
 test "fractional scale rounds the padded box outward in device pixels" {

@@ -23,6 +23,8 @@ pub const write = encoder.write;
 /// provided row buffer or lend a row to copy into the strip.
 /// Sources may supply isOpaque for RGB output.
 pub const writeRows = encoder.writeRows;
+/// Encodes large sheets using parallel compression when supplied with I/O.
+pub const writeRowsWithIo = encoder.writeRowsWithIo;
 
 /// Probes the dimensions and channel depth.
 pub const probe = stb.probe;

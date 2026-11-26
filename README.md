@@ -10,7 +10,7 @@ Moved content is lined up, and every real edit is boxed, numbered and labelled a
 
 - **Changes, not pixels.** A pixel diff paints everything below an inserted row. uidiff aligns what only moved and reports it as one shift with its offset, so only real edits get a box.
 - **Catches what eyes miss.** A colour a few shades off or a single changed word is boxed and shown side by side in a close-up.
-- **One small native binary.** About 600 KB, no runtime, roughly 11 ms for a 2560×1600 pair. PNG, JPEG and WebP in; a sheet and JSON out.
+- **One small native binary.** 604 KB, no runtime, 9.8 ms to report JSON for a 2560×1600 pair. PNG, JPEG and WebP in; a sheet and JSON out.
 
 ## Quick start
 
@@ -54,30 +54,26 @@ irm https://uidiff.paminlabs.com/install.ps1 | iex
 
 ### The report
 
-`--json` prints one object for scripts, CI and agents. This is the report for the comparison at the top of this page, shortened to one move:
+`--json` prints one object for scripts, CI and agents. This is the report for the comparison at the top of this page:
 
 ```json
 {
   "version": 1,
+  "regions": [
+    {"number": 1, "kind": "removed", "before": {"x": 1531, "y": 787, "width": 857, "height": 165}, "after": null},
+    {"number": 2, "kind": "changed", "before": {"x": 1746, "y": 1114, "width": 642, "height": 204}, "after": {"x": 1746, "y": 924, "width": 642, "height": 204}},
+    {"number": 3, "kind": "inserted", "before": null, "after": {"x": 1346, "y": 1136, "width": 1042, "height": 100}}
+  ],
   "width": 2560,
   "height": 1600,
-  "regions": [
-    { "number": 1, "kind": "removed",
-      "before": { "x": 1531, "y": 787, "width": 857, "height": 165 }, "after": null },
-    { "number": 2, "kind": "changed",
-      "before": { "x": 1746, "y": 1114, "width": 642, "height": 204 },
-      "after":  { "x": 1746, "y": 924, "width": 642, "height": 204 } },
-    { "number": 3, "kind": "inserted",
-      "before": null, "after": { "x": 1346, "y": 1136, "width": 1042, "height": 100 } }
-  ],
   "moves": [
-    { "x": 860, "width": 1520,
-      "before": { "y": 968, "height": 366 }, "after": { "y": 778, "height": 366 } }
+    {"before": {"y": 968, "height": 366}, "after": {"y": 778, "height": 366}, "x": 860, "width": 1520},
+    {"before": {"y": 1334, "height": 99}, "after": {"y": 1252, "height": 99}, "x": 860, "width": 1520}
   ]
 }
 ```
 
-Boxes are in device pixels. A region has a box on each side where it exists. A move's offset is its after `y` minus its before `y`, here −190 px.
+Boxes are in device pixels. A region has a box on each side where it exists. A move's offset is its after `y` minus its before `y`, here −190 px and −82 px.
 
 ## How it compares
 
@@ -89,18 +85,19 @@ Boxes are in device pixels. A region has a box on each side where it exists. A m
 | Boxes on things that did not change | **4** | 46 | 147 | 131 |
 | Moved content found with its offset | **56 / 56** | 56 / 56 | n/a | n/a |
 | What you get | labelled regions, moves, a sheet | a mask | a mask | a mask |
-| CLI time, 2560×1600 pair | **11.4 ms** | 65 ms | 103 ms | 379 ms |
-| CPU time, same pair | **14.2 ms** | 80 ms | 127 ms | 419 ms |
+| CLI time, 2560×1600 pair | **9.8 ms** | 65 ms | 103 ms | 379 ms |
+| CPU time, same pair | **12.9 ms** | 80 ms | 127 ms | 419 ms |
 | Peak RSS | **35.4 MiB** | 70 MiB | 50 MiB | 147 MiB |
 | Install | **604 KB**, one file | 1.3 MB + Node | 2.4 MB | 0.76 MB + Node |
 
-<sub>Timings are medians from 15 rotated rounds on Arm64 macOS. The uidiff column was refreshed independently on the same pair. Each comparison starts a new process. uidiff writes JSON, and Iris and pixelmatch include Node startup. See the <a href="bench/README.md">benchmark method</a>.</sub>
+<sub>Timings are medians from 15 rotated rounds on Arm64 macOS. The uidiff column was refreshed independently on the original pair, alternating the current CLI with v0.0.2. Competitor figures are from the original run. Each comparison starts a new process. uidiff writes JSON, and Iris and pixelmatch include Node startup. See the <a href="bench/README.md">benchmark method</a>.</sub>
 
 ## Usage
 
 ```text
 uidiff <before> <after> [--scale N] [--json] [--annotate <out.png>]
 uidiff --help
+uidiff --version
 ```
 
 | Argument | Meaning |
@@ -108,14 +105,19 @@ uidiff --help
 | `<before>`, `<after>` | The two captures: PNG, JPEG or WebP. Different heights are fine; a different width is reported as added or removed columns. |
 | `--scale N` | Device pixels per logical pixel (CSS px, points or dp), as a plain decimal such as `2` or `1.5`. Default `1`. It sets padding and merge distances in logical pixels; boxes stay in device pixels. |
 | `--json` | Print the report as one JSON object instead of the region count. |
-| `--annotate <out.png>` | Also write the sheet to this PNG. The file is replaced only once the sheet is complete. |
+| `--annotate <out.png>` | Also write the sheet to this PNG. The file is replaced only once the sheet is complete. Large sheets are compressed on several cores, so the PNG bytes can differ between machines while the pixels stay the same. |
 | `--help` | Print usage and exit 0. |
+| `--version` | Print the installed version and exit 0. |
 
 | Exit code | Meaning |
 | --- | --- |
 | `0` | No change regions detected. |
 | `1` | Change regions found. |
-| `2` | A comparison or usage error, reported on stderr. |
+| `2` | A comparison or usage error, reported on stderr. `SheetIsInput` means the sheet path names either input, including through a link. |
+
+Pass captures as files. `-` does not read stdin, and input pipes are unsupported. A symlink at the sheet path is replaced by the PNG itself, unless it points to an input, which raises `SheetIsInput`.
+
+Connected changes smaller than four pixels are treated as noise. If the smaller capture has at most 1024 pixels, single-pixel regions can be reported.
 
 For the best results, freeze animations, carets and timers, and keep fonts, locale and device scale the same for both captures.
 
@@ -137,7 +139,7 @@ brew install pamin-labs/tap/uidiff
 The install scripts download from uidiff.paminlabs.com, which also works where GitHub is unreachable. They verify the binary against `SHA256SUMS` and install it to `~/.local/bin` or `%LOCALAPPDATA%\Programs\uidiff`. Set `UIDIFF_VERSION` to pick a release, with or without the leading `v`:
 
 ```sh
-curl -fsSL https://uidiff.paminlabs.com/install.sh | UIDIFF_VERSION=0.0.1 sh
+curl -fsSL https://uidiff.paminlabs.com/install.sh | UIDIFF_VERSION=<version> sh
 ```
 
 The [releases page](https://github.com/pamin-labs/uidiff/releases) also has standalone binaries, archives with license notices and checksums.

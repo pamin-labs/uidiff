@@ -29,7 +29,7 @@ Follow the public pamin-labs/skills engineering rules in [core](.agents/skills/p
 - `npm/` contains the JavaScript launcher. The release tooling stages its manifest and the scoped launcher and its native platform packages from the build version and target list.
 - `skills/uidiff/` documents screenshot capture, comparison and report interpretation for agents.
 - `scripts/` contains developer tooling. `scripts/release/` packages the CLI, renders the Homebrew formula and tests the launcher and installers. The installers are `install.sh` and `install.ps1` at the repository root.
-- `.github/` contains the release target list and workflows. CI and `.github/workflows/release.yml` share the same ReleaseSafe build. A pushed `v*` tag matching `build.zig.zon` enables GitHub release assets and npm trusted publishing. Stable releases also update the Homebrew tap from the published formula asset.
+- `.github/` contains the release target list and workflows. Dispatch `release.yml` from `main` with a `version` input. The workflow commits that version to `build.zig.zon`, builds the ReleaseSafe matrix shared with CI, creates the tagged GitHub release, mirrors assets to R2 and publishes npm packages through OIDC with provenance. Stable releases also update the Homebrew tap from the published formula asset.
 - `tests/diff.zig` registers the comparison scenarios in `tests/diff/`, which use the diff facade and shared procedural fixtures. `tests/` runs the installed CLI (`tests/e2e.zig`), decodes the fixtures through the public API (`tests/decode.zig`), checks the binary size budget, and checks source layout, layering and declaration order. `tests/fuzz/` holds one fuzz target per top-level file, each its own test binary. Shared RGBA inputs live in `tests/fuzz/fixtures/`. `tests/fixtures.zig` is the fixture set's root; `tests/fixtures/` holds the synthetic fixture generator, its encoders, the freshness check and the generated images with expected reports. Unit tests live beside the code they exercise.
 
 ## Layers
@@ -63,6 +63,7 @@ Named build modules, and the only files that may import them. The `export` row n
 | `diff_scenarios` | `tests/diff/` |
 | `fixtures` | `tests/e2e.zig` `tests/decode.zig` `tests/fuzz/` |
 | `e2e_options` | `tests/e2e.zig` |
+| `cli_options` | `src/cli.zig` |
 | `fixture_options` | `tests/fixtures/fresh.zig` |
 | `required_test_options` | `src/root.zig` |
 | `export` | `src/codec/memory.zig` |
@@ -82,6 +83,8 @@ Only a submodule's facade and implementation files may import its implementation
 The noninterlaced RGB8 and RGBA8 PNG path uses zlib-ng to inflate scanlines into the output image. The PNG writer streams through zlib-ng at level 3. stb_image decodes other PNG profiles. Both PNG paths preserve tolerance for CRC and Adler checksum values. libjpeg-turbo decodes 8-bit JPEG with the accurate integer IDCT and fancy chroma upsampling. Its Arm64 build uses C NEON intrinsics. libwebp decodes WebP. The shipped binary builds C decoders for size; tests and fuzzing compile them inside the Zig module, in its mode, so UBSan traps undefined behaviour in Debug and safe builds. Under `zig build test --fuzz` vendored C runs on fuzzed input without coverage feedback: Zig 0.17's fuzzer cannot read clang's coverage tables, so `fuzz_coverage_flags` in `build.zig` turns clang's instrumentation off, and only the Zig code steers the fuzzer. The shared allocation hooks in `src/codec/memory.zig` charge each decode against its budget. stb's PNG budget is sized from the header. JPEG and WebP charge their decoded buffers and scratch allocations against the caller's cap. The file pipeline uses at most one decode worker per comparison for all formats. Both decoders keep their own state and budget. The caller joins the worker and reports a before-side failure first.
 
 `zig build jpeg-fixtures` regenerates the JPEG profiles with the pinned scalar encoder. The test gate verifies both the encoded fixtures and their decoded pixel hashes.
+
+PNG chunk checksums use zlib-ng's CRC-32. On x86_64, zlib-ng detects PCLMULQDQ at runtime and uses its braid kernel as a fallback. Chorba is disabled. On Arm64, zlib-ng uses ARMv8 CRC instructions when the target or runtime CPU supports them. The zlib stream uses Adler-32.
 
 ## Gates
 

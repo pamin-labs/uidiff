@@ -157,7 +157,7 @@ def main():
                 ["node", "-e", resolve, f"{manifest['uidiffNative'][target.npm_platform]}/native", launcher.parent],
                 text=True,
             )
-            assert Path(executable) == (target_dir / target.binary).resolve()
+            assert Path(executable).samefile(target_dir / target.binary)
         check_launcher(launcher, binary)
         shutil.rmtree(packages / host.npm_name)
         result = subprocess.run(["node", launcher, "--help"], capture_output=True, text=True)

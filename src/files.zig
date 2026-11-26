@@ -1,6 +1,7 @@
 //! Compares two image files: reads and decodes both, compares them, and writes
 //! the annotated sheet, replacing its file only once the sheet is complete.
 const std = @import("std");
+const builtin = @import("builtin");
 const values = @import("value.zig");
 const codec = @import("codec.zig");
 const diff = @import("diff.zig");
@@ -40,12 +41,11 @@ pub const EncodeSheetError = annotate.RenderError || codec.EncodeError;
 
 /// Failures rendering, encoding or writing the annotated sheet.
 pub const WriteError = EncodeSheetError || Io.Dir.CreateFileAtomicError ||
-    Io.File.Atomic.ReplaceError || Io.File.Writer.Error || Io.Dir.StatFileError || error{IsDir};
+    Io.File.Atomic.ReplaceError || Io.File.Writer.Error || Io.Dir.StatFileError || error{ IsDir, SheetIsInput };
 
 /// File, codec, comparison and sheet failures.
 pub const CompareError = codec.ReadError || codec.DecodeError || diff.CompareError || WriteError;
 
-const DecodeResult = (codec.ReadError || codec.DecodeError)!codec.Decoded;
 const DecodedPair = struct { before: codec.Decoded, after: codec.Decoded };
 
 // Decoder blocks retain their allocator until both images are released.
@@ -123,9 +123,13 @@ pub fn compareFiles(io: Io, allocator: Allocator, paths: Paths, options: Options
 
 /// Streams a comparison sheet as PNG into a caller-supplied writer.
 pub fn encodeComparisonSheet(allocator: Allocator, before: values.Image, after: values.Image, result: diff.Comparison, output: *Io.Writer) EncodeSheetError!void {
+    return encodeSheet(null, allocator, before, after, result, output);
+}
+
+fn encodeSheet(io: ?Io, allocator: Allocator, before: values.Image, after: values.Image, result: diff.Comparison, output: *Io.Writer) EncodeSheetError!void {
     const sheet = try annotate.ReportRows.init(allocator, before, after, result.regions, result.moves);
     defer sheet.deinit(allocator);
-    try codec.encodePngRows(allocator, sheet.size(), sheet, output);
+    try codec.encodePngRowsWithIo(io, allocator, sheet.size(), sheet, output);
 }
 
 fn loadPair(io: Io, shared: *SharedAllocator, paths: Paths, cap: usize, diagnostics: *Diagnostics) CompareError!DecodedPair {
@@ -137,13 +141,12 @@ fn loadPair(io: Io, shared: *SharedAllocator, paths: Paths, cap: usize, diagnost
         return decodeInOrder(io, allocator, first, null, paths, cap, diagnostics);
     defer second.close(io);
     // The caller decodes before while one worker decodes after. Keep the
-    // shared allocator and both handles alive until the worker has joined.
+    // shared allocator and both handles alive until the task has completed.
     const locked = shared.allocator();
-    var second_result: DecodeResult = undefined;
-    const worker = std.Thread.spawn(.{}, decodeOnThread, .{ second, io, locked, cap, &second_result }) catch
+    var worker = io.concurrent(codec.FileInput.decode, .{ second, io, locked, cap }) catch
         return decodeInOrder(io, allocator, first, second, paths, cap, diagnostics);
     const first_result = first.decode(io, locked, cap);
-    worker.join();
+    const second_result = worker.await(io);
     var before = first_result catch |err| {
         if (second_result) |image| {
             var unused = image;
@@ -154,10 +157,6 @@ fn loadPair(io: Io, shared: *SharedAllocator, paths: Paths, cap: usize, diagnost
     errdefer before.deinit();
     diagnostics.path = paths.after;
     return .{ .before = before, .after = try second_result };
-}
-
-fn decodeOnThread(input: codec.FileInput, io: Io, allocator: Allocator, cap: usize, output: *DecodeResult) void {
-    output.* = input.decode(io, allocator, cap);
 }
 
 fn decodeInOrder(io: Io, allocator: Allocator, first: codec.FileInput, second: ?codec.FileInput, paths: Paths, cap: usize, diagnostics: *Diagnostics) CompareError!DecodedPair {
@@ -171,7 +170,7 @@ fn decodeInOrder(io: Io, allocator: Allocator, first: codec.FileInput, second: ?
 
 fn preflightSheet(io: Io, allocator: Allocator, paths: Paths, sheet_path: []const u8, cap: usize, diagnostics: *Diagnostics) CompareError!void {
     diagnostics.path = sheet_path;
-    try refuseDirectory(io, sheet_path);
+    try checkSheetDestination(io, .cwd(), paths, sheet_path);
     diagnostics.path = paths.before;
     const before = try codec.probeFile(io, allocator, paths.before, cap);
     diagnostics.path = paths.after;
@@ -186,7 +185,7 @@ fn writeSheet(io: Io, allocator: Allocator, path: []const u8, before: values.Ima
     const buffer = try allocator.alloc(u8, write_buffer_bytes);
     defer allocator.free(buffer);
     var writer = file.file.writer(io, buffer);
-    encodeComparisonSheet(allocator, before, after, result, &writer.interface) catch |err| switch (err) {
+    encodeSheet(io, allocator, before, after, result, &writer.interface) catch |err| switch (err) {
         error.WriteFailed => return writer.err orelse err,
         else => |other| return other,
     };
@@ -194,14 +193,48 @@ fn writeSheet(io: Io, allocator: Allocator, path: []const u8, before: values.Ima
     try file.replace(io);
 }
 
-/// A directory cannot be replaced by the sheet, and the atomic replace
-/// reports it only as Unexpected, so it is refused by name first.
-fn refuseDirectory(io: Io, path: []const u8) WriteError!void {
-    const stat = Io.Dir.cwd().statFile(io, path, .{}) catch |err| switch (err) {
+/// A directory cannot be replaced by the sheet (the atomic replace reports it
+/// only as Unexpected), and a sheet path naming an input would replace that
+/// capture, so both are refused before anything is read or written. A link to
+/// an input is refused too: the user named an input, almost surely by mistake.
+fn checkSheetDestination(io: Io, dir: Io.Dir, paths: Paths, path: []const u8) WriteError!void {
+    const sheet = dir.statFile(io, path, .{}) catch |err| switch (err) {
         error.FileNotFound => return,
         else => |other| return other,
     };
-    if (stat.kind == .directory) return error.IsDir;
+    if (sheet.kind == .directory) return error.IsDir;
+    if (sheet.kind != .file) return;
+    for ([_][]const u8{ paths.before, paths.after }) |input_path| {
+        // An input that cannot be read cannot be the sheet; loading reports it under its own path.
+        const input = dir.statFile(io, input_path, .{}) catch continue;
+        if (sameFile(input, sheet)) return error.SheetIsInput;
+    }
+}
+
+// Every spelling, symlink or hard link of one file shares all four fields.
+// std.Io.File.Stat has no volume id; two files on different volumes matching
+// on all four, to the nanosecond, only refuse the write, never lose data.
+fn sameFile(a: Io.File.Stat, b: Io.File.Stat) bool {
+    return a.inode == b.inode and a.size == b.size and
+        a.mtime.nanoseconds == b.mtime.nanoseconds and a.ctime.nanoseconds == b.ctime.nanoseconds;
+}
+
+test "sheet destination refuses both inputs and their hard links" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const paths: Paths = .{ .before = "before", .after = "after" };
+    try tmp.dir.writeFile(io, .{ .sub_path = paths.before, .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = paths.after, .data = "" });
+    for ([_][]const u8{ paths.before, paths.after }) |path| {
+        try std.testing.expectError(error.SheetIsInput, checkSheetDestination(io, tmp.dir, paths, path));
+    }
+    // Zig's Windows I/O backend does not implement hard-link creation yet.
+    if (builtin.os.tag != .windows) {
+        try tmp.dir.hardLink(paths.after, tmp.dir, "hard-link", io, .{});
+        try std.testing.expectError(error.SheetIsInput, checkSheetDestination(io, tmp.dir, paths, "hard-link"));
+    }
+    try checkSheetDestination(io, tmp.dir, paths, "new-sheet");
 }
 
 test "an invalid scale clears file diagnostics before loading" {

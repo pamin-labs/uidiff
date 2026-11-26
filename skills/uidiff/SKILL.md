@@ -13,7 +13,7 @@ happened, including ones nobody mentioned.
 
 ## 1. Make sure uidiff runs
 
-Check with `uidiff --help`. If it is missing:
+Check the installed version with `uidiff --version`. If uidiff is missing:
 
 - In a project with a `package.json`, add it pinned so CI uses the same
   version: `npm install --save-dev @pamin-labs/uidiff`, then run `npx uidiff`.
@@ -51,6 +51,10 @@ your change:
 uidiff before.png after.png --scale 2 --json --annotate sheet.png > report.json
 ```
 
+Pass captures as files. `-` does not read stdin, and input pipes are unsupported.
+A symlink at the sheet path is replaced by the PNG itself, unless it points to
+an input, which raises `SheetIsInput`.
+
 `--scale` is device pixels per logical pixel: Playwright's `deviceScaleFactor`,
 `2` or `3` for iOS Retina screenshots, the screen density for Android (for
 example `2.625`). If unsure, divide the image width by the viewport's CSS or
@@ -61,7 +65,7 @@ fine; coordinates are always in device pixels.
 | --- | --- |
 | `0` | No change regions. `moves` may still list shifted content. |
 | `1` | Change regions found: read the report and look at the sheet. |
-| `2` | Error (unreadable file, bad arguments): read stderr; nothing was compared. |
+| `2` | Error. Read stderr for the failing path or argument. `SheetIsInput` means the sheet path names either input, including through a link. |
 
 Exit 1 is a result, not a failure. In scripts that stop on errors, capture
 it with `status=0; uidiff ... || status=$?`, then fail on `2`, and on `1`
@@ -75,20 +79,24 @@ changed, green for inserted, red for removed. The gutter between them shows
 which rows stayed and which shifted, with the offset. Below, each numbered
 change has a close-up of both sides.
 
-`report.json` (version 1) carries the same numbers:
+`report.json` (version 1) carries the same numbers. This excerpt shows two regions and one move.
 
 ```json
-{ "version": 1, "width": 2560, "height": 1600,
+{ "version": 1,
   "regions": [
     { "number": 1, "kind": "removed", "before": { "x": 1531, "y": 787, "width": 857, "height": 165 }, "after": null },
     { "number": 2, "kind": "changed", "before": { "x": 1746, "y": 1114, "width": 642, "height": 204 },
       "after": { "x": 1746, "y": 924, "width": 642, "height": 204 } } ],
-  "moves": [ { "x": 860, "width": 1520, "before": { "y": 968, "height": 366 }, "after": { "y": 778, "height": 366 } } ] }
+  "width": 2560, "height": 1600,
+  "moves": [ { "before": { "y": 968, "height": 366 }, "after": { "y": 778, "height": 366 }, "x": 860, "width": 1520 } ] }
 ```
 
 A region's absent side is `null`. A move's signed offset is
 `after.y - before.y` (positive moves down). Check `version` before relying
 on the shape.
+
+Connected changes smaller than four pixels are treated as noise. If the
+smaller capture has at most 1024 pixels, single-pixel regions can be reported.
 
 ## 5. Report back
 
