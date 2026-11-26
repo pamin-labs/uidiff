@@ -1,6 +1,6 @@
-//! Row compositor for the styled comparison report.
+//! Row compositor for the styled comparison sheet.
 const std = @import("std");
-const report_layout = @import("report_layout.zig");
+const plan = @import("plan.zig");
 const copy = @import("copy.zig");
 const values = @import("../value.zig");
 const geometry = @import("geometry.zig");
@@ -47,7 +47,7 @@ const Region = values.Region;
 const Move = values.Move;
 
 /// Failures laying out a styled comparison or allocating its pixels.
-pub const RenderError = report_layout.RenderError;
+pub const RenderError = plan.RenderError;
 
 /// An owned RGBA8 sheet in whole sheet pixels, released by deinit.
 pub const Sheet = struct {
@@ -68,13 +68,13 @@ pub const Sheet = struct {
 
 /// A streamed styled sheet. The source images are borrowed.
 pub const Rows = struct {
-    plan: report_layout.Plan,
+    plan: plan.Plan,
 
     pub const staged = true;
 
     /// Lays out the sheet before drawing any rows.
     pub fn init(allocator: Allocator, before: Image, after: Image, regions: []const Region, moves: []const Move) RenderError!Rows {
-        return .{ .plan = try report_layout.Plan.init(allocator, before, after, regions, moves) };
+        return .{ .plan = try plan.Plan.init(allocator, before, after, regions, moves) };
     }
 
     /// Releases the layout's owned metadata.
@@ -94,60 +94,60 @@ pub const Rows = struct {
 
     /// Paints one output row into storage supplied by the encoder.
     pub noinline fn row(self: Rows, y: usize, pixels: []Pixel) []const Pixel {
-        const plan = self.plan;
+        const sheet_plan = self.plan;
         const line: Line = .{ .pixels = pixels, .y = y };
-        const ui = plan.layout;
-        const a = plan.panes[0];
-        const b = plan.panes[1];
+        const ui = sheet_plan.layout;
+        const a = sheet_plan.panes[0];
+        const b = sheet_plan.panes[1];
         const left_x = a.x;
-        const labels = plan.labels;
-        if (ui.wide or y < a.y or y >= plan.pane_end) @memset(pixels, page);
+        const labels = sheet_plan.labels;
+        if (ui.wide or y < a.y or y >= sheet_plan.pane_end) @memset(pixels, page);
         if (y < a.y) {
             const title = labels.title;
-            if (title.containsRow(y)) line.text(title.x, title.y, plan.heading.bytes(), .bold, title.size, ink);
+            if (title.containsRow(y)) line.text(title.x, title.y, sheet_plan.heading.bytes(), .bold, title.size, ink);
             for (labels.legend) |entry| if (entry) |e| {
                 if (e.box.containsRow(y)) line.rounded(e.box, e.radius, tint(e.kind));
                 if (e.label.containsRow(y)) line.text(e.label.x, e.label.y, kindName(e.kind), .regular, e.label.size, secondary);
             };
-            const caption = plan.captions.bounds[0];
-            if (caption.containsRow(y)) line.text(caption.x, caption.y, copy.before, .bold, plan.captions.size, secondary);
-        } else if (!ui.wide and y < plan.pane_end) {
+            const caption = sheet_plan.captions.bounds[0];
+            if (caption.containsRow(y)) line.text(caption.x, caption.y, copy.before, .bold, sheet_plan.captions.size, secondary);
+        } else if (!ui.wide and y < sheet_plan.pane_end) {
             line.fill(0, left_x, page);
             line.fill(b.right(), pixels.len, page);
-            alignment.drawGutter(line, y - a.y, ui, plan.panes, plan.ribbons);
+            alignment.drawGutter(line, y - a.y, ui, sheet_plan.panes, sheet_plan.ribbons);
         }
-        const caption = plan.captions.bounds[1];
-        if (caption.containsRow(y)) line.text(caption.x, caption.y, copy.after, .bold, plan.captions.size, secondary);
-        if (y + ui.px(8) >= a.y and y < plan.pane_end + ui.px(12)) {
-            if (!ui.wide or nearPane(y, a, ui)) drawPane(line, plan.before, a.x, a.y, ui);
-            if (!ui.wide or nearPane(y, b, ui)) drawPane(line, plan.after, b.x, b.y, ui);
+        const caption = sheet_plan.captions.bounds[1];
+        if (caption.containsRow(y)) line.text(caption.x, caption.y, copy.after, .bold, sheet_plan.captions.size, secondary);
+        if (y + ui.px(8) >= a.y and y < sheet_plan.pane_end + ui.px(12)) {
+            if (!ui.wide or nearPane(y, a, ui)) drawPane(line, sheet_plan.before, a.x, a.y, ui);
+            if (!ui.wide or nearPane(y, b, ui)) drawPane(line, sheet_plan.after, b.x, b.y, ui);
         }
         const badge_reach = overviewDiameter(ui);
-        if (y + badge_reach >= a.y and y < plan.pane_end + badge_reach) {
-            for (plan.details) |detail| {
+        if (y + badge_reach >= a.y and y < sheet_plan.pane_end + badge_reach) {
+            for (sheet_plan.details) |detail| {
                 drawMark(line, detail.before_mark, detail.before_badge, detail, ui);
                 drawMark(line, detail.after_mark, detail.after_badge, detail, ui);
             }
         }
-        if (plan.details.len != 0 and y >= plan.pane_end) {
+        if (sheet_plan.details.len != 0 and y >= sheet_plan.pane_end) {
             const heading = labels.details;
             if (heading.containsRow(y)) {
-                const title = if (ui.wide) copy.at_full_size else copy.changes_up_close;
+                const title = if (ui.wide) copy.at_full_size else copy.detail_section_title;
                 line.text(heading.x, heading.y, title, .bold, heading.size, ink);
             }
             if (ui.wide) {
                 self.drawFocus(line);
                 return pixels;
             }
-            const detail_x = plan.detail_x[0];
-            const after_detail_x = plan.detail_x[1];
-            for (plan.details) |detail| {
+            const detail_x = sheet_plan.detail_x[0];
+            const after_detail_x = sheet_plan.detail_x[1];
+            for (sheet_plan.details) |detail| {
                 if (y < detail.top or y >= detail.top + detail.height) continue;
                 const diameter = labels.detail_badge;
                 badge(line, .{ .x = left_x, .y = detail.top, .w = diameter, .h = diameter }, detail.region.kind, detail.number.bytes(), ui);
                 line.text(labels.detail_kind_x, detail.top + labels.detail_kind_offset, kindName(detail.region.kind), .regular, labels.body_size, secondary);
-                drawDetail(line, detail.before, plan.before.image, detail_x, plan.detail_slot_width, detail.top, detail.height, detail.region.kind, ui);
-                drawDetail(line, detail.after, plan.after.image, after_detail_x, plan.detail_slot_width, detail.top, detail.height, detail.region.kind, ui);
+                drawDetail(line, detail.before, sheet_plan.before.image, detail_x, sheet_plan.detail_slot_width, detail.top, detail.height, detail.region.kind, ui);
+                drawDetail(line, detail.after, sheet_plan.after.image, after_detail_x, sheet_plan.detail_slot_width, detail.top, detail.height, detail.region.kind, ui);
                 break;
             }
         }
@@ -155,13 +155,13 @@ pub const Rows = struct {
     }
 
     noinline fn drawFocus(self: Rows, line: Line) void {
-        const plan = self.plan;
-        const badge_reach = badgeDiameter(plan.layout) -| focus_caption_height;
-        for (plan.focuses, 0..) |focus, index| {
+        const sheet_plan = self.plan;
+        const badge_reach = badgeDiameter(sheet_plan.layout) -| focus_caption_height;
+        for (sheet_plan.focuses, 0..) |focus, index| {
             // A badge placed above a short crop can extend into the gap
             // before the caption. Unused merge entries have zero height.
             if (focus.height == 0 or line.y + badge_reach < focus.top or line.y >= focus.top + focus.height) continue;
-            for (focus.crops, [2]Image{ plan.before.image, plan.after.image }, focus.captions, 0..) |patch, image, caption, side| {
+            for (focus.crops, [2]Image{ sheet_plan.before.image, sheet_plan.after.image }, focus.captions, 0..) |patch, image, caption, side| {
                 const x = focusColumn(side);
                 line.text(x, focus.top, caption.bytes(), .regular, text.caption_size, secondary);
                 if (patch) |p| {
@@ -171,10 +171,10 @@ pub const Rows = struct {
                     line.text(x, focus.top + focus_caption_height, copy.not_on_side, .regular, text.caption_size, muted);
                 }
             }
-            for (plan.details) |detail| {
+            for (sheet_plan.details) |detail| {
                 if (detail.focus != index) continue;
                 for (detail.focus_marks, detail.focus_badges) |mark, location| {
-                    drawMark(line, mark, location, detail, plan.layout);
+                    drawMark(line, mark, location, detail, sheet_plan.layout);
                 }
             }
             return;
@@ -182,7 +182,7 @@ pub const Rows = struct {
     }
 };
 
-/// Renders the same rows as the streaming report for in-memory consumers.
+/// Renders the same rows as the streaming sheet for in-memory consumers.
 pub fn render(allocator: Allocator, before: Image, after: Image, regions: []const Region, moves: []const Move) RenderError!Sheet {
     const rows = try Rows.init(allocator, before, after, regions, moves);
     defer rows.deinit(allocator);
@@ -276,7 +276,7 @@ test "short and tall strips have bounded previews" {
         .{ .width = 1, .height = 20000 },
         .{ .width = 3, .height = 60000 },
     }) |source| {
-        const size = try report_layout.minimumSize(source, source);
+        const size = try plan.minimumSize(source, source);
         try std.testing.expect(size.width <= max_sheet_width);
         try std.testing.expect(size.height < 2000);
         const ui = Layout.init(source, source);

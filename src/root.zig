@@ -72,7 +72,7 @@ pub const Move = values.Move;
 /// One horizontal position or extent in source device pixels.
 pub const DevicePx = values.DevicePx;
 /// Renders the same styled comparison sheet as file annotation.
-pub const renderComparisonSheet = annotate.renderReport;
+pub const renderComparisonSheet = annotate.renderSheet;
 /// Streams a styled comparison sheet as PNG without a full canvas allocation.
 pub const encodeComparisonSheet = files.encodeComparisonSheet;
 /// The files one comparison reads and writes.

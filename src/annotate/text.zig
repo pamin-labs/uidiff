@@ -1,4 +1,4 @@
-//! Bitmap glyphs, typographic metrics, and formatted report labels.
+//! Bitmap glyphs, typographic metrics, and formatted sheet labels.
 const std = @import("std");
 
 /// An embedded glyph atlas and its metrics.
@@ -17,7 +17,7 @@ pub const Face = enum {
     }
 };
 
-/// A formatted report label stored without heap allocation.
+/// A formatted sheet label stored without heap allocation.
 pub const Text = struct {
     data: [96]u8 = undefined,
     len: usize = 0,
@@ -57,7 +57,7 @@ const fallback_index = @sizeOf(u16) * ('?' - ascii_first);
 const regular_fallback = std.mem.readInt(u16, regular_atlas[fallback_index..][0..@sizeOf(u16)], .little);
 const bold_fallback = std.mem.readInt(u16, bold_atlas[fallback_index..][0..@sizeOf(u16)], .little);
 
-/// Measures a report label at the requested font size.
+/// Measures a sheet label at the requested font size.
 pub fn textWidth(face: Face, size: usize, label: []const u8) usize {
     const em = face.em();
     var width: usize = 0;
@@ -65,8 +65,9 @@ pub fn textWidth(face: Face, size: usize, label: []const u8) usize {
     return width;
 }
 
-/// Borrows the metrics and packed coverage for a built-in report glyph.
+/// Borrows the metrics and packed coverage for a built-in sheet glyph.
 pub fn glyph(face: Face, c: u8) []const u8 {
+    // Preserve the existing panic diagnostic for this invariant.
     return findGlyph(face, c) orelse @panic("report label uses a glyph missing from the atlas");
 }
 
@@ -81,7 +82,7 @@ fn findGlyph(face: Face, c: u8) ?[]const u8 {
     return found[0 .. 5 + (@as(usize, found[3]) * found[4] + 1) / 2];
 }
 
-test "every report label can be rendered by its assigned face" {
+test "every sheet label can be rendered by its assigned face" {
     const copy = @import("copy.zig");
     const palette = @import("palette.zig");
     const fg = std.fmt.comptimePrint;
@@ -92,7 +93,7 @@ test "every report label can be rendered by its assigned face" {
         digits,                     fg(copy.focus_format, .{ copy.before, 123, 456 }), fg(copy.scaled_focus_format, .{ copy.after, 1, 2, 50 }),
     };
     const bold = [_][]const u8{
-        copy.before,                          copy.after,                   copy.moved,                                   copy.changes_up_close,                         copy.at_full_size,                                                            digits,
+        copy.before,                          copy.after,                   copy.moved,                                   copy.detail_section_title,                     copy.at_full_size,                                                            digits,
         fg(copy.positive_shift_format, .{3}), fg(copy.shift_format, .{-2}), fg(copy.heading_format, .{ 1, copy.change }), fg(copy.heading_format, .{ 2, copy.changes }), fg(copy.moved_heading_format, .{ 1, copy.change, 1, copy.block, copy.down }), fg(copy.moved_heading_format, .{ 2, copy.changes, 2, copy.blocks, copy.up }),
     };
     for (regular) |label| for (label) |c| try std.testing.expect(findGlyph(.regular, c) != null);

@@ -108,7 +108,7 @@ pub fn compareFiles(io: Io, allocator: Allocator, paths: Paths, options: Options
     if (paths.annotate) |path| {
         // A file may have changed since its header was checked.
         diagnostics.path = path;
-        _ = try annotate.reportSize(pair.before.image.size(), pair.after.image.size());
+        _ = try annotate.minimumSheetSize(pair.before.image.size(), pair.after.image.size());
     }
     diagnostics.path = null;
     const result = try diff.compareChecked(allocator, pair.before.image, pair.after.image, checked);
@@ -127,7 +127,7 @@ pub fn encodeComparisonSheet(allocator: Allocator, before: values.Image, after: 
 }
 
 fn encodeSheet(io: ?Io, allocator: Allocator, before: values.Image, after: values.Image, result: diff.Comparison, output: *Io.Writer) EncodeSheetError!void {
-    const sheet = try annotate.ReportRows.init(allocator, before, after, result.regions, result.moves);
+    const sheet = try annotate.SheetRows.init(allocator, before, after, result.regions, result.moves);
     defer sheet.deinit(allocator);
     try codec.encodePngRowsWithIo(io, allocator, sheet.size(), sheet, output);
 }
@@ -176,7 +176,7 @@ fn preflightSheet(io: Io, allocator: Allocator, paths: Paths, sheet_path: []cons
     diagnostics.path = paths.after;
     const after = try codec.probeFile(io, allocator, paths.after, cap);
     diagnostics.path = sheet_path;
-    _ = try annotate.reportSize(before, after);
+    _ = try annotate.minimumSheetSize(before, after);
 }
 
 fn writeSheet(io: Io, allocator: Allocator, path: []const u8, before: values.Image, after: values.Image, result: diff.Comparison) WriteError!void {

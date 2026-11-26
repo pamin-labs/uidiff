@@ -1,4 +1,4 @@
-//! Labels and format strings of the styled comparison report.
+//! Labels and format strings of the styled comparison sheet.
 /// Caption of the source pane.
 pub const before = "Before";
 /// Caption of the comparison pane.
@@ -8,7 +8,7 @@ pub const moved = "moved";
 /// Detail caption when one source has no box.
 pub const not_on_side = "not on this side";
 /// Heading of the side-by-side detail area.
-pub const changes_up_close = "Changes up close";
+pub const detail_section_title = "Changes up close";
 /// Heading above stacked panoramic focus rows.
 pub const at_full_size = "Each change at full size";
 /// Singular noun after the region count.

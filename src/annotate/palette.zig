@@ -1,4 +1,4 @@
-//! Colors and labels for the report.
+//! Colors and labels for the sheet.
 const std = @import("std");
 const values = @import("../value.zig");
 const Pixel = values.Pixel;
@@ -45,7 +45,7 @@ pub fn kindBit(kind: values.Kind) u8 {
     };
 }
 
-/// Returns the report label for a region kind.
+/// Returns the sheet label for a region kind.
 pub fn kindName(kind: values.Kind) []const u8 {
     return switch (kind) {
         .inserted, .removed, .changed => @tagName(kind),

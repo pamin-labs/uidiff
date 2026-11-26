@@ -10,10 +10,10 @@ const Space = enum { source, sheet };
 
 /// Whole source pixels before projection into a pane.
 pub const SourceRect = RectFor(.source);
-/// Whole pixels in the composed report.
+/// Whole pixels in the composed sheet.
 pub const Rect = RectFor(.sheet);
 
-/// Preview scale, UI scale, and pane arrangement for a report.
+/// Preview scale, UI scale, and pane arrangement for a sheet.
 pub const Layout = struct {
     percent: usize,
     numerator: usize,
@@ -127,7 +127,7 @@ pub const Pane = struct {
     }
 };
 
-/// Base outer margin around the report, in sheet pixels.
+/// Base outer margin around the sheet, in sheet pixels.
 pub const margin = 48;
 
 /// Base sheet row where the overview begins.

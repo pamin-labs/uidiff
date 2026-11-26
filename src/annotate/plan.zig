@@ -1,4 +1,4 @@
-//! Allocates the complete layout for a styled comparison report.
+//! Allocates the complete layout for a styled comparison sheet.
 const std = @import("std");
 const copy = @import("copy.zig");
 const values = @import("../value.zig");
@@ -145,7 +145,7 @@ pub const Plan = struct {
         };
     }
 
-    /// Releases the report's metadata.
+    /// Releases the sheet's metadata.
     pub fn deinit(self: Plan, allocator: Allocator) void {
         self.after.deinit(allocator);
         self.before.deinit(allocator);
@@ -181,7 +181,7 @@ const detail_title_size = 30;
 const body_size = 24;
 const detail_kind_gap = 71;
 
-/// Checks the preview dimensions before allocating report details.
+/// Checks the preview dimensions before allocating sheet details.
 pub fn minimumSize(before: Size, after: Size) error{SheetTooLarge}!Size {
     if (before.pixelCount() == null or after.pixelCount() == null) return error.SheetTooLarge;
     const ui = Layout.init(before, after);
@@ -530,7 +530,7 @@ test "edge badges use the gutter margins and the space above the caption" {
     try std.testing.expect(center.distanceSquared(center_mark) <= 36);
 }
 
-test "wide reports use bounded overviews and merge overlapping focus crops" {
+test "wide sheets use bounded overviews and merge overlapping focus crops" {
     const overview_caption_gap = geometry.overview_caption_gap;
     const Pixel = values.Pixel;
     const allocator = std.testing.allocator;

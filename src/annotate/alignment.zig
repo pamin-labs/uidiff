@@ -1,4 +1,4 @@
-//! Alignment ribbons between the ordinary report panes.
+//! Alignment ribbons between the ordinary sheet panes.
 const std = @import("std");
 const copy = @import("copy.zig");
 const values = @import("../value.zig");

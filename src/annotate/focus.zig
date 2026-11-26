@@ -90,7 +90,7 @@ pub fn focusColumn(side: usize) usize {
 /// Groups overlapping source windows and lays out the focus rows.
 pub fn layoutFocus(details: []Detail, focuses: []Focus, sizes: [2]Size, start: usize) error{SheetTooLarge}!usize {
     // Find connected crop windows on either side. Keep the first region's
-    // position in the report when merging a group.
+    // position in the sheet when merging a group.
     for (focuses, 0..) |focus, i| {
         for (focuses[0..i], 0..) |prior, j| {
             if (!windowsOverlap(focus.windows, prior.windows)) continue;
