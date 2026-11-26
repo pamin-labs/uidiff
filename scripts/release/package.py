@@ -225,12 +225,16 @@ def npm_packages(release_version, binaries, output):
         **shared,
         "name": NPM_PACKAGE,
         "description": "Align moved screenshot content and box visual changes",
+        "keywords": ["screenshot", "diff", "visual-regression", "visual-testing", "image-diff", "cli"],
+        "homepage": REPOSITORY,
         "bin": {"uidiff": "uidiff.cjs"},
-        "files": ["uidiff.cjs", *NOTICES],
+        "files": ["uidiff.cjs", "README.md", *NOTICES],
         "optionalDependencies": {target.npm_name: release_version for target in TARGETS},
         "uidiffNative": {target.npm_platform: target.npm_name for target in TARGETS},
     })
     shutil.copy2(ROOT / "npm/uidiff/uidiff.cjs", main / "uidiff.cjs")
+    # npm shows the package's own README and resolves its relative images against the repository.
+    shutil.copy2(ROOT / "README.md", main / "README.md")
     return [*publish_order, main]
 
 

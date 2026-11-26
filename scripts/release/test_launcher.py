@@ -146,6 +146,7 @@ def main():
         assert manifest["optionalDependencies"] == {target.npm_name: release_version for target in TARGETS}
         assert manifest["name"] == NPM_PACKAGE
         assert manifest["bin"] == {"uidiff": "uidiff.cjs"}
+        assert (launcher.parent / "README.md").read_bytes() == (ROOT / "README.md").read_bytes()
         assert manifest["uidiffNative"] == {target.npm_platform: target.npm_name for target in TARGETS}
         assert f"npm install --save-dev {NPM_PACKAGE}" in (ROOT / "README.md").read_text()
         # Exercise Node package resolution for all six staged native packages.
