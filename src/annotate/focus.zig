@@ -20,9 +20,9 @@ const Size = value.Size;
 
 /// A grouped pair of source windows and their planned sheet crops.
 pub const Focus = struct {
-    windows: [2]?SourceRect,
-    crops: [2]?Crop = .{ null, null },
-    captions: [2]Text = .{ .{}, .{} },
+    windows: std.EnumArray(value.Side, ?SourceRect),
+    crops: std.EnumArray(value.Side, ?Crop) = .initFill(null),
+    captions: std.EnumArray(value.Side, Text) = .initFill(.{}),
     top: usize = 0,
     height: usize = 0,
 };
@@ -45,15 +45,12 @@ pub const Badge = union(enum) {
 /// One numbered region's crops, marks and badges in the overview and detail rows.
 pub const Detail = struct {
     region: Region,
-    before: ?Crop,
-    after: ?Crop,
-    before_mark: ?Rect,
-    after_mark: ?Rect,
-    before_badge: Badge = .none,
-    after_badge: Badge = .none,
+    crops: std.EnumArray(value.Side, ?Crop),
+    marks: std.EnumArray(value.Side, ?Rect),
+    badges: std.EnumArray(value.Side, Badge) = .initFill(.none),
     focus: usize = 0,
-    focus_marks: [2]?Rect = .{ null, null },
-    focus_badges: [2]Badge = @splat(.none),
+    focus_marks: std.EnumArray(value.Side, ?Rect) = .initFill(null),
+    focus_badges: std.EnumArray(value.Side, Badge) = .initFill(.none),
     number: Text,
     top: usize,
     height: usize,
@@ -84,12 +81,12 @@ pub fn focusWindow(box: ?SourceRect, size: Size) ?SourceRect {
 }
 
 /// Returns the left sheet coordinate for a focus column.
-pub fn focusColumn(side: usize) usize {
-    return margin + side * (focus_slot_width + focus_gap);
+pub fn focusColumn(side: value.Side) usize {
+    return margin + @as(usize, @backingInt(side)) * (focus_slot_width + focus_gap);
 }
 
 /// Groups overlapping source windows and lays out the focus rows.
-pub fn layoutFocus(details: []Detail, focuses: []Focus, sizes: [2]Size, start: usize) error{SheetTooLarge}!usize {
+pub fn layoutFocus(details: []Detail, focuses: []Focus, sizes: std.EnumArray(value.Side, Size), start: usize) error{SheetTooLarge}!usize {
     // Find connected crop windows on either side. Keep the first region's
     // position in the sheet when merging a group.
     for (focuses, 0..) |focus, i| {
@@ -104,7 +101,7 @@ pub fn layoutFocus(details: []Detail, focuses: []Focus, sizes: [2]Size, start: u
         const root = focusRoot(details, i);
         detail.focus = root;
         if (root == i) continue;
-        for (&focuses[root].windows, focuses[i].windows) |*to, from| to.* = unionWindow(to.*, from);
+        for (&focuses[root].windows.values, focuses[i].windows.values) |*to, from| to.* = unionWindow(to.*, from);
     }
     var top = start;
     for (focuses, details, 0..) |*focus, detail, index| {
@@ -112,11 +109,11 @@ pub fn layoutFocus(details: []Detail, focuses: []Focus, sizes: [2]Size, start: u
         focus.top = top;
         var height: usize = 32;
         var zoom: Zoom = .{ .numerator = 1 };
-        for (focus.windows) |window| {
+        for (focus.windows.values) |window| {
             const from = window orelse continue;
             zoom = zoom.fit(from, .{ .width = focus_slot_width, .height = value.max_extent });
         }
-        for (focus.windows, &focus.crops, &focus.captions, [2][]const u8{ copy.before, copy.after }, 0..) |window, *patch, *caption, name, side| {
+        for (focus.windows.values, &focus.crops.values, &focus.captions.values, [2][]const u8{ copy.before, copy.after }, std.enums.values(value.Side)) |window, *patch, *caption, name, side| {
             const from = window orelse {
                 caption.* = try Text.format(copy.name_format, .{name});
                 continue;
@@ -135,7 +132,7 @@ pub fn layoutFocus(details: []Detail, focuses: []Focus, sizes: [2]Size, start: u
     }
     for (details) |*detail| {
         const patches = focuses[detail.focus].crops;
-        for (patches, sizes, &detail.focus_marks, [2]value.Side{ .before, .after }) |maybe_patch, size, *mark, side| {
+        for (patches.values, sizes.values, &detail.focus_marks.values, std.enums.values(value.Side)) |maybe_patch, size, *mark, side| {
             const patch = maybe_patch orelse continue;
             const source = rectAtSize(size, detail.region.boxOn(side)) orelse continue;
             mark.* = mapMark(source, patch.from, patch.to);
@@ -150,8 +147,8 @@ fn focusRoot(details: []const Detail, index: usize) usize {
     return root;
 }
 
-fn windowsOverlap(a: [2]?SourceRect, b: [2]?SourceRect) bool {
-    for (a, b) |first, second| {
+fn windowsOverlap(a: std.EnumArray(value.Side, ?SourceRect), b: std.EnumArray(value.Side, ?SourceRect)) bool {
+    for (a.values, b.values) |first, second| {
         if (first != null and second != null and first.?.overlaps(second.?)) return true;
     }
     return false;

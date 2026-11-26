@@ -45,38 +45,39 @@ pub fn overviewDiameter(pane_layout: PaneLayout) usize {
 }
 
 /// Assigns non-overlapping overview and focus badge positions.
-pub fn placeBadges(allocator: Allocator, details: []Detail, focuses: []const Focus, panes: [2]Rect, images: [2]Image, size: value.Size, pane_layout: PaneLayout, captions: [2]Rect, gutter: Gutter) Allocator.Error!void {
+pub fn placeBadges(allocator: Allocator, details: []Detail, focuses: []const Focus, panes: geometry.SideRects, pair: value.Pair, size: value.Size, pane_layout: PaneLayout, captions: geometry.SideRects, gutter: Gutter) Allocator.Error!void {
     if (details.len == 0) return;
-    const storage = try allocator.alloc(Rect, 4 * details.len + panes.len);
+    const storage = try allocator.alloc(Rect, 4 * details.len + panes.values.len);
     defer allocator.free(storage);
-    placeOverview(details, storage, panes, images, size, pane_layout, captions, gutter);
+    placeOverview(details, storage, panes, pair, size, pane_layout, captions, gutter);
     for (focuses, 0..) |window, group| {
-        for (window.crops, 0..) |patch, side| {
-            if (patch) |p| placeFocus(details, storage, images[side], p, side, group, textWidth(.regular, text.caption_size, window.captions[side].bytes()) + text.caption_padding, window.top + window.height, pane_layout);
+        for (window.crops.values, std.enums.values(value.Side)) |patch, side| {
+            if (patch) |p| placeFocus(details, storage, pair.get(side), p, side, group, textWidth(.regular, text.caption_size, window.captions.get(side).bytes()) + text.caption_padding, window.top + window.height, pane_layout);
         }
     }
 }
 
-fn placeOverview(details: []Detail, storage: []Rect, panes: [2]Rect, images: [2]Image, size: value.Size, pane_layout: PaneLayout, captions: [2]Rect, gutter: Gutter) void {
+fn placeOverview(details: []Detail, storage: []Rect, panes: geometry.SideRects, pair: value.Pair, size: value.Size, pane_layout: PaneLayout, captions: geometry.SideRects, gutter: Gutter) void {
     const diameter = overviewDiameter(pane_layout);
-    const clearance = if (@min(panes[0].w, panes[1].w) < diameter) pane_layout.px(thin_badge_gap) else 0;
+    const clearance = if (@min(panes.get(.before).w, panes.get(.after).w) < diameter) pane_layout.px(thin_badge_gap) else 0;
     var len: usize = 0;
-    for (captions) |caption| {
+    for (captions.values) |caption| {
         storage[len] = caption;
         len += 1;
     }
     for (details) |d| {
-        for ([_]?Rect{ d.before_mark, d.after_mark }) |maybe| if (maybe) |mark| {
+        for (d.marks.values) |maybe| if (maybe) |mark| {
             storage[len] = mark;
             len += 1;
         };
     }
-    for (panes, images, 0..) |pane, image, side| {
-        const left_edge = @min(pane.x, clearance + if (!pane_layout.panoramic and side == 1) panes[0].right() else 0);
-        const right_edge = @max(pane.right(), (if (!pane_layout.panoramic and side == 0) panes[1].x else size.width) -| clearance);
+    for (panes.values, std.enums.values(value.Side)) |pane, side| {
+        const image = pair.get(side);
+        const left_edge = @min(pane.x, clearance + if (!pane_layout.panoramic and side == .after) panes.get(.before).right() else 0);
+        const right_edge = @max(pane.right(), (if (!pane_layout.panoramic and side == .before) panes.get(.after).x else size.width) -| clearance);
         const inner_left = pane.x -| clearance;
         const inner_right = @min(right_edge, pane.right() + clearance);
-        const lower_edge = if (pane_layout.panoramic and side == 0) panes[1].y - diameter else @max(panes[0].bottom(), panes[1].bottom());
+        const lower_edge = if (pane_layout.panoramic and side == .before) panes.get(.after).y - diameter else @max(panes.get(.before).bottom(), panes.get(.after).bottom());
         const outside: [4]Rect = .{
             .{ .x = left_edge, .y = pane.y - diameter, .w = right_edge - left_edge, .h = diameter },
             .{ .x = inner_right, .y = pane.y, .w = right_edge - inner_right, .h = pane.h },
@@ -84,11 +85,11 @@ fn placeOverview(details: []Detail, storage: []Rect, panes: [2]Rect, images: [2]
             .{ .x = pane.x, .y = pane.bottom(), .w = pane.w, .h = lower_edge -| pane.bottom() },
         };
         for (details) |*d| {
-            const mark = (if (side == 0) d.before_mark else d.after_mark) orelse continue;
+            const mark = d.marks.get(side) orelse continue;
             const used = storage[0..len];
             const lanes = switch (gutter) {
                 .plain => outside[1..3],
-                .ribbons => if (side == 0) outside[2..3] else outside[1..2],
+                .ribbons => if (side == .before) outside[2..3] else outside[1..2],
             };
             const preferred = if (mark.y == pane.y and pane.w >= diameter)
                 placement.placeOutside(mark, outside[0], diameter, used)
@@ -98,7 +99,7 @@ fn placeOverview(details: []Detail, storage: []Rect, panes: [2]Rect, images: [2]
                 .from = .{ .x = 0, .y = 0, .w = image.width, .h = image.height },
                 .to = pane,
             }, diameter, used);
-            if (side == 0) d.before_badge = route else d.after_badge = route;
+            d.badges.set(side, route);
             if (route.position()) |pos| {
                 storage[len] = pos;
                 len += 1;
@@ -137,14 +138,14 @@ fn nearestOutside(mark: Rect, bounds: []const Rect, diameter: usize, obstacles: 
     return best;
 }
 
-fn placeFocus(details: []Detail, storage: []Rect, image: Image, patch: Crop, side: usize, group: usize, caption_width: usize, row_bottom: usize, pane_layout: PaneLayout) void {
+fn placeFocus(details: []Detail, storage: []Rect, image: Image, patch: Crop, side: value.Side, group: usize, caption_width: usize, row_bottom: usize, pane_layout: PaneLayout) void {
     const pane = patch.to;
     const diameter = badgeDiameter(pane_layout);
     storage[0] = Rect{ .x = pane.x, .y = pane.y -| diameter, .w = caption_width, .h = diameter };
     var len: usize = 1;
     for (details) |d| {
         if (d.focus != group) continue;
-        if (d.focus_marks[side]) |r| {
+        if (d.focus_marks.get(side)) |r| {
             storage[len] = r;
             len += 1;
         }
@@ -154,12 +155,12 @@ fn placeFocus(details: []Detail, storage: []Rect, image: Image, patch: Crop, sid
     const below: Rect = .{ .x = pane.x, .y = pane.bottom(), .w = pane.w, .h = row_bottom - pane.bottom() };
     for (details) |*d| {
         if (d.focus != group) continue;
-        const mark = d.focus_marks[side] orelse continue;
+        const mark = d.focus_marks.get(side) orelse continue;
         const used = storage[0..len];
         const outside = placement.placeOutside(mark, header, diameter, used) orelse placement.placeOutside(mark, beside, diameter, used) orelse
             placement.placeOutside(mark, below, diameter, used);
         const route = routing.routeBadge(mark, outside, image, patch, diameter, used);
-        d.focus_badges[side] = route;
+        d.focus_badges.set(side, route);
         if (route.position()) |position| {
             storage[len] = position;
             len += 1;
@@ -178,19 +179,19 @@ test "small panes enlarge by an integer and keep badges clear of their boxes" {
     const source: Size = .{ .width = 124, .height = 114 };
     const pane_layout = PaneLayout.init(source, source);
     const panes = pane_layout.panes(source, source);
-    try std.testing.expect(panes[0].w >= min_preview_side and panes[0].h >= min_preview_side);
-    try std.testing.expectEqual(@as(usize, 0), panes[0].h % source.height);
-    const gap = panes[1].x - panes[0].right();
-    try std.testing.expect(gap >= 48 and gap <= panes[0].w / 4);
+    try std.testing.expect(panes.get(.before).w >= min_preview_side and panes.get(.before).h >= min_preview_side);
+    try std.testing.expectEqual(@as(usize, 0), panes.get(.before).h % source.height);
+    const gap = panes.get(.after).x - panes.get(.before).right();
+    try std.testing.expect(gap >= 48 and gap <= panes.get(.before).w / 4);
     for ([_][2]usize{ .{ 60, 50 }, .{ 60, 0 }, .{ 0, 0 } }) |at| {
-        const mark = offsetMark(.{ .x = at[0], .y = at[1], .w = 2, .h = 2 }, panes[1], source).?;
-        const b = placement.place(mark, panes[1], badgeDiameter(pane_layout), &.{}).?;
+        const mark = offsetMark(.{ .x = at[0], .y = at[1], .w = 2, .h = 2 }, panes.get(.after), source).?;
+        const b = placement.place(mark, panes.get(.after), badgeDiameter(pane_layout), &.{}).?;
         try std.testing.expect(!b.overlaps(mark));
-        try std.testing.expect(b.x >= panes[1].x and b.y >= panes[1].y);
-        try std.testing.expect(b.right() <= panes[1].right() and b.bottom() <= panes[1].bottom());
+        try std.testing.expect(b.x >= panes.get(.after).x and b.y >= panes.get(.after).y);
+        try std.testing.expect(b.right() <= panes.get(.after).right() and b.bottom() <= panes.get(.after).bottom());
         if (at[1] != 0) try std.testing.expect(b.bottom() <= mark.y) else if (at[0] != 0) try std.testing.expect(b.right() <= mark.x);
     }
-    try std.testing.expect(placement.place(panes[1], panes[1], badgeDiameter(pane_layout), &.{}) == null);
+    try std.testing.expect(placement.place(panes.get(.after), panes.get(.after), badgeDiameter(pane_layout), &.{}) == null);
 }
 
 test "badge digits preserve native bold bitmap coverage" {

@@ -53,7 +53,7 @@ const Axis = enum { row, column };
 const Direction = enum { lower, higher };
 
 /// Maximum detail column width at the base UI scale.
-pub const max_crop_w = 360;
+pub const max_crop_width = 360;
 
 const max_crop_h = 220;
 const detail_inset_px = 3;
@@ -67,16 +67,17 @@ const wide_crop_context_px = 24;
 const text_row_gap_px = 3;
 const text_column_gap_px = 24;
 // Words and list summaries can extend farther sideways than a line is tall.
-const text_column_search_px = max_crop_w;
+const text_column_search_px = max_crop_width;
 
 /// Plans both detail crops at the largest common zoom that fits their slots.
-pub fn cropPair(images: [2]Image, boxes: [2]?SourceRect, x: [2]usize, y: usize, slot: usize, pane_layout: PaneLayout) [2]?Crop {
+pub fn cropPair(pair: value.Pair, boxes: std.EnumArray(value.Side, ?SourceRect), x: std.EnumArray(value.Side, usize), y: usize, slot: usize, pane_layout: PaneLayout) std.EnumArray(value.Side, ?Crop) {
     const inset = pane_layout.px(detail_inset_px);
     const available: value.Size = .{ .width = slot - 2 * inset, .height = pane_layout.px(max_crop_h) - 2 * inset };
     const target = pane_layout.px(detail_zoom_target_px);
     var zoom: Zoom = .{ .numerator = target };
-    var windows: [2]?SourceRect = @splat(null);
-    for (images, boxes, &windows) |image, box, *window| {
+    var windows: std.EnumArray(value.Side, ?SourceRect) = .initFill(null);
+    for (std.enums.values(value.Side), boxes.values, &windows.values) |side, box, *window| {
+        const image = pair.get(side);
         const region = box orelse continue;
         const long = @max(region.w, region.h);
         const from = cropBounds(image, region, pane_layout);
@@ -85,11 +86,11 @@ pub fn cropPair(images: [2]Image, boxes: [2]?SourceRect, x: [2]usize, y: usize, 
     }
     // Keep integer enlargement so text and edges stay crisp.
     if (zoom.numerator >= zoom.denominator) zoom = .{ .numerator = zoom.numerator / zoom.denominator };
-    var pair: [2]?Crop = @splat(null);
-    for (&pair, windows, x) |*crop, from, left| {
+    var patches: std.EnumArray(value.Side, ?Crop) = .initFill(null);
+    for (&patches.values, windows.values, x.values) |*crop, from, left| {
         if (from) |window| crop.* = zoom.apply(window, left + inset, y + inset);
     }
-    return pair;
+    return patches;
 }
 
 /// Draws the detail crop or its absent-side label on one row.
@@ -201,12 +202,12 @@ fn cropBounds(image: Image, box: SourceRect, pane_layout: PaneLayout) SourceRect
     from.h = @min(from.h, image.height - from.y);
     // An edit already wider than its slot needs less surrounding paint. Skip a
     // nearby partial line before it makes the whole crop smaller to read.
-    const search: usize = if (box.w >= pane_layout.px(max_crop_w)) wide_crop_context_px else context_search_px;
+    const search: usize = if (box.w >= pane_layout.px(max_crop_width)) wide_crop_context_px else context_search_px;
     return growContext(image, from, box, pane_layout.px(search), pane_layout.px(text_column_search_px));
 }
 
 fn singleCrop(image: Image, box: SourceRect, slot: usize, pane_layout: PaneLayout) Crop {
-    return cropPair(.{ image, image }, .{ box, null }, .{ 0, 0 }, 0, slot, pane_layout)[0].?;
+    return cropPair(.{ .before = image, .after = image }, .init(.{ .before = box, .after = null }), .initFill(0), 0, slot, pane_layout).get(.before).?;
 }
 
 test "paired close-ups render enlarged content at the same zoom" {
@@ -221,13 +222,13 @@ test "paired close-ups render enlarged content at the same zoom" {
     const before: Image = .{ .width = width, .height = height, .pixels = &before_pixels };
     const after: Image = .{ .width = width, .height = height, .pixels = &after_pixels };
     const pane_layout: PaneLayout = .{ .panoramic = false, .percent = 100, .numerator = 1, .denominator = 1 };
-    const pair = cropPair(.{ before, after }, .{ old, new }, .{ 0, 0 }, 0, max_crop_w, pane_layout);
-    const a = pair[0].?;
-    const b = pair[1].?;
+    const pair = cropPair(.{ .before = before, .after = after }, .init(.{ .before = old, .after = new }), .initFill(0), 0, max_crop_width, pane_layout);
+    const a = pair.get(.before).?;
+    const b = pair.get(.after).?;
     try std.testing.expectEqual(a.to.w * b.from.w, b.to.w * a.from.w);
     try std.testing.expectEqual(a.to.h * b.from.h, b.to.h * a.from.h);
     var counts: [2]usize = @splat(0);
-    var output: [max_crop_w]Pixel = undefined;
+    var output: [max_crop_width]Pixel = undefined;
     for ([_]Crop{ a, b }, [_]Image{ before, after }, [_]SourceRect{ old, new }, &counts) |patch, image, box, *count| {
         const y = (box.y - patch.from.y) * patch.to.h / patch.from.h;
         cropRow(patch, image, y, output[0..patch.to.w]);
@@ -243,7 +244,7 @@ test "close-ups enlarge a tiny edit and average samples when shrinking" {
     const pixels = [_]Pixel{ ink, white, ink, white };
     const image: Image = .{ .width = 4, .height = 1, .pixels = &pixels };
     const pane_layout = PaneLayout.init(image.size(), image.size());
-    const patch = singleCrop(image, .{ .x = 1, .y = 0, .w = 1, .h = 1 }, pane_layout.px(max_crop_w), pane_layout);
+    const patch = singleCrop(image, .{ .x = 1, .y = 0, .w = 1, .h = 1 }, pane_layout.px(max_crop_width), pane_layout);
     try std.testing.expect(patch.to.w / patch.from.w >= 80);
     try std.testing.expectEqual(patch.to.w / patch.from.w, patch.to.h / patch.from.h);
 
@@ -284,7 +285,7 @@ test "detail crop clips the height of a one-pixel-wide source" {
     const pixels: [height]Pixel = @splat(palette.white);
     const image: Image = .{ .width = 1, .height = height, .pixels = &pixels };
     const pane_layout = PaneLayout.init(image.size(), image.size());
-    const patch = singleCrop(image, .{ .x = 0, .y = 0, .w = 1, .h = height }, pane_layout.px(max_crop_w), pane_layout);
+    const patch = singleCrop(image, .{ .x = 0, .y = 0, .w = 1, .h = height }, pane_layout.px(max_crop_width), pane_layout);
     try std.testing.expectEqual(@as(usize, 1), patch.to.w);
     try std.testing.expectEqual(pane_layout.px(max_crop_h) - 2 * pane_layout.px(detail_inset_px), patch.to.h);
 }
@@ -327,8 +328,8 @@ test "a wide close-up keeps a neighbouring partial line out of its context" {
     const image: Image = .{ .width = width, .height = height, .pixels = &pixels };
     const pane_layout: PaneLayout = .{ .panoramic = false, .percent = 100, .numerator = 1, .denominator = 1 };
     const edit: SourceRect = .{ .x = 30, .y = 50, .w = 380, .h = 50 };
-    const patch = singleCrop(image, edit, max_crop_w, pane_layout);
+    const patch = singleCrop(image, edit, max_crop_width, pane_layout);
     try std.testing.expect(patch.from.bottom() >= edit.bottom());
     try std.testing.expect(patch.from.bottom() <= 113);
-    try std.testing.expect(patch.to.w <= max_crop_w);
+    try std.testing.expect(patch.to.w <= max_crop_width);
 }

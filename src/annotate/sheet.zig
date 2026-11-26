@@ -78,7 +78,7 @@ pub const Rows = struct {
 
     /// Lays out the sheet before drawing any rows.
     pub fn init(allocator: Allocator, before: Image, after: Image, regions: []const Region, moves: []const Move) RenderError!Rows {
-        return .{ .plan = try plan.Plan.init(allocator, before, after, regions, moves) };
+        return .{ .plan = try plan.Plan.init(allocator, .{ .before = before, .after = after }, regions, moves) };
     }
 
     /// Releases the layout's owned metadata.
@@ -101,8 +101,8 @@ pub const Rows = struct {
         const sheet_plan = self.plan;
         const line: Line = .{ .pixels = pixels, .y = y };
         const pane_layout = sheet_plan.pane_layout;
-        const a = sheet_plan.panes[0];
-        const b = sheet_plan.panes[1];
+        const a = sheet_plan.panes.get(.before);
+        const b = sheet_plan.panes.get(.after);
         const left_x = a.x;
         const labels = sheet_plan.labels;
         if (pane_layout.panoramic or y < a.y or y >= sheet_plan.pane_end) @memset(pixels, page);
@@ -113,24 +113,24 @@ pub const Rows = struct {
                 if (e.box.containsRow(y)) line.rounded(e.box, e.radius, tint(e.kind));
                 if (e.label.containsRow(y)) line.text(e.label.x, e.label.y, kindName(e.kind), .regular, e.label.size, secondary);
             };
-            const caption = sheet_plan.captions.bounds[0];
+            const caption = sheet_plan.captions.bounds.get(.before);
             if (caption.containsRow(y)) line.text(caption.x, caption.y, copy.before, .bold, sheet_plan.captions.size, secondary);
         } else if (!pane_layout.panoramic and y < sheet_plan.pane_end) {
             line.fill(0, left_x, page);
             line.fill(b.right(), pixels.len, page);
             ribbons.drawGutter(line, y - a.y, pane_layout, sheet_plan.panes, sheet_plan.ribbons);
         }
-        const caption = sheet_plan.captions.bounds[1];
+        const caption = sheet_plan.captions.bounds.get(.after);
         if (caption.containsRow(y)) line.text(caption.x, caption.y, copy.after, .bold, sheet_plan.captions.size, secondary);
         if (y + pane_layout.px(8) >= a.y and y < sheet_plan.pane_end + pane_layout.px(12)) {
-            if (!pane_layout.panoramic or nearPane(y, a, pane_layout)) drawPane(line, sheet_plan.before, a.x, a.y, pane_layout);
-            if (!pane_layout.panoramic or nearPane(y, b, pane_layout)) drawPane(line, sheet_plan.after, b.x, b.y, pane_layout);
+            if (!pane_layout.panoramic or nearPane(y, a, pane_layout)) drawPane(line, sheet_plan.sources.get(.before), a.x, a.y, pane_layout);
+            if (!pane_layout.panoramic or nearPane(y, b, pane_layout)) drawPane(line, sheet_plan.sources.get(.after), b.x, b.y, pane_layout);
         }
         const badge_reach = overviewDiameter(pane_layout);
         if (y + badge_reach >= a.y and y < sheet_plan.pane_end + badge_reach) {
             for (sheet_plan.details) |detail| {
-                drawMark(line, detail.before_mark, detail.before_badge, detail, pane_layout);
-                drawMark(line, detail.after_mark, detail.after_badge, detail, pane_layout);
+                drawMark(line, detail.marks.get(.before), detail.badges.get(.before), detail, pane_layout);
+                drawMark(line, detail.marks.get(.after), detail.badges.get(.after), detail, pane_layout);
             }
         }
         if (sheet_plan.details.len != 0 and y >= sheet_plan.pane_end) {
@@ -143,15 +143,15 @@ pub const Rows = struct {
                 self.drawFocus(line);
                 return pixels;
             }
-            const detail_x = sheet_plan.detail_x[0];
-            const after_detail_x = sheet_plan.detail_x[1];
+            const detail_x = sheet_plan.detail_x.get(.before);
+            const after_detail_x = sheet_plan.detail_x.get(.after);
             for (sheet_plan.details) |detail| {
                 if (y < detail.top or y >= detail.top + detail.height) continue;
                 const diameter = labels.detail_badge;
                 badge(line, .{ .x = left_x, .y = detail.top, .w = diameter, .h = diameter }, detail.region.kind, detail.number.bytes(), pane_layout);
                 line.text(labels.detail_kind_x, detail.top + labels.detail_kind_offset, kindName(detail.region.kind), .regular, labels.body_size, secondary);
-                drawDetail(line, detail.before, sheet_plan.before.image, detail_x, sheet_plan.detail_slot_width, detail.top, detail.height, detail.region.kind, pane_layout);
-                drawDetail(line, detail.after, sheet_plan.after.image, after_detail_x, sheet_plan.detail_slot_width, detail.top, detail.height, detail.region.kind, pane_layout);
+                drawDetail(line, detail.crops.get(.before), sheet_plan.sources.get(.before).image, detail_x, sheet_plan.detail_slot_width, detail.top, detail.height, detail.region.kind, pane_layout);
+                drawDetail(line, detail.crops.get(.after), sheet_plan.sources.get(.after).image, after_detail_x, sheet_plan.detail_slot_width, detail.top, detail.height, detail.region.kind, pane_layout);
                 break;
             }
         }
@@ -165,11 +165,11 @@ pub const Rows = struct {
             // A badge placed above a short crop can extend into the gap
             // before the caption. Unused merge entries have zero height.
             if (window.height == 0 or line.y + badge_reach < window.top or line.y >= window.top + window.height) continue;
-            for (window.crops, [2]Image{ sheet_plan.before.image, sheet_plan.after.image }, window.captions, 0..) |patch, image, caption, side| {
+            for (window.crops.values, sheet_plan.sources.values, window.captions.values, std.enums.values(value.Side)) |patch, source, caption, side| {
                 const x = focusColumn(side);
                 line.text(x, window.top, caption.bytes(), .regular, text.caption_size, secondary);
                 if (patch) |p| {
-                    paintCrop(line, p, image);
+                    paintCrop(line, p, source.image);
                     line.stroke(p.to.outset(1), 2, 1, outline_gray);
                 } else {
                     line.text(x, window.top + focus_caption_height, copy.not_on_side, .regular, text.caption_size, muted);
@@ -177,7 +177,7 @@ pub const Rows = struct {
             }
             for (sheet_plan.details) |detail| {
                 if (detail.focus != index) continue;
-                for (detail.focus_marks, detail.focus_badges) |mark, location| {
+                for (detail.focus_marks.values, detail.focus_badges.values) |mark, location| {
                     drawMark(line, mark, location, detail, sheet_plan.pane_layout);
                 }
             }
@@ -250,12 +250,12 @@ test "the streaming gutter connects shifted rows and shows the insertion wedge" 
     defer rows.deinit(allocator);
     const storage = try allocator.alloc(Pixel, rows.plan.size.width);
     defer allocator.free(storage);
-    const x = rows.plan.panes[0].right();
-    const gap = rows.plan.panes[1].x - x;
-    const in_wedge = rows.row(rows.plan.panes[0].y + rows.plan.pane_layout.position(50), storage);
+    const x = rows.plan.panes.get(.before).right();
+    const gap = rows.plan.panes.get(.after).x - x;
+    const in_wedge = rows.row(rows.plan.panes.get(.before).y + rows.plan.pane_layout.position(50), storage);
     try std.testing.expectEqual(moved_band, in_wedge[x + 10]);
     try std.testing.expectEqual(insert_band, in_wedge[x + gap - 10]);
-    const fixed = rows.row(rows.plan.panes[0].y + rows.plan.pane_layout.position(125), storage);
+    const fixed = rows.row(rows.plan.panes.get(.before).y + rows.plan.pane_layout.position(125), storage);
     try std.testing.expectEqual(stationary, fixed[x + gap / 2]);
 }
 
@@ -267,7 +267,7 @@ test "panoramic overviews reserve no alignment strip even when rows move" {
     const rows = try Rows.init(allocator, image, image, &.{}, &.{move});
     defer rows.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 0), rows.plan.ribbons.len);
-    try std.testing.expectEqual(@as(usize, overview_caption_gap), rows.plan.panes[1].y - rows.plan.panes[0].bottom());
+    try std.testing.expectEqual(@as(usize, overview_caption_gap), rows.plan.panes.get(.after).y - rows.plan.panes.get(.before).bottom());
 }
 
 test "short and tall strips have bounded previews" {

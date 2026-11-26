@@ -12,6 +12,8 @@ const Space = enum { source, sheet };
 pub const SourceRect = RectFor(.source);
 /// Whole pixels in the composed sheet.
 pub const Rect = RectFor(.sheet);
+/// Sheet rectangles indexed by source side.
+pub const SideRects = std.EnumArray(value.Side, Rect);
 
 /// Preview scale, UI scale, and pane arrangement for a sheet.
 pub const PaneLayout = struct {
@@ -70,7 +72,7 @@ pub const PaneLayout = struct {
     }
 
     /// Returns the two overview rectangles in sheet coordinates.
-    pub fn panes(self: PaneLayout, before: Size, after: Size) [2]Rect {
+    pub fn panes(self: PaneLayout, before: Size, after: Size) SideRects {
         const x = self.px(margin);
         const y = self.px(pane_top);
         const a = paneRect(x, y, self.preview(before));
@@ -80,7 +82,7 @@ pub const PaneLayout = struct {
             if (self.panoramic) a.bottom() + overview_caption_gap else y,
             after_size,
         );
-        return .{ a, b };
+        return .init(.{ .before = a, .after = b });
     }
 
     fn gutterFor(self: PaneLayout, before: usize, after: usize) usize {
