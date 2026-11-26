@@ -11,7 +11,7 @@ const focus_layout = @import("focus.zig");
 const crops = @import("crops.zig");
 const badges = @import("badges.zig");
 const ribbons = @import("ribbons.zig");
-const Layout = geometry.Layout;
+const PaneLayout = geometry.PaneLayout;
 const gutter = geometry.gutter;
 const max_sheet_width = geometry.max_sheet_width;
 const overview_caption_gap = geometry.overview_caption_gap;
@@ -96,12 +96,12 @@ pub const Rows = struct {
     pub noinline fn row(self: Rows, y: usize, pixels: []Pixel) []const Pixel {
         const sheet_plan = self.plan;
         const line: Line = .{ .pixels = pixels, .y = y };
-        const ui = sheet_plan.layout;
+        const pane_layout = sheet_plan.pane_layout;
         const a = sheet_plan.panes[0];
         const b = sheet_plan.panes[1];
         const left_x = a.x;
         const labels = sheet_plan.labels;
-        if (ui.wide or y < a.y or y >= sheet_plan.pane_end) @memset(pixels, page);
+        if (pane_layout.panoramic or y < a.y or y >= sheet_plan.pane_end) @memset(pixels, page);
         if (y < a.y) {
             const title = labels.title;
             if (title.containsRow(y)) line.text(title.x, title.y, sheet_plan.heading.bytes(), .bold, title.size, ink);
@@ -111,31 +111,31 @@ pub const Rows = struct {
             };
             const caption = sheet_plan.captions.bounds[0];
             if (caption.containsRow(y)) line.text(caption.x, caption.y, copy.before, .bold, sheet_plan.captions.size, secondary);
-        } else if (!ui.wide and y < sheet_plan.pane_end) {
+        } else if (!pane_layout.panoramic and y < sheet_plan.pane_end) {
             line.fill(0, left_x, page);
             line.fill(b.right(), pixels.len, page);
-            ribbons.drawGutter(line, y - a.y, ui, sheet_plan.panes, sheet_plan.ribbons);
+            ribbons.drawGutter(line, y - a.y, pane_layout, sheet_plan.panes, sheet_plan.ribbons);
         }
         const caption = sheet_plan.captions.bounds[1];
         if (caption.containsRow(y)) line.text(caption.x, caption.y, copy.after, .bold, sheet_plan.captions.size, secondary);
-        if (y + ui.px(8) >= a.y and y < sheet_plan.pane_end + ui.px(12)) {
-            if (!ui.wide or nearPane(y, a, ui)) drawPane(line, sheet_plan.before, a.x, a.y, ui);
-            if (!ui.wide or nearPane(y, b, ui)) drawPane(line, sheet_plan.after, b.x, b.y, ui);
+        if (y + pane_layout.px(8) >= a.y and y < sheet_plan.pane_end + pane_layout.px(12)) {
+            if (!pane_layout.panoramic or nearPane(y, a, pane_layout)) drawPane(line, sheet_plan.before, a.x, a.y, pane_layout);
+            if (!pane_layout.panoramic or nearPane(y, b, pane_layout)) drawPane(line, sheet_plan.after, b.x, b.y, pane_layout);
         }
-        const badge_reach = overviewDiameter(ui);
+        const badge_reach = overviewDiameter(pane_layout);
         if (y + badge_reach >= a.y and y < sheet_plan.pane_end + badge_reach) {
             for (sheet_plan.details) |detail| {
-                drawMark(line, detail.before_mark, detail.before_badge, detail, ui);
-                drawMark(line, detail.after_mark, detail.after_badge, detail, ui);
+                drawMark(line, detail.before_mark, detail.before_badge, detail, pane_layout);
+                drawMark(line, detail.after_mark, detail.after_badge, detail, pane_layout);
             }
         }
         if (sheet_plan.details.len != 0 and y >= sheet_plan.pane_end) {
             const heading = labels.details;
             if (heading.containsRow(y)) {
-                const title = if (ui.wide) copy.at_full_size else copy.detail_section_title;
+                const title = if (pane_layout.panoramic) copy.at_full_size else copy.detail_section_title;
                 line.text(heading.x, heading.y, title, .bold, heading.size, ink);
             }
-            if (ui.wide) {
+            if (pane_layout.panoramic) {
                 self.drawFocus(line);
                 return pixels;
             }
@@ -144,10 +144,10 @@ pub const Rows = struct {
             for (sheet_plan.details) |detail| {
                 if (y < detail.top or y >= detail.top + detail.height) continue;
                 const diameter = labels.detail_badge;
-                badge(line, .{ .x = left_x, .y = detail.top, .w = diameter, .h = diameter }, detail.region.kind, detail.number.bytes(), ui);
+                badge(line, .{ .x = left_x, .y = detail.top, .w = diameter, .h = diameter }, detail.region.kind, detail.number.bytes(), pane_layout);
                 line.text(labels.detail_kind_x, detail.top + labels.detail_kind_offset, kindName(detail.region.kind), .regular, labels.body_size, secondary);
-                drawDetail(line, detail.before, sheet_plan.before.image, detail_x, sheet_plan.detail_slot_width, detail.top, detail.height, detail.region.kind, ui);
-                drawDetail(line, detail.after, sheet_plan.after.image, after_detail_x, sheet_plan.detail_slot_width, detail.top, detail.height, detail.region.kind, ui);
+                drawDetail(line, detail.before, sheet_plan.before.image, detail_x, sheet_plan.detail_slot_width, detail.top, detail.height, detail.region.kind, pane_layout);
+                drawDetail(line, detail.after, sheet_plan.after.image, after_detail_x, sheet_plan.detail_slot_width, detail.top, detail.height, detail.region.kind, pane_layout);
                 break;
             }
         }
@@ -156,7 +156,7 @@ pub const Rows = struct {
 
     noinline fn drawFocus(self: Rows, line: Line) void {
         const sheet_plan = self.plan;
-        const badge_reach = badgeDiameter(sheet_plan.layout) -| focus_caption_height;
+        const badge_reach = badgeDiameter(sheet_plan.pane_layout) -| focus_caption_height;
         for (sheet_plan.focuses, 0..) |focus, index| {
             // A badge placed above a short crop can extend into the gap
             // before the caption. Unused merge entries have zero height.
@@ -174,7 +174,7 @@ pub const Rows = struct {
             for (sheet_plan.details) |detail| {
                 if (detail.focus != index) continue;
                 for (detail.focus_marks, detail.focus_badges) |mark, location| {
-                    drawMark(line, mark, location, detail, sheet_plan.layout);
+                    drawMark(line, mark, location, detail, sheet_plan.pane_layout);
                 }
             }
             return;
@@ -193,15 +193,15 @@ pub fn render(allocator: Allocator, before: Image, after: Image, regions: []cons
 }
 
 /// Copies the visible preview pixels for one row.
-noinline fn drawPane(line: Line, pane: Pane, x: usize, y: usize, ui: Layout) void {
+noinline fn drawPane(line: Line, pane: Pane, x: usize, y: usize, pane_layout: PaneLayout) void {
     const rect = paneRect(x, y, pane.dimensions);
-    const radius = ui.px(16);
+    const radius = pane_layout.px(16);
     const shades = [_]Pixel{ .{ 241, 241, 242, 255 }, .{ 237, 237, 238, 255 }, .{ 232, 232, 234, 255 } };
-    if (line.y >= y + radius + ui.px(5) and line.y + radius + ui.px(5) < y + rect.h) {
+    if (line.y >= y + radius + pane_layout.px(5) and line.y + radius + pane_layout.px(5) < y + rect.h) {
         const right = x + rect.w;
-        var outer = ui.px(8);
+        var outer = pane_layout.px(8);
         for ([_]usize{ 5, 2, 0 }, shades) |inset, tone| {
-            const inner = ui.px(inset);
+            const inner = pane_layout.px(inset);
             line.fill(x - outer, x - inner, tone);
             line.fill(right + inner, right + outer, tone);
             outer = inner;
@@ -218,9 +218,9 @@ noinline fn drawPane(line: Line, pane: Pane, x: usize, y: usize, ui: Layout) voi
     // Layer short bands of softening shadow while leaving the pane interior
     // to its source copy. The extra painting only touches the perimeter.
     for ([_]usize{ 8, 5, 2 }, shades) |spread, tone| {
-        var shadow = rect.outset(ui.px(spread));
-        shadow.y += ui.px(4);
-        if (roundSpan(shadow, radius + ui.px(spread), line.y)) |span| {
+        var shadow = rect.outset(pane_layout.px(spread));
+        shadow.y += pane_layout.px(4);
+        if (roundSpan(shadow, radius + pane_layout.px(spread), line.y)) |span| {
             if (visible) |inside| {
                 line.fill(span[0], @min(inside[0], span[1]), tone);
                 line.fill(@max(inside[1], span[0]), span[1], tone);
@@ -248,14 +248,14 @@ test "the streaming gutter connects shifted rows and shows the insertion wedge" 
     defer allocator.free(storage);
     const x = rows.plan.panes[0].right();
     const gap = rows.plan.panes[1].x - x;
-    const in_wedge = rows.row(rows.plan.panes[0].y + rows.plan.layout.position(50), storage);
+    const in_wedge = rows.row(rows.plan.panes[0].y + rows.plan.pane_layout.position(50), storage);
     try std.testing.expectEqual(moved_band, in_wedge[x + 10]);
     try std.testing.expectEqual(insert_band, in_wedge[x + gap - 10]);
-    const fixed = rows.row(rows.plan.panes[0].y + rows.plan.layout.position(125), storage);
+    const fixed = rows.row(rows.plan.panes[0].y + rows.plan.pane_layout.position(125), storage);
     try std.testing.expectEqual(stationary, fixed[x + gap / 2]);
 }
 
-test "wide overviews reserve no alignment strip even when rows move" {
+test "panoramic overviews reserve no alignment strip even when rows move" {
     const allocator = std.testing.allocator;
     const pixels: [360 * 120]Pixel = @splat(white);
     const image: Image = .{ .width = 360, .height = 120, .pixels = &pixels };
@@ -279,7 +279,7 @@ test "short and tall strips have bounded previews" {
         const size = try plan.minimumSize(source, source);
         try std.testing.expect(size.width <= max_sheet_width);
         try std.testing.expect(size.height < 2000);
-        const ui = Layout.init(source, source);
-        try std.testing.expect(ui.preview(source).height <= 1600);
+        const pane_layout = PaneLayout.init(source, source);
+        try std.testing.expect(pane_layout.preview(source).height <= 1600);
     }
 }

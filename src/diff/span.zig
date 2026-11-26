@@ -75,7 +75,7 @@ pub fn collect(allocator: Allocator, collector: *Collector, moves: *std.ArrayLis
         if (parts.next()) |first| if (first.span.width != scope.span.width and
             (ambiguous or hasFlatColumn(before, after, first, parts)))
         {
-            if (before.height == after.height and !hasWideColumn(first, parts, local_limit_px)) {
+            if (before.height == after.height and !hasColumnWiderThanLimit(first, parts, local_limit_px)) {
                 buffers.alignment.deinit(allocator);
                 return compareSpan(allocator, collector, scope, null, &buffers);
             }
@@ -151,7 +151,7 @@ fn hasFlatColumn(before: Image, after: Image, first: columns.Group, trailing: co
     }
 }
 
-fn hasWideColumn(first: columns.Group, tail: columns.Partition, limit: usize) bool {
+fn hasColumnWiderThanLimit(first: columns.Group, tail: columns.Partition, limit: usize) bool {
     var group = first;
     var rest = tail;
     while (group.span.width <= limit) group = rest.next() orelse return false;

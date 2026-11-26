@@ -10,7 +10,7 @@ const crops = @import("crops.zig");
 const badges = @import("badges.zig");
 const ribbons = @import("ribbons.zig");
 const Rect = geometry.Rect;
-const Layout = geometry.Layout;
+const PaneLayout = geometry.PaneLayout;
 const Pane = geometry.Pane;
 const margin = geometry.margin;
 const max_sheet_width = geometry.max_sheet_width;
@@ -72,7 +72,7 @@ const Labels = struct {
     body_size: usize,
 };
 
-const DetailPlacement = struct { layout: Layout, panes: [2]Rect, top: usize, slot: usize, x: [2]usize };
+const DetailPlacement = struct { pane_layout: PaneLayout, panes: [2]Rect, top: usize, slot: usize, x: [2]usize };
 const DetailPlan = struct { details: []Detail, focuses: []Focus, end: usize, kinds: u8 };
 
 /// Owns placements and borrows the source images. Release with deinit.
@@ -83,7 +83,7 @@ pub const Plan = struct {
     focuses: []Focus,
     ribbons: []Ribbon,
     size: Size,
-    layout: Layout,
+    pane_layout: PaneLayout,
     panes: [2]Rect,
     pane_end: usize,
     detail_slot_width: usize,
@@ -95,24 +95,24 @@ pub const Plan = struct {
     /// Lays out the sheet and checks that the complete output fits image bounds.
     pub fn init(allocator: Allocator, before: Image, after: Image, regions: []const Region, moves: []const Move) RenderError!Plan {
         if (!before.valid() or !after.valid()) return error.InvalidImage;
-        const layout = Layout.init(before.size(), after.size());
+        const pane_layout = PaneLayout.init(before.size(), after.size());
         var size = try minimumSize(before.size(), after.size());
-        const before_pane = try Pane.init(allocator, before, layout);
+        const before_pane = try Pane.init(allocator, before, pane_layout);
         errdefer before_pane.deinit(allocator);
-        const after_pane = try Pane.init(allocator, after, layout);
+        const after_pane = try Pane.init(allocator, after, pane_layout);
         errdefer after_pane.deinit(allocator);
-        var panes = layout.panes(before.size(), after.size());
-        reserveBadgeLanes(&panes, &size, layout, before, after, regions);
+        var panes = pane_layout.panes(before.size(), after.size());
+        reserveBadgeLanes(&panes, &size, pane_layout, before, after, regions);
         const pane_end = @max(panes[0].bottom(), panes[1].bottom());
-        size.height = pane_end + layout.px(margin);
-        const detail_x = layout.px(margin) + layout.px(detail_label_w);
-        const slot = layout.px(max_crop_w);
-        const after_detail_x = detail_x + slot + layout.px(crop_gap);
-        if (regions.len != 0) size.width = @max(size.width, after_detail_x + slot + layout.px(margin));
+        size.height = pane_end + pane_layout.px(margin);
+        const detail_x = pane_layout.px(margin) + pane_layout.px(detail_label_w);
+        const slot = pane_layout.px(max_crop_w);
+        const after_detail_x = detail_x + slot + pane_layout.px(crop_gap);
+        if (regions.len != 0) size.width = @max(size.width, after_detail_x + slot + pane_layout.px(margin));
         const content = try planDetails(allocator, before, after, regions, .{
-            .layout = layout,
+            .pane_layout = pane_layout,
             .panes = panes,
-            .top = pane_end + layout.px(detail_header),
+            .top = pane_end + pane_layout.px(detail_header),
             .slot = slot,
             .x = .{ detail_x, after_detail_x },
         });
@@ -120,12 +120,12 @@ pub const Plan = struct {
         const focuses = content.focuses;
         errdefer allocator.free(details);
         errdefer allocator.free(focuses);
-        const captions = layoutCaptions(layout, panes, size.width);
-        try placeBadges(allocator, details, focuses, panes, .{ before, after }, size, layout, captions.bounds, if (moves.len != 0 and !layout.wide) .ribbons else .plain);
-        if (details.len != 0) size.height = content.end + layout.px(margin) - layout.px(detail_gap);
+        const captions = layoutCaptions(pane_layout, panes, size.width);
+        try placeBadges(allocator, details, focuses, panes, .{ before, after }, size, pane_layout, captions.bounds, if (moves.len != 0 and !pane_layout.panoramic) .ribbons else .plain);
+        if (details.len != 0) size.height = content.end + pane_layout.px(margin) - pane_layout.px(detail_gap);
         if (size.width > max_sheet_width or size.pixelCount() == null) return error.SheetTooLarge;
 
-        const planned_ribbons = try planRibbons(allocator, moves, details, before.size(), after.size(), layout);
+        const planned_ribbons = try planRibbons(allocator, moves, details, before.size(), after.size(), pane_layout);
         errdefer allocator.free(planned_ribbons);
         return .{
             .before = before_pane,
@@ -134,13 +134,13 @@ pub const Plan = struct {
             .focuses = focuses,
             .ribbons = planned_ribbons,
             .size = size,
-            .layout = layout,
+            .pane_layout = pane_layout,
             .panes = panes,
             .pane_end = pane_end,
             .detail_slot_width = slot,
             .detail_x = .{ detail_x, after_detail_x },
             .captions = captions,
-            .labels = layoutLabels(layout, panes[0].x, pane_end, content.kinds),
+            .labels = layoutLabels(pane_layout, panes[0].x, pane_end, content.kinds),
             .heading = try layoutHeading(regions.len, moves),
         };
     }
@@ -184,21 +184,21 @@ const detail_kind_gap = 71;
 /// Checks the preview dimensions before allocating sheet details.
 pub fn minimumSize(before: Size, after: Size) error{SheetTooLarge}!Size {
     if (before.pixelCount() == null or after.pixelCount() == null) return error.SheetTooLarge;
-    const ui = Layout.init(before, after);
-    const panes = ui.panes(before, after);
+    const pane_layout = PaneLayout.init(before, after);
+    const panes = pane_layout.panes(before, after);
     const size: Size = .{
-        .width = if (ui.wide)
-            geometry.overview_width + 2 * ui.px(margin)
+        .width = if (pane_layout.panoramic)
+            geometry.overview_width + 2 * pane_layout.px(margin)
         else
-            @max(panes[0].right(), panes[1].right()) + ui.px(margin),
-        .height = @max(panes[0].bottom(), panes[1].bottom()) + ui.px(margin),
+            @max(panes[0].right(), panes[1].right()) + pane_layout.px(margin),
+        .height = @max(panes[0].bottom(), panes[1].bottom()) + pane_layout.px(margin),
     };
     if (size.width > max_sheet_width or size.pixelCount() == null) return error.SheetTooLarge;
     return size;
 }
 
 fn planDetails(allocator: Allocator, before: Image, after: Image, regions: []const Region, placement: DetailPlacement) RenderError!DetailPlan {
-    const layout = placement.layout;
+    const pane_layout = placement.pane_layout;
     const panes = placement.panes;
     const slot = placement.slot;
     const detail_x, const after_detail_x = placement.x;
@@ -206,7 +206,7 @@ fn planDetails(allocator: Allocator, before: Image, after: Image, regions: []con
     errdefer allocator.free(details);
     var top = placement.top;
     var kinds: u8 = 0;
-    const focuses = try allocator.alloc(Focus, if (layout.wide) regions.len else 0);
+    const focuses = try allocator.alloc(Focus, if (pane_layout.panoramic) regions.len else 0);
     errdefer allocator.free(focuses);
     for (regions, details, 0..) |region, *detail, index| {
         const old = imageRect(before, region.before);
@@ -214,8 +214,8 @@ fn planDetails(allocator: Allocator, before: Image, after: Image, regions: []con
         if ((region.before != null and old == null) or (region.after != null and new == null)) return error.InvalidRegionBox;
         if (region.number == 0 and (old != null or new != null)) return error.InvalidRegionNumber;
         kinds |= kindBit(region.kind);
-        const a, const b = if (layout.wide) .{ null, null } else cropPair(.{ before, after }, .{ old, new }, .{ detail_x, after_detail_x }, top, slot, layout);
-        const height = @max(layout.px(min_slot_h), if (a) |p| p.to.h + 2 * layout.px(3) else 0, if (b) |p| p.to.h + 2 * layout.px(3) else 0);
+        const a, const b = if (pane_layout.panoramic) .{ null, null } else cropPair(.{ before, after }, .{ old, new }, .{ detail_x, after_detail_x }, top, slot, pane_layout);
+        const height = @max(pane_layout.px(min_slot_h), if (a) |p| p.to.h + 2 * pane_layout.px(3) else 0, if (b) |p| p.to.h + 2 * pane_layout.px(3) else 0);
         const before_mark = offsetMark(old, panes[0], before.size());
         const after_mark = offsetMark(new, panes[1], after.size());
         detail.* = .{
@@ -229,18 +229,18 @@ fn planDetails(allocator: Allocator, before: Image, after: Image, regions: []con
             .top = top,
             .height = height,
         };
-        if (layout.wide) {
+        if (pane_layout.panoramic) {
             focuses[index] = .{ .windows = .{ focusWindow(old orelse new, before.size()), focusWindow(new orelse old, after.size()) } };
         } else {
-            top = std.math.add(usize, top, height + layout.px(detail_gap)) catch return error.SheetTooLarge;
+            top = std.math.add(usize, top, height + pane_layout.px(detail_gap)) catch return error.SheetTooLarge;
             if (top > values.max_extent) return error.SheetTooLarge;
         }
     }
-    if (layout.wide) top = try layoutFocus(details, focuses, .{ before.size(), after.size() }, top);
+    if (pane_layout.panoramic) top = try layoutFocus(details, focuses, .{ before.size(), after.size() }, top);
     return .{ .details = details, .focuses = focuses, .end = top, .kinds = kinds };
 }
 
-fn planRibbons(allocator: Allocator, moves: []const Move, details: []const Detail, before: Size, after: Size, layout: Layout) RenderError![]Ribbon {
+fn planRibbons(allocator: Allocator, moves: []const Move, details: []const Detail, before: Size, after: Size, pane_layout: PaneLayout) RenderError![]Ribbon {
     // A single gutter represents a single vertical path. For independent
     // columns depict the path that covers the most moved pixels.
     var area: usize = 0;
@@ -258,21 +258,21 @@ fn planRibbons(allocator: Allocator, moves: []const Move, details: []const Detai
         }
     }
     var count: usize = 0;
-    if (!layout.wide) if (column) |chosen| {
+    if (!pane_layout.panoramic) if (column) |chosen| {
         for (moves) |move| {
-            if (move.x == chosen.x and move.width == chosen.width and previewMove(move, layout) != null) count += 1;
+            if (move.x == chosen.x and move.width == chosen.width and previewMove(move, pane_layout) != null) count += 1;
         }
     };
     const planned_ribbons = try allocator.alloc(Ribbon, count);
     errdefer allocator.free(planned_ribbons);
     var index: usize = 0;
-    if (!layout.wide) if (column) |chosen| {
+    if (!pane_layout.panoramic) if (column) |chosen| {
         for (moves) |move| {
             if (move.x != chosen.x or move.width != chosen.width) continue;
-            const drawn = previewMove(move, layout) orelse continue;
+            const drawn = previewMove(move, pane_layout) orelse continue;
             const delta = displacement(move);
             const wedge = wedgeTop(details, move, delta > 0);
-            planned_ribbons[index] = .{ .move = drawn, .wedge_top = if (wedge) |y| layout.position(y) else null, .label = if (delta >= 0)
+            planned_ribbons[index] = .{ .move = drawn, .wedge_top = if (wedge) |y| pane_layout.position(y) else null, .label = if (delta >= 0)
                 try Text.format(copy.positive_shift_format, .{delta})
             else
                 try Text.format(copy.shift_format, .{delta}) };
@@ -294,29 +294,29 @@ fn layoutHeading(region_count: usize, moves: []const Move) RenderError!Text {
     return if (moves.len == 0) Text.format(copy.heading_format, .{ region_count, changes }) else Text.format(copy.moved_heading_format, .{ region_count, changes, moves.len, blocks, direction });
 }
 
-fn layoutLabels(ui: Layout, left: usize, pane_end: usize, kinds: u8) Labels {
-    const body = ui.px(body_size);
-    const mark = badges.badgeDiameter(ui);
+fn layoutLabels(pane_layout: PaneLayout, left: usize, pane_end: usize, kinds: u8) Labels {
+    const body = pane_layout.px(body_size);
+    const mark = badges.badgeDiameter(pane_layout);
     var labels: Labels = .{
-        .title = makeLabel(left, ui.px(title_top), ui.px(title_size), .bold),
+        .title = makeLabel(left, pane_layout.px(title_top), pane_layout.px(title_size), .bold),
         .legend = @splat(null),
-        .details = makeLabel(if (ui.wide) ui.px(margin) else left, pane_end + ui.px(detail_title_gap), ui.px(detail_title_size), .bold),
-        .detail_kind_x = left + ui.px(detail_kind_gap),
+        .details = makeLabel(if (pane_layout.panoramic) pane_layout.px(margin) else left, pane_end + pane_layout.px(detail_title_gap), pane_layout.px(detail_title_size), .bold),
+        .detail_kind_x = left + pane_layout.px(detail_kind_gap),
         .detail_kind_offset = mark / 2 - text.Face.regular.height(body) / 2,
         .detail_badge = mark,
         .body_size = body,
     };
     var x = left;
-    const swatch = ui.px(swatch_size);
+    const swatch = pane_layout.px(swatch_size);
     for (legend_kinds, &labels.legend) |kind, *entry| {
         if (kinds & kindBit(kind) == 0) continue;
         entry.* = .{
             .kind = kind,
-            .box = .{ .x = x, .y = ui.px(swatch_top), .w = swatch, .h = swatch },
-            .radius = ui.px(swatch_rounding),
-            .label = makeLabel(x + ui.px(legend_text_x), ui.px(legend_top), body, .regular),
+            .box = .{ .x = x, .y = pane_layout.px(swatch_top), .w = swatch, .h = swatch },
+            .radius = pane_layout.px(swatch_rounding),
+            .label = makeLabel(x + pane_layout.px(legend_text_x), pane_layout.px(legend_top), body, .regular),
         };
-        x += ui.px(legend_spacing) + textWidth(.regular, body, palette.kindName(kind));
+        x += pane_layout.px(legend_spacing) + textWidth(.regular, body, palette.kindName(kind));
     }
     return labels;
 }
@@ -325,21 +325,21 @@ fn makeLabel(x: usize, y: usize, size: usize, face: text.Face) Label {
     return .{ .x = x, .y = y, .size = size, .height = face.height(size) };
 }
 
-fn layoutCaptions(layout: Layout, panes: [2]Rect, width: usize) Captions {
-    const available_before = if (layout.wide) width - panes[0].x else panes[1].x - panes[0].x -| layout.px(caption_gap);
-    var size = layout.px(24);
+fn layoutCaptions(pane_layout: PaneLayout, panes: [2]Rect, width: usize) Captions {
+    const available_before = if (pane_layout.panoramic) width - panes[0].x else panes[1].x - panes[0].x -| pane_layout.px(caption_gap);
+    var size = pane_layout.px(24);
     while (size > 1 and (textWidth(.bold, size, copy.before) > available_before or
         textWidth(.bold, size, copy.after) > width - panes[1].x)) size -= 1;
     var result: Captions = .{ .size = size, .bounds = undefined };
     for (panes, [_][]const u8{ copy.before, copy.after }, &result.bounds) |pane, label, *bounds| {
-        bounds.* = .{ .x = pane.x, .y = pane.y - layout.px(caption_offset), .w = textWidth(.bold, size, label), .h = text.Face.bold.height(size) };
+        bounds.* = .{ .x = pane.x, .y = pane.y - pane_layout.px(caption_offset), .w = textWidth(.bold, size, label), .h = text.Face.bold.height(size) };
     }
     return result;
 }
 
-fn reserveBadgeLanes(panes: *[2]Rect, size: *Size, ui: Layout, before: Image, after: Image, regions: []const Region) void {
-    const diameter = overviewDiameter(ui);
-    const needed = diameter + if (@min(panes[0].w, panes[1].w) < diameter) 2 * ui.px(badges.thin_badge_gap) else 0;
+fn reserveBadgeLanes(panes: *[2]Rect, size: *Size, pane_layout: PaneLayout, before: Image, after: Image, regions: []const Region) void {
+    const diameter = overviewDiameter(pane_layout);
+    const needed = diameter + if (@min(panes[0].w, panes[1].w) < diameter) 2 * pane_layout.px(badges.thin_badge_gap) else 0;
     var left = false;
     var right = false;
     var middle = false;
@@ -348,9 +348,9 @@ fn reserveBadgeLanes(panes: *[2]Rect, size: *Size, ui: Layout, before: Image, af
             const mark = offsetMark(imageRect(image, box), pane, image.size()) orelse continue;
             const near_left = mark.x - pane.x < diameter;
             const near_right = pane.right() - mark.right() < diameter;
-            left = left or (near_left and (side == 0 or ui.wide));
-            right = right or (near_right and (side == 1 or ui.wide));
-            middle = middle or (!ui.wide and (if (side == 0) near_right else near_left));
+            left = left or (near_left and (side == 0 or pane_layout.panoramic));
+            right = right or (near_right and (side == 1 or pane_layout.panoramic));
+            middle = middle or (!pane_layout.panoramic and (if (side == 0) near_right else near_left));
         }
     }
     if (left) {
@@ -380,13 +380,13 @@ test "large sources fit their reduced previews" {
 
 test "thin tall previews have room for both pane captions" {
     const source: Size = .{ .width = 200, .height = 20_030 };
-    const layout = Layout.init(source, source);
-    const panes = layout.panes(source, source);
+    const pane_layout = PaneLayout.init(source, source);
+    const panes = pane_layout.panes(source, source);
     const sheet = try minimumSize(source, source);
-    const captions = layoutCaptions(layout, panes, sheet.width);
-    try std.testing.expect(captions.size < layout.px(24));
+    const captions = layoutCaptions(pane_layout, panes, sheet.width);
+    try std.testing.expect(captions.size < pane_layout.px(24));
     try std.testing.expectEqual(captions.bounds[0].h, captions.bounds[1].h);
-    try std.testing.expect(captions.bounds[0].right() + layout.px(caption_gap) <= captions.bounds[1].x);
+    try std.testing.expect(captions.bounds[0].right() + pane_layout.px(caption_gap) <= captions.bounds[1].x);
     try std.testing.expect(captions.bounds[1].right() <= sheet.width);
 }
 
@@ -451,8 +451,8 @@ test {
     const detail = plan.details[0];
     const overview = detail.after_badge.position().?;
     const focus = detail.focus_badges[1].position().?;
-    const ui = Layout.init(image.size(), image.size());
-    try std.testing.expectEqual(overviewDiameter(ui), overview.w);
+    const pane_layout = PaneLayout.init(image.size(), image.size());
+    try std.testing.expectEqual(overviewDiameter(pane_layout), overview.w);
     try std.testing.expectEqual(@as(usize, 59), focus.w);
     try std.testing.expectEqual(plan.panes[1].y, overview.bottom());
     try std.testing.expectEqual(plan.focuses[0].crops[1].?.to.y, focus.bottom());
@@ -530,7 +530,7 @@ test "edge badges use the gutter margins and the space above the caption" {
     try std.testing.expect(center.distanceSquared(center_mark) <= 36);
 }
 
-test "wide sheets use bounded overviews and merge overlapping focus crops" {
+test "panoramic sheets use bounded overviews and merge overlapping focus crops" {
     const overview_caption_gap = geometry.overview_caption_gap;
     const Pixel = values.Pixel;
     const allocator = std.testing.allocator;

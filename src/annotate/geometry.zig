@@ -14,17 +14,17 @@ pub const SourceRect = RectFor(.source);
 pub const Rect = RectFor(.sheet);
 
 /// Preview scale, UI scale, and pane arrangement for a sheet.
-pub const Layout = struct {
+pub const PaneLayout = struct {
     percent: usize,
     numerator: usize,
     denominator: usize,
-    wide: bool,
+    panoramic: bool,
 
     /// Chooses the preview scale and pane arrangement from source dimensions.
-    pub fn init(before: Size, after: Size) Layout {
+    pub fn init(before: Size, after: Size) PaneLayout {
         const source_width = @max(before.width, after.width);
         // A panoramic capture gets a full-width slot even beside a portrait.
-        const wide = before.width > 2 * before.height or after.width > 2 * after.height;
+        const panoramic = before.width > 2 * before.height or after.width > 2 * after.height;
         const shortest = @min(before.width, before.height, after.width, after.height);
         const source_height = @max(before.height, after.height);
         const limit = max_side_pane_width;
@@ -37,26 +37,26 @@ pub const Layout = struct {
             .{ @min((min_preview_side + shortest - 1) / shortest, limit / source_width, height_limit / source_height), 1 };
         const view_width = @max(1, source_width * scale[0] / scale[1]);
         return .{
-            .percent = if (wide) 100 else @min(205, @max(100, (view_width * 100 + 390) / 780)),
+            .percent = if (panoramic) 100 else @min(205, @max(100, (view_width * 100 + 390) / 780)),
             .numerator = scale[0],
             .denominator = scale[1],
-            .wide = wide,
+            .panoramic = panoramic,
         };
     }
 
     /// Converts a base UI length into sheet pixels.
-    pub fn px(self: Layout, n: usize) usize {
+    pub fn px(self: PaneLayout, n: usize) usize {
         return (n * self.percent + 50) / 100;
     }
 
     /// Projects a device coordinate into preview pixels.
-    pub fn position(self: Layout, n: usize) usize {
+    pub fn position(self: PaneLayout, n: usize) usize {
         return n * self.numerator / self.denominator;
     }
 
     /// Returns the scaled dimensions of a source pane.
-    pub fn preview(self: Layout, size: Size) Size {
-        if (self.wide) {
+    pub fn preview(self: PaneLayout, size: Size) Size {
+        if (self.panoramic) {
             if (size.width * overview_max_height >= size.height * overview_width) return .{
                 .width = overview_width,
                 .height = @max(1, size.height * overview_width / size.width),
@@ -70,23 +70,23 @@ pub const Layout = struct {
     }
 
     /// Returns the two overview rectangles in sheet coordinates.
-    pub fn panes(self: Layout, before: Size, after: Size) [2]Rect {
+    pub fn panes(self: PaneLayout, before: Size, after: Size) [2]Rect {
         const x = self.px(margin);
         const y = self.px(pane_top);
         const a = paneRect(x, y, self.preview(before));
         const after_size = self.preview(after);
         const b = paneRect(
-            if (self.wide) x else a.right() + self.gutterFor(a.w, after_size.width),
-            if (self.wide) a.bottom() + overview_caption_gap else y,
+            if (self.panoramic) x else a.right() + self.gutterFor(a.w, after_size.width),
+            if (self.panoramic) a.bottom() + overview_caption_gap else y,
             after_size,
         );
         return .{ a, b };
     }
 
-    fn gutterFor(self: Layout, before: usize, after: usize) usize {
+    fn gutterFor(self: PaneLayout, before: usize, after: usize) usize {
         return @max(48, @min(self.px(gutter), @min(before, after) / 4));
     }
-    fn extent(self: Layout, n: usize) usize {
+    fn extent(self: PaneLayout, n: usize) usize {
         return @max(1, self.position(n));
     }
 };
@@ -98,8 +98,8 @@ pub const Pane = struct {
     samples: []const u16,
 
     /// Builds the optional column sampling table. Release with deinit.
-    pub fn init(allocator: Allocator, image: Image, ui: Layout) Allocator.Error!Pane {
-        const size = ui.preview(image.size());
+    pub fn init(allocator: Allocator, image: Image, pane_layout: PaneLayout) Allocator.Error!Pane {
+        const size = pane_layout.preview(image.size());
         if (size.width == image.width) return .{ .image = image, .dimensions = size, .samples = &.{} };
         const samples = try allocator.alloc(u16, size.width);
         for (samples, 0..) |*x, i| x.* = @intCast(i * image.width / size.width);
@@ -158,8 +158,8 @@ pub fn paneRect(x: usize, y: usize, size: Size) Rect {
 }
 
 /// Reports whether a row is close enough to paint the pane frame.
-pub fn nearPane(y: usize, pane: Rect, ui: Layout) bool {
-    return y + ui.px(8) >= pane.y and y < pane.bottom() + ui.px(12);
+pub fn nearPane(y: usize, pane: Rect, pane_layout: PaneLayout) bool {
+    return y + pane_layout.px(8) >= pane.y and y < pane.bottom() + pane_layout.px(12);
 }
 
 /// Projects a source rectangle onto a pane showing the complete image.
@@ -265,10 +265,10 @@ test "stacked overviews fit both axes at a single scale" {
         },
     };
     for (cases) |case| {
-        const layout = Layout.init(case.sources[0], case.sources[1]);
-        try std.testing.expect(layout.wide);
+        const pane_layout = PaneLayout.init(case.sources[0], case.sources[1]);
+        try std.testing.expect(pane_layout.panoramic);
         for (case.sources, case.previews) |source, expected| {
-            try std.testing.expectEqual(expected, layout.preview(source));
+            try std.testing.expectEqual(expected, pane_layout.preview(source));
         }
     }
 }

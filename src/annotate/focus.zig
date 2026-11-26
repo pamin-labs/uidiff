@@ -41,7 +41,7 @@ pub const Badge = union(enum) {
     }
 };
 
-/// Layout of one numbered region in the overview and detail rows.
+/// One numbered region's crops, marks and badges in the overview and detail rows.
 pub const Detail = struct {
     region: Region,
     before: ?Crop,
