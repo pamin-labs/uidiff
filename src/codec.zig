@@ -1,5 +1,6 @@
 //! Detects, reads and decodes bounded PNG, JPEG, or WebP inputs, and encodes PNG.
 const std = @import("std");
+const builtin = @import("builtin");
 const values = @import("value.zig");
 const stb = @import("codec/stb.zig");
 
@@ -12,9 +13,6 @@ const Image = values.Image;
 const Pixel = values.Pixel;
 const Size = values.Size;
 const Io = std.Io;
-
-/// Procedural JPEG inputs shared by the decoder and pair tests.
-pub const jpeg_test_images = @import("codec/jpeg_test_images.zig");
 
 /// Writes a valid image as PNG.
 pub const encodePng = png.write;
@@ -95,6 +93,9 @@ pub const FileInput = struct {
 const formats = .{ .png = png, .jpeg = jpeg, .webp = webp };
 
 const probe_prefix_bytes = 4096;
+
+/// Procedural JPEG inputs shared by the decoder and pair tests.
+pub const jpeg_test_images = if (builtin.is_test) @import("codec/jpeg_test_images.zig") else void;
 
 /// Checks the encoded size, image dimensions and decode budget before
 /// allocating pixels. The caller owns the result.
@@ -206,12 +207,6 @@ fn pixelCount(size: Size) DecodeError!usize {
     return size.pixelCount() orelse if (size.width == 0 or size.height == 0) error.InvalidImage else error.ImageTooLarge;
 }
 
-fn readOnce(allocator: Allocator, dir: Io.Dir, name: []const u8) !void {
-    var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
-    const length = try dir.realPathFile(std.testing.io, name, &path_buffer);
-    allocator.free(try readFile(std.testing.io, allocator, path_buffer[0..length]));
-}
-
 test "invalid PNG input fails instead of looking unchanged" {
     try std.testing.expectError(error.UnsupportedImageFormat, decode(std.testing.allocator, "not a PNG"));
     try std.testing.expectError(error.InvalidImage, decode(std.testing.allocator, "\x89PNG\r\n\x1a\n"));
@@ -263,10 +258,17 @@ test "header preflight handles JPEG metadata beyond its initial read" {
 }
 
 test "reading a file releases each allocation on failure" {
+    const Check = struct {
+        fn readOnce(allocator: Allocator, dir: Io.Dir, name: []const u8) !void {
+            var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
+            const length = try dir.realPathFile(std.testing.io, name, &path_buffer);
+            allocator.free(try readFile(std.testing.io, allocator, path_buffer[0..length]));
+        }
+    };
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "input.png", .data = "\x89PNG\r\n\x1a\n" });
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, readOnce, .{ tmp.dir, "input.png" });
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, Check.readOnce, .{ tmp.dir, "input.png" });
 }
 
 test {
