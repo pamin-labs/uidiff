@@ -7,15 +7,14 @@ const pixel_ops = @import("pixel.zig");
 const yiq = @import("yiq.zig");
 const change_mask = @import("mask.zig");
 const regions = @import("regions.zig");
+const unpaired = @import("unpaired.zig");
 const sample = @import("test_support.zig");
 const Allocator = std.mem.Allocator;
 const Image = values.Image;
 const Raster = yiq.Raster;
 const Box = values.Box;
 const Collector = regions.Collector;
-const Region = values.Region;
 const Pixel = values.Pixel;
-const min_region_pixels = regions.min_region_pixels;
 /// The most regions a comparison reports; nearby ones merge to fit.
 pub const max_regions = regions.max_regions;
 
@@ -61,20 +60,6 @@ pub const Comparison = struct {
 /// Input and scratch-space failures reported by the comparison domain.
 pub const CompareError = Allocator.Error || ScaleError || values.Image.Invalid;
 
-/// The compared pair and the column span holding every change, in device pixels.
-const Scope = struct {
-    before: Image,
-    after: Image,
-    span: columns.Span,
-    /// Where to draw a gap with no changed pixels against its background.
-    bounds: columns.Span,
-    /// The independently aligned column lane, if this is a column group.
-    frame: ?columns.Span = null,
-};
-
-/// Rows one side has and the other does not.
-const Unpaired = struct { side: values.Side, y: usize, count: usize, background: ?[]const Pixel = null, element: bool = false, opposite: ?usize = null };
-
 /// Scratch reused by every band: one mask byte per pixel and the fill's seeds.
 const Scratch = struct { mask: []change_mask.Cell, seeds: []u32 };
 
@@ -115,7 +100,6 @@ pub const scroll_shift = values.CssPx.init(2);
 const short_shift_rows = 16;
 /// Rows on each side of a replacement that may hold part of a split edit.
 const replacement_context_rows = 4;
-const min_bar_rows = 2;
 const min_column_motion_rows = 4;
 const column_motion_scroll_factor = 2;
 
@@ -145,7 +129,7 @@ pub fn compareChecked(allocator: Allocator, before: Image, after: Image, options
     var moves: std.ArrayList(values.Move) = .empty;
     defer moves.deinit(allocator);
     if (span.width != 0) {
-        const scope: Scope = .{ .before = before, .after = after, .span = span, .bounds = .{ .left = 0, .width = overlap_width } };
+        const scope: columns.Scope = .{ .before = before, .after = after, .span = span, .bounds = .{ .left = 0, .width = overlap_width } };
         try spanRegions(allocator, &collector, &moves, scope, @intFromFloat(@min(max_gap_px, options.scale.devicePixels(scroll_shift))));
     }
     if (before.width != after.width) {
@@ -158,7 +142,7 @@ pub fn compareChecked(allocator: Allocator, before: Image, after: Image, options
     return .{ .regions = out, .moves = try moves.toOwnedSlice(allocator), .width = width, .height = height };
 }
 
-fn spanRegions(allocator: Allocator, collector: *Collector, moves: *std.ArrayList(values.Move), scope: Scope, scroll_limit_px: usize) !void {
+fn spanRegions(allocator: Allocator, collector: *Collector, moves: *std.ArrayList(values.Move), scope: columns.Scope, scroll_limit_px: usize) !void {
     const before = scope.before;
     const after = scope.after;
     const row_count = before.height + after.height;
@@ -191,7 +175,7 @@ fn spanRegions(allocator: Allocator, collector: *Collector, moves: *std.ArrayLis
             var has_movement = false;
             var part = first;
             while (true) {
-                const local: Scope = .{ .before = before, .after = after, .span = part.span, .bounds = part.span, .frame = part.lane };
+                const local: columns.Scope = .{ .before = before, .after = after, .span = part.span, .bounds = part.span, .frame = part.lane };
                 // A strip as narrow as the replacement gap may be only the
                 // edge of a card. Give it the same positional comparison as
                 // a stationary group unless the whole span explains a move.
@@ -239,7 +223,7 @@ fn mixedShifts(bands: []const row_diff.Band) bool {
 
 // A blank flank can contain a position-only edit even when the main content
 // has one convincing displacement. Probe those columns before scanning gutters.
-fn hasFlatEdge(scope: Scope) bool {
+fn hasFlatEdge(scope: columns.Scope) bool {
     const left: columns.Span = .{ .left = scope.span.left, .width = 1 };
     const right: columns.Span = .{ .left = scope.span.left + scope.span.width - 1, .width = 1 };
     return columns.sameRows(scope.before, left) or columns.sameRows(scope.after, left) or
@@ -264,7 +248,7 @@ fn hasWideColumn(first: columns.Group, tail: columns.Partition, limit: usize) bo
     return true;
 }
 
-fn columnMotion(scope: Scope, keys: []const u64, move: values.Move, scroll_limit_px: usize) bool {
+fn columnMotion(scope: columns.Scope, keys: []const u64, move: values.Move, scroll_limit_px: usize) bool {
     // A matching edge that remains at its old position gives no evidence
     // that the column moved. Require several content rows at the new offset.
     const before = keys[0..scope.before.height];
@@ -274,14 +258,14 @@ fn columnMotion(scope: Scope, keys: []const u64, move: values.Move, scroll_limit
     for (0..move.before.height) |i| {
         const old = move.before.y + i;
         const new = move.after.y + i;
-        if (before[old] != after[new] or (old < after.len and before[old] == after[old]) or blankBand(scope.before, old, 1, scope.span)) continue;
+        if (before[old] != after[new] or (old < after.len and before[old] == after[old]) or unpaired.blankBand(scope.before, old, 1, scope.span)) continue;
         supported += 1;
         if (supported == minimum) return true;
     }
     return false;
 }
 
-fn gatherColumnMoves(allocator: Allocator, moves: *std.ArrayList(values.Move), scope: Scope, bands: []const row_diff.Band, keys: []const u64, limit: usize) !bool {
+fn gatherColumnMoves(allocator: Allocator, moves: *std.ArrayList(values.Move), scope: columns.Scope, bands: []const row_diff.Band, keys: []const u64, limit: usize) !bool {
     const first = moves.items.len;
     try gatherMoves(allocator, moves, scope, bands);
     var kept = first;
@@ -294,7 +278,7 @@ fn gatherColumnMoves(allocator: Allocator, moves: *std.ArrayList(values.Move), s
     return kept != first;
 }
 
-fn gatherMoves(allocator: Allocator, moves: *std.ArrayList(values.Move), scope: Scope, bands: []const row_diff.Band) !void {
+fn gatherMoves(allocator: Allocator, moves: *std.ArrayList(values.Move), scope: columns.Scope, bands: []const row_diff.Band) !void {
     const span = scope.span;
     const first = moves.items.len;
     var previous: ?usize = null;
@@ -326,8 +310,8 @@ fn gatherMoves(allocator: Allocator, moves: *std.ArrayList(values.Move), scope: 
     }
     var kept = first;
     for (moves.items[first..]) |move| {
-        if (blankBand(scope.before, move.before.y, move.before.height, span) and
-            blankBand(scope.after, move.after.y, move.after.height, span)) continue;
+        if (unpaired.blankBand(scope.before, move.before.y, move.before.height, span) and
+            unpaired.blankBand(scope.after, move.after.y, move.after.height, span)) continue;
         var full = move;
         const pitch = move.shift();
         if (columns.enclosingCard(scope.before, span, scope.frame orelse scope.bounds, move.before.y, columns.CardSearch.motion(span, pitch))) |card| {
@@ -340,7 +324,7 @@ fn gatherMoves(allocator: Allocator, moves: *std.ArrayList(values.Move), scope: 
     moves.items.len = kept;
 }
 
-fn alignSpan(allocator: Allocator, scope: Scope, scroll_limit_px: usize, local_limit_px: usize, keys: []u64, bands: []row_diff.Band, filtered: []u64, workspace: *row_diff.Workspace) Allocator.Error!?[]row_diff.Band {
+fn alignSpan(allocator: Allocator, scope: columns.Scope, scroll_limit_px: usize, local_limit_px: usize, keys: []u64, bands: []row_diff.Band, filtered: []u64, workspace: *row_diff.Workspace) Allocator.Error!?[]row_diff.Band {
     const old_keys = keys[0..scope.before.height];
     const new_keys = keys[scope.before.height..];
     row_diff.keys(scope.before, scope.span.left, scope.span.width, old_keys);
@@ -372,7 +356,7 @@ fn alignSpan(allocator: Allocator, scope: Scope, scroll_limit_px: usize, local_l
     return aligned;
 }
 
-fn compareSpan(allocator: Allocator, collector: *Collector, scope: Scope, aligned: ?[]row_diff.Band, buffers: *CompareBuffers) !void {
+fn compareSpan(allocator: Allocator, collector: *Collector, scope: columns.Scope, aligned: ?[]row_diff.Band, buffers: *CompareBuffers) !void {
     const before = scope.before;
     const after = scope.after;
     const left = scope.span.left;
@@ -410,32 +394,32 @@ fn compareSpan(allocator: Allocator, collector: *Collector, scope: Scope, aligne
         }
         const old_tail = band.before + paired;
         const new_tail = band.after + paired;
-        unpaired(collector, scope, scratch, .{
+        unpaired.collect(collector, scope, scratch.mask, scratch.seeds, .{
             .side = .before,
             .y = old_tail,
             .count = band.removed - paired,
             .element = band.mode == .element,
             .opposite = new_tail,
             .background = if (band.mode == .regular and grouped and band.removed > paired)
-                sharedBackdrop(scope, band.before + band.removed, new_tail)
+                unpaired.sharedBackdrop(scope, band.before + band.removed, new_tail)
             else
                 null,
         });
         const background = switch (band.mode) {
             .revealed => |row| after.row(row),
             .regular => if (grouped and band.added > paired)
-                sharedBackdrop(scope, old_tail, band.after + band.added)
+                unpaired.sharedBackdrop(scope, old_tail, band.after + band.added)
             else
                 null,
             else => null,
         };
-        unpaired(collector, scope, scratch, .{ .side = .after, .y = new_tail, .count = band.added - paired, .background = background, .element = band.mode == .element });
+        unpaired.collect(collector, scope, scratch.mask, scratch.seeds, .{ .side = .after, .y = new_tail, .count = band.added - paired, .background = background, .element = band.mode == .element });
     }
     if (aligned == null and extension != 0) {
         const old_is_taller = before.height > after.height;
         if (scope.frame != null) {
             const short = if (old_is_taller) after else before;
-            unpaired(collector, scope, scratch, .{
+            unpaired.collect(collector, scope, scratch.mask, scratch.seeds, .{
                 .side = if (old_is_taller) .before else .after,
                 .y = overlap,
                 .count = extension,
@@ -448,29 +432,10 @@ fn compareSpan(allocator: Allocator, collector: *Collector, scope: Scope, aligne
     }
 }
 
-// A resized edit can leave an unpaired tail against an unchanged background.
-// Verify the paint across both images before reusing it, including any vertical border.
-fn sharedBackdrop(scope: Scope, old_y: usize, new_y: usize) ?[]const Pixel {
-    if (old_y >= scope.before.height or new_y >= scope.after.height) return null;
-    const span = scope.span;
-    const new = rowRun(scope.after, new_y, span);
-    // The ordinary gap comparison already handles flat paint. Reuse a row
-    // across the edit when both sides of the span show the same card edge.
-    const edge = new[0];
-    const fill = new[new.len / 2];
-    if (pixel_ops.same(edge, fill) or !pixel_ops.same(edge, new[new.len - 1])) return null;
-    var border: usize = 1;
-    while (pixel_ops.same(edge, new[border])) : (border += 1) {}
-    for (new[new.len - border ..]) |p| if (!pixel_ops.same(p, edge)) return null;
-    for (new[border .. new.len - border]) |p| if (!pixel_ops.same(p, fill)) return null;
-    if (!pixel_ops.sameRun(rowRun(scope.before, old_y, span), new)) return null;
-    return scope.after.row(new_y);
-}
-
 // Edge filtering can hide pieces of a replacement stroke. Recover the
 // raw threshold bounds when no component survives or when the edit is
 // confined to one row.
-fn compareReplacement(collector: *Collector, scope: Scope, band: row_diff.Band, evidence: enum { unreported, single_row }) void {
+fn compareReplacement(collector: *Collector, scope: columns.Scope, band: row_diff.Band, evidence: enum { unreported, single_row }) void {
     const left = scope.span.left;
     const width = scope.span.width;
     // Equal-displacement anchors can include edited rows alongside the
@@ -510,7 +475,7 @@ fn compareReplacement(collector: *Collector, scope: Scope, band: row_diff.Band, 
     });
 }
 
-fn pruneMatched(scope: Scope, bands: []row_diff.Band) []row_diff.Band {
+fn pruneMatched(scope: columns.Scope, bands: []row_diff.Band) []row_diff.Band {
     var len: usize = 0;
     for (bands) |band| {
         if (band.mode == .hash_match and sameBandPixels(scope, band)) continue;
@@ -520,7 +485,7 @@ fn pruneMatched(scope: Scope, bands: []row_diff.Band) []row_diff.Band {
     return bands[0..len];
 }
 
-fn sameBandPixels(scope: Scope, band: row_diff.Band) bool {
+fn sameBandPixels(scope: columns.Scope, band: row_diff.Band) bool {
     const left = scope.span.left;
     const width = scope.span.width;
     // Check the actual bytes before dropping the band, including hash collisions.
@@ -530,132 +495,6 @@ fn sameBandPixels(scope: Scope, band: row_diff.Band) bool {
         if (!pixel_ops.sameRun(before, after)) return false;
     }
     return true;
-}
-
-fn unpaired(collector: *Collector, scope: Scope, scratch: Scratch, rows: Unpaired) void {
-    if (rows.count == 0) return;
-    const source = if (rows.side == .before) scope.before else scope.after;
-    const left = scope.span.left;
-    const width = scope.span.width;
-    const y = rows.y;
-    if (rows.element and rows.background == null) {
-        if (columns.enclosingCard(source, scope.span, scope.frame orelse scope.bounds, y, columns.CardSearch.motion(scope.span, rows.count))) |card| {
-            const box = Box.fromPixels(card.columns.left, card.top, card.columns.width, card.height);
-            collector.addOn(rows.side, box);
-            return;
-        }
-    }
-    const a: Raster = .{ .image = source, .left = left, .top = y, .width = width, .height = rows.count };
-    var b = a;
-    b.background = .margin;
-    if (rows.background) |background| {
-        // The repeated row may come from a narrower image. Limit only the
-        // virtual backdrop's extent, keeping its neighbour loads in bounds.
-        b.image.width = @min(source.width, background.len);
-        b.image.pixels = source.pixels[0 .. b.image.width * source.height];
-        b.background = .{ .row = background };
-    } else if (y > 0 and y + rows.count < source.height) {
-        const above = source.rowSegment(y - 1, left, width);
-        const below = source.rowSegment(y + rows.count, left, width);
-        const last = source.rowSegment(y + rows.count - 1, left, width);
-        if (pixel_ops.sameRun(above, below) or
-            (rows.element and pixel_ops.sameRun(above, last)))
-        {
-            b.background = .{ .row = source.row(y - 1) };
-        }
-    }
-    const mask = scratch.mask[0 .. width * rows.count];
-    const at: regions.Placement = .{
-        .left = left,
-        .rows = if (rows.side == .before) .{ .before = y } else .{ .after = y },
-    };
-    if (yiq.mask(a, b, 0, rows.count, mask)) {
-        const cells: change_mask.Mask = .{ .cells = mask, .width = width };
-        if (rows.element) {
-            if (regions.groupElement(collector, cells, at)) return;
-        } else if (regions.group(collector, cells, scratch.seeds, at) != .empty) return;
-    }
-    if (rows.background != null) return;
-    const blank = blankBand(source, y, rows.count, scope.bounds);
-    // An empty band that changes layout spans its column.
-    const bounds = if (blank) scope.bounds else scope.span;
-    if (rows.side == .before) if (rows.opposite) |opposite| {
-        // Unchanged columns outside the reported span can contain unrelated
-        // paint. Test the same columns that the fallback would report.
-        if ((blank or (bounds.width != scope.bounds.width and blankBand(source, y, rows.count, bounds))) and
-            unchangedBlank(scope, bounds, y, opposite, rows.count)) return;
-    };
-    const box = Box.fromPixels(bounds.left, y, bounds.width, rows.count);
-    collector.addOn(rows.side, box);
-}
-
-fn blankBand(source: Image, first: usize, rows: usize, bounds: columns.Span) bool {
-    const head = rowRun(source, first, bounds);
-    if (!pixel_ops.sameRun(head[1..], head[0 .. head.len - 1])) return false;
-    for (first + 1..first + rows) |y| {
-        if (!pixel_ops.sameRun(head, rowRun(source, y, bounds))) return false;
-    }
-    return true;
-}
-
-fn unchangedBlank(scope: Scope, bounds: columns.Span, y: usize, opposite: usize, rows: usize) bool {
-    if (opposite >= scope.after.height) return true;
-    const expected = rowRun(scope.before, y, bounds);
-    var end = y + rows;
-    while (end < scope.before.height and pixel_ops.sameRun(rowRun(scope.before, end, bounds), expected)) end += 1;
-    if (end == scope.before.height) return hasEqualRun(expected, scope.after, bounds, y, opposite, rows);
-    if (end == y + rows and fixedLowerEdge(scope, bounds, expected, y, end)) return true;
-
-    var first = y;
-    while (first > 0 and pixel_ops.sameRun(rowRun(scope.before, first - 1, bounds), expected)) first -= 1;
-    return interiorBlank(scope.after, bounds, expected, first, end, opposite -| (y - first)) or
-        fixedUpperBar(scope, bounds, expected, first);
-}
-
-fn fixedLowerEdge(scope: Scope, bounds: columns.Span, paint: []const Pixel, y: usize, end: usize) bool {
-    return end < scope.after.height and
-        pixel_ops.sameRun(rowRun(scope.before, end, bounds), rowRun(scope.after, end, bounds)) and
-        hasEqualRun(paint, scope.after, bounds, y, y, end - y);
-}
-
-fn interiorBlank(after: Image, bounds: columns.Span, paint: []const Pixel, first: usize, end: usize, opposite: usize) bool {
-    // Matching only the unpaired portion could hide space actually removed
-    // between two lines of content. Match the whole interior run.
-    return hasEqualRun(paint, after, bounds, first, opposite, end - first);
-}
-
-fn fixedUpperBar(scope: Scope, bounds: columns.Span, paint: []const Pixel, first: usize) bool {
-    if (first < min_bar_rows or first >= scope.after.height or
-        !pixel_ops.sameRun(paint, rowRun(scope.after, first, bounds)) or
-        !blankBand(scope.before, first - min_bar_rows, min_bar_rows, bounds)) return false;
-    // A viewport bar reaches the top. Check its paint at both margins so
-    // icons and lettering can interrupt the interior of the bar.
-    const left = bounds.left;
-    const right = left + bounds.width - 1;
-    const bar = scope.before.row(first - 1)[left];
-    for (0..first) |y| {
-        const a = scope.before.row(y);
-        const z = scope.after.row(y);
-        if (!pixel_ops.same(a[left], bar) or !pixel_ops.same(a[right], bar) or
-            !pixel_ops.same(z[left], bar) or !pixel_ops.same(z[right], bar)) return false;
-    }
-    return true;
-}
-
-fn rowRun(image: Image, y: usize, bounds: columns.Span) []const Pixel {
-    return image.rowSegment(y, bounds.left, bounds.width);
-}
-
-fn hasEqualRun(expected: []const Pixel, image: Image, bounds: columns.Span, y: usize, opposite: usize, needed: usize) bool {
-    const start = @min(y, opposite);
-    const end = @min(image.height, @max(y, opposite) + needed);
-    var run: usize = 0;
-    for (start..end) |row| {
-        const paint = rowRun(image, row, bounds);
-        run = if (pixel_ops.sameRun(expected, paint)) run + 1 else 0;
-        if (run == needed) return true;
-    }
-    return false;
 }
 
 fn comparePair(allocator: Allocator, before: Image, after: Image) !void {
@@ -705,73 +544,6 @@ test "mask growth releases the old mask if remapping and allocation fail" {
     try std.testing.expectEqual(small_area * @sizeOf(change_mask.Cell), counting.freed_bytes);
 }
 
-test "an interior blank run is ignored only if the layout retains its length" {
-    const before = try sample.Canvas.init(64, 80);
-    defer before.deinit();
-    const after = try sample.Canvas.init(64, 80);
-    defer after.deinit();
-    const ink = sample.inkShade(32, 4);
-    before.fill(10, 15, 24, 5, ink);
-    before.fill(10, 32, 30, 5, ink);
-    after.fill(10, 20, 24, 5, ink);
-    after.fill(10, 37, 30, 5, ink);
-    const span: columns.Span = .{ .left = 0, .width = 64 };
-    const scope: Scope = .{ .before = before.view, .after = after.view, .span = span, .bounds = span };
-    try std.testing.expect(unchangedBlank(scope, span, 20, 25, 8));
-    after.fill(10, 31, 30, 6, ink);
-    try std.testing.expect(!unchangedBlank(scope, span, 20, 25, 8));
-}
-
-test "blank space above a fixed input bar does not inherit unrelated sidebar paint" {
-    const before = try sample.Canvas.init(144, 180);
-    defer before.deinit();
-    const after = try sample.Canvas.init(144, 180);
-    defer after.deinit();
-    before.fill(28, 60, 90, 10, sample.inkShade(32, 4));
-    after.fill(28, 80, 90, 10, sample.inkShade(32, 4));
-    for ([_]sample.Canvas{ before, after }) |canvas| {
-        canvas.fill(0, 30, 18, 130, sample.inkShade(96, 4));
-        canvas.fill(20, 130, 110, 20, sample.inkShade(190, 4));
-        canvas.line(30, 112, 135, 0, 32);
-    }
-    const scope: Scope = .{ .before = before.view, .after = after.view, .span = .{ .left = 24, .width = 96 }, .bounds = .{ .left = 0, .width = 144 } };
-    var boxes: [2]regions.Candidate = undefined;
-    var collector: Collector = .{ .boxes = &boxes, .gap_px = 0, .max_gap_px = 144 };
-    var mask: [96 * 20]change_mask.Cell = undefined;
-    var seeds: [20]u32 = undefined;
-    unpaired(&collector, scope, .{ .mask = &mask, .seeds = &seeds }, .{ .side = .before, .y = 110, .count = 20, .opposite = 130 });
-    try std.testing.expectEqual(@as(usize, 0), collector.len);
-}
-
-test "an equal unpaired bottom margin does not produce a removal" {
-    for ([_]Pixel{ @splat(255), .{ 18, 18, 22, 255 } }) |color| {
-        const before = try sample.Canvas.init(64, 40);
-        defer before.deinit();
-        const after = try sample.Canvas.init(64, 50);
-        defer after.deinit();
-        @memset(before.pixels, color);
-        @memset(after.pixels, .{ 96, 67, 77, 255 });
-        after.fill(0, 36, 64, 6, color);
-        const scope: Scope = .{
-            .before = before.view,
-            .after = after.view,
-            .span = .{ .left = 0, .width = 64 },
-            .bounds = .{ .left = 0, .width = 64 },
-        };
-        var boxes: [2]regions.Candidate = undefined;
-        var collector: Collector = .{ .boxes = &boxes, .gap_px = 0, .max_gap_px = 64 };
-        var mask: [64 * 6]change_mask.Cell = undefined;
-        var seeds: [6]u32 = undefined;
-        const scratch: Scratch = .{ .mask = &mask, .seeds = &seeds };
-        const margin: Unpaired = .{ .side = .before, .y = 34, .count = 6, .opposite = 44 };
-        unpaired(&collector, scope, scratch, margin);
-        try std.testing.expectEqual(@as(usize, 0), collector.len);
-        @memset(after.pixels, .{ 96, 67, 77, 255 });
-        unpaired(&collector, scope, scratch, margin);
-        try std.testing.expectEqual(@as(usize, 1), collector.len);
-    }
-}
-
 test "a taller button excludes unchanged card borders on unpaired rows" {
     const allocator = std.testing.allocator;
     const width = 360;
@@ -794,7 +566,7 @@ test "a taller button excludes unchanged card borders on unpaired rows" {
         canvas.line(40, 300, 220 + growth, 6, 28);
     }
     const span: columns.Span = .{ .left = 24, .width = 298 };
-    const scope: Scope = .{ .before = before.view, .after = after.view, .span = span, .bounds = span };
+    const scope: columns.Scope = .{ .before = before.view, .after = after.view, .span = span, .bounds = span };
     var storage: [regions.max_regions]regions.Candidate = undefined;
     var collector: Collector = .{ .boxes = &storage, .gap_px = 4, .max_gap_px = 20 };
     var buffers: CompareBuffers = .{};
@@ -817,7 +589,7 @@ test "an aligned blank tail contributes no phantom move" {
     const after = try sample.Canvas.init(64, 64);
     defer after.deinit();
     const span: columns.Span = .{ .left = 0, .width = 64 };
-    const scope: Scope = .{ .before = before.view, .after = after.view, .span = span, .bounds = span };
+    const scope: columns.Scope = .{ .before = before.view, .after = after.view, .span = span, .bounds = span };
     const band: row_diff.Band = .{ .before = 26, .after = 58, .removed = 6, .added = 6 };
     var moves: std.ArrayList(values.Move) = .empty;
     defer moves.deinit(std.testing.allocator);

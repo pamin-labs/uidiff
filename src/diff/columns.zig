@@ -12,6 +12,17 @@ pub const Span = struct { left: usize, width: usize };
 /// A changed span and the columns available up to the middle of its gutters.
 pub const Group = struct { span: Span, lane: Span };
 
+/// The compared pair and the column span holding every change, in device pixels.
+pub const Scope = struct {
+    before: Image,
+    after: Image,
+    span: Span,
+    /// Where to draw a gap with no changed pixels against its background.
+    bounds: Span,
+    /// The independently aligned column lane, if this is a column group.
+    frame: ?Span = null,
+};
+
 /// A card outline enclosing an edited row.
 pub const Card = struct { columns: Span, top: usize, height: usize };
 
