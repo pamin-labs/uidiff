@@ -10,7 +10,7 @@ from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 IMAGES = ROOT / "docs/images"
-SHEETS = ("desktop-dark", "phone-insert", "phone-settings", "phone-list")
+SHEETS = ("desktop", "phone-insert", "phone-list")
 SCALE = "2"
 
 

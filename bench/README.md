@@ -37,7 +37,7 @@ adding `-Dbench-scale=2` if it was captured at 2×.
 
 ## README sheets
 
-Build the CLI in ReleaseSafe and pass a corpus directory plus the four pair
+Build the CLI in ReleaseSafe and pass a corpus directory plus the three pair
 directory names. Each pair contains `before.png` and `after.png` at 2× scale.
 The renderer writes the sheets under `docs/images/` and runs lossless
 `oxipng -o max` on each.
@@ -45,7 +45,7 @@ The renderer writes the sheets under `docs/images/` and runs lossless
 ```sh
 zig build -Doptimize=safe
 python3 scripts/readme-images.py render "$PAIRS_DIR" \
-  --desktop-dark "$DESKTOP_PAIR" --phone-insert "$INSERT_PAIR" \
-  --phone-settings "$SETTINGS_PAIR" --phone-list "$LIST_PAIR"
+  --desktop "$DESKTOP_PAIR" --phone-insert "$INSERT_PAIR" \
+  --phone-list "$LIST_PAIR"
 python3 scripts/readme-images.py check
 ```

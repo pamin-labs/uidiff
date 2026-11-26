@@ -4,11 +4,19 @@
 Compare two captures and get a sheet with detected changes boxed, numbered and labelled.</p>
 
 <p align="center">
-  <img src="docs/images/desktop-dark.png" alt="Dark desktop chat comparison with one inserted message, one changed message, and a block shifted down" width="100%"><br>
-  <sub>One message inserted, one changed, and one block shifted down.</sub>
+  <img src="docs/images/desktop.png" alt="Desktop chat comparison with one removed message, one inserted message, and one bubble whose shade changed slightly" width="100%"><br>
+  <sub>One message removed, one inserted, and one bubble a few shades lighter: easy to miss by eye, boxed by uidiff.</sub>
 </p>
 
-You change a UI, or a script does, or an AI agent does, and now you need to know what actually changed. A pixel diff tells you which pixels differ, so one inserted row paints everything below it. uidiff tells you what changed: it lines up rows that only moved, boxes each real edit, labels it **changed**, **inserted** or **removed**, and reports how far the rest moved. It reads nothing but the two images, so the same command works for websites, iOS and Android apps, desktop apps, games, canvas and mini programs. It earns its keep wherever a UI is iterated on, and most of all in vibe coding, where the screen changes every few minutes and you need to see what the agent really did.
+A pixel diff tells you which pixels differ, so one inserted row paints everything below it. uidiff tells you what changed: it lines up rows that only moved, boxes each real edit, labels it **changed**, **inserted** or **removed**, and reports how far the rest moved.
+
+## When to use it
+
+- **Checking an AI agent's UI work.** In vibe coding the screen changes every few minutes. Capture before and after, and the sheet shows what the agent really changed, including edits it did not mention.
+- **Reviewing a pull request.** Attach the sheet to the PR so reviewers see each visual change, numbered, instead of comparing two screenshots by eye.
+- **Visual regression tests.** Fail only when something actually changed, not when content above it shifted. The exit code and the `--json` report plug into CI.
+- **Long pages and feeds.** Inserted or removed content moves everything below it; uidiff reports that as one shifted block with its offset, not as a page of differences.
+- **Any platform with screenshots.** It reads only the two images, so the same command works for websites, iOS and Android apps, desktop apps, games, canvas and mini programs.
 
 ## Why uidiff
 
@@ -34,17 +42,11 @@ You change a UI, or a script does, or an AI agent does, and now you need to know
 <table>
   <tr>
     <td width="50%"><img src="docs/images/phone-insert.png" alt="Phone chat sheet showing one inserted message and a downward shift"></td>
-    <td width="50%"><img src="docs/images/phone-settings.png" alt="Phone settings sheet showing one changed label with a close-up"></td>
+    <td width="50%"><img src="docs/images/phone-list.png" alt="Phone chat-list sheet showing two changed regions, one inserted row, and a block moved down"></td>
   </tr>
   <tr>
     <td align="center"><sub>One message inserted. The alignment gutter shows the thread moving down.</sub></td>
-    <td align="center"><sub>One settings label changed in place.</sub></td>
-  </tr>
-  <tr>
-    <td colspan="2"><img src="docs/images/phone-list.png" alt="Phone chat-list sheet showing two changed regions, one inserted row, and a block moved down" width="100%"></td>
-  </tr>
-  <tr>
-    <td colspan="2" align="center"><sub>Two changed regions and one inserted row. A block of rows shifted down.</sub></td>
+    <td align="center"><sub>Two changed regions and one inserted row. A block of rows shifted down.</sub></td>
   </tr>
 </table>
 
@@ -61,20 +63,20 @@ zig-out/bin/uidiff tests/fixtures/images/phone-light/before.png tests/fixtures/i
 
 ## Install
 
-With Homebrew on macOS or Linux:
-
-```sh
-brew install pamin-labs/tap/uidiff
-```
-
-For npm projects, the package picks the right binary for the platform:
+In a project, add it as a dev dependency so every machine and CI run uses the same version. npm picks the binary for the platform:
 
 ```sh
 npm install --save-dev @pamin-labs/uidiff
 npx uidiff before.png after.png
 ```
 
-Without a package manager on macOS and Linux (x64 or arm64):
+As a command on your machine, with Homebrew on macOS or Linux:
+
+```sh
+brew install pamin-labs/tap/uidiff
+```
+
+Without npm or Homebrew, the install scripts download from uidiff.paminlabs.com, which also works where GitHub is unreachable. On macOS and Linux (x64 or arm64):
 
 ```sh
 curl -fsSLO https://uidiff.paminlabs.com/install.sh
