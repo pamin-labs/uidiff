@@ -163,3 +163,9 @@ fn unionWindow(a: ?SourceRect, b: ?SourceRect) ?SourceRect {
     const y = @min(first.y, second.y);
     return .{ .x = x, .y = y, .w = @max(first.right(), second.right()) - x, .h = @max(first.bottom(), second.bottom()) - y };
 }
+
+test {
+    const tall = focusWindow(.{ .x = 240, .y = 250, .w = 10, .h = 20 }, .{ .width = 1500, .height = 600 }).?;
+    try std.testing.expectEqual(@as(usize, 130), tall.y);
+    try std.testing.expectEqual(@as(usize, 260), tall.h);
+}

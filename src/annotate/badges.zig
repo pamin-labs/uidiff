@@ -169,3 +169,55 @@ fn placeFocus(details: []Detail, storage: []Rect, image: Image, patch: Crop, sid
 test {
     std.testing.refAllDecls(@This());
 }
+
+test "small panes enlarge by an integer and keep badges clear of their boxes" {
+    const min_preview_side = geometry.min_preview_side;
+    const offsetMark = geometry.offsetMark;
+    const Size = values.Size;
+    const source: Size = .{ .width = 124, .height = 114 };
+    const ui = Layout.init(source, source);
+    const panes = ui.panes(source, source);
+    try std.testing.expect(panes[0].w >= min_preview_side and panes[0].h >= min_preview_side);
+    try std.testing.expectEqual(@as(usize, 0), panes[0].h % source.height);
+    const gap = panes[1].x - panes[0].right();
+    try std.testing.expect(gap >= 48 and gap <= panes[0].w / 4);
+    for ([_][2]usize{ .{ 60, 50 }, .{ 60, 0 }, .{ 0, 0 } }) |at| {
+        const mark = offsetMark(.{ .x = at[0], .y = at[1], .w = 2, .h = 2 }, panes[1], source).?;
+        const b = placement.place(mark, panes[1], badgeDiameter(ui), &.{}).?;
+        try std.testing.expect(!b.overlaps(mark));
+        try std.testing.expect(b.x >= panes[1].x and b.y >= panes[1].y);
+        try std.testing.expect(b.right() <= panes[1].right() and b.bottom() <= panes[1].bottom());
+        if (at[1] != 0) try std.testing.expect(b.bottom() <= mark.y) else if (at[0] != 0) try std.testing.expect(b.right() <= mark.x);
+    }
+    try std.testing.expect(placement.place(panes[1], panes[1], badgeDiameter(ui), &.{}) == null);
+}
+
+test "badge digits preserve native bold bitmap coverage" {
+    const palette = @import("palette.zig");
+    const Pixel = values.Pixel;
+    const page = palette.page;
+    const ui = Layout.init(.{ .width = 900, .height = 12 }, .{ .width = 900, .height = 12 });
+    const diameter = overviewDiameter(ui);
+    const bounds: Rect = .{ .x = 0, .y = 0, .w = diameter, .h = diameter };
+    const storage = try std.testing.allocator.alloc(Pixel, diameter);
+    defer std.testing.allocator.free(storage);
+    const base = palette.tint(.changed);
+    for ("0123456789") |digit| {
+        const g = text.glyph(.bold, digit);
+        const x = (diameter - g[3]) / 2;
+        const y = (diameter - g[4]) / 2;
+        for (0..g[4]) |gy| {
+            @memset(storage, page);
+            badge(.{ .pixels = storage, .y = y + gy }, bounds, .changed, &.{digit}, ui);
+            for (0..g[3]) |gx| {
+                const sample = gy * g[3] + gx;
+                const packed_ = g[5 + sample / 2];
+                const alpha: u16 = if (sample % 2 == 0) packed_ & 15 else packed_ >> 4;
+                for (0..3) |channel| {
+                    const expected: u8 = @intCast((@as(u16, base[channel]) * (15 - alpha) + 255 * alpha + 7) / 15);
+                    try std.testing.expectEqual(expected, storage[x + gx][channel]);
+                }
+            }
+        }
+    }
+}

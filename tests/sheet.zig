@@ -7,6 +7,4 @@ comptime {
 
 test {
     _ = @import("sheet/badges.zig");
-    _ = @import("sheet/focus.zig");
-    _ = @import("sheet/canvas.zig");
 }
