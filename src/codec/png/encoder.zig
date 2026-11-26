@@ -10,6 +10,8 @@ const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
 const Image = values.Image;
 
+const Filtered = struct { method: u8, bytes: []const u8 };
+
 const BorrowedRows = struct {
     image: Image,
 
@@ -44,7 +46,6 @@ pub fn writeRows(allocator: Allocator, size: values.Size, source: anytype, outpu
     if (size.pixelCount() == null) return error.InvalidImage;
     try output.writeAll(png_format.signature);
     const rgb_only = if (@hasDecl(@TypeOf(source), "isOpaque")) source.isOpaque() else false;
-    const pixel_bytes: usize = if (rgb_only) 3 else @sizeOf(values.Pixel);
     var header: [png_format.header_data_bytes]u8 = undefined;
     // Valid images have at most max_extent pixels per axis, which fits u32.
     std.mem.writeInt(u32, header[0..4], @intCast(size.width), .big);
@@ -77,48 +78,44 @@ pub fn writeRows(allocator: Allocator, size: values.Size, source: anytype, outpu
             break :staged staging[(y % staged_rows) * size.width ..][0..size.width];
         };
         const row = std.mem.sliceAsBytes(pixels);
-        if (y == 0) {
-            try compress.write(&.{png_format.up_filter});
-            if (rgb_only) {
-                try compress.write(packRgb(false, filtered, row, &.{}));
-            } else {
-                try compress.write(row);
-            }
-            above = row;
-            continue;
-        }
-        if (rgb_only and std.mem.eql(u8, row, above)) {
-            try compress.write(&.{png_format.up_filter});
-            const zeros = filtered[0 .. size.width * pixel_bytes];
-            @memset(zeros, 0);
-            try compress.write(zeros);
-            above = row;
-            continue;
-        }
-        const method = if (rgb_only) preferredFilter(row, above) else png_format.up_filter;
-        try compress.write(&.{method});
-        const encoded = switch (method) {
-            png_format.sub_filter => sub: {
-                const pixel = @sizeOf(values.Pixel);
-                filtered[0..3].* = row[0..3].*;
-                const encoded_rgb = packRgb(true, filtered[3..], row[pixel..], row[0 .. row.len - pixel]);
-                break :sub filtered[0 .. 3 + encoded_rgb.len];
-            },
-            png_format.paeth_filter => paeth: {
-                filterPaeth(filtered, row, above);
-                break :paeth packRgb(false, filtered, filtered, &.{});
-            },
-            else => up: {
-                if (rgb_only) break :up packRgb(true, filtered, row, above);
-                filter(filtered, row, above);
-                break :up filtered;
-            },
-        };
+        const encoded = filterRow(row, above, filtered, rgb_only);
+        try compress.write(&.{encoded.method});
+        try compress.write(encoded.bytes);
         above = row;
-        try compress.write(encoded);
     }
     try compress.finish();
     try deflate.chunk(output, "IEND", "");
+}
+
+fn filterRow(row: []const u8, above: []const u8, filtered: []u8, rgb_only: bool) Filtered {
+    const pixel = @sizeOf(values.Pixel);
+    if (above.len == 0) return .{
+        .method = png_format.up_filter,
+        .bytes = if (rgb_only) packRgb(false, filtered, row, &.{}) else row,
+    };
+    if (rgb_only and std.mem.eql(u8, row, above)) {
+        const zeros = filtered[0 .. row.len / pixel * 3];
+        @memset(zeros, 0);
+        return .{ .method = png_format.up_filter, .bytes = zeros };
+    }
+    const method = if (rgb_only) preferredFilter(row, above) else png_format.up_filter;
+    const bytes = switch (method) {
+        png_format.sub_filter => sub: {
+            filtered[0..3].* = row[0..3].*;
+            const encoded = packRgb(true, filtered[3..], row[pixel..], row[0 .. row.len - pixel]);
+            break :sub filtered[0 .. 3 + encoded.len];
+        },
+        png_format.paeth_filter => paeth: {
+            filterPaeth(filtered, row, above);
+            break :paeth packRgb(false, filtered, filtered, &.{});
+        },
+        else => up: {
+            if (rgb_only) break :up packRgb(true, filtered, row, above);
+            filter(filtered, row, above);
+            break :up filtered;
+        },
+    };
+    return .{ .method = method, .bytes = bytes };
 }
 
 fn packRgb(comptime subtract: bool, bytes: []u8, current: []const u8, predictor: []const u8) []const u8 {
