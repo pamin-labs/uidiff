@@ -20,11 +20,6 @@ const moves = @import("regions/moves.zig");
 pub const Candidate = candidate.Candidate;
 /// Accumulates nearby boxes in caller-provided scratch space.
 pub const Collector = grouping.Collector;
-/// The one-byte state of a pixel in a change mask.
-pub const Cell = grouping.Cell;
-/// A change mask over a band: one byte per pixel, row-major. Zero is
-/// unchanged and one changed; grouping clears it as it goes.
-pub const Mask = grouping.Mask;
 /// Where a band's mask sits in device pixels: its first column, and its first
 /// row on each side that shows it.
 pub const Placement = grouping.Placement;
@@ -39,14 +34,13 @@ pub const max_regions = candidate.max_regions;
 /// Seeds the flood fill keeps at once (4 bytes each); more are found again by
 /// rescanning their rows, so memory stays fixed however large the mask.
 pub const max_fill_seeds = grouping.max_fill_seeds;
+/// Maximum displacement treated as a short scroll.
+pub const scroll_shift = moves.scroll_shift;
 /// Adds eight-connected components to the collector. Sparse components can
 /// reach the reporting minimum together. Asserts seeds is not empty.
 pub const group = grouping.group;
 /// Reports the full extent of one aligned inserted or removed row band.
 pub const groupElement = grouping.groupElement;
-/// Finds the next mask state using the standard library's byte search.
-pub const nextCell = grouping.nextCell;
-
 /// Resolves collected evidence into owned, numbered regions and updates the retained moves.
 pub fn resolve(allocator: Allocator, collector: *Collector, movement: *std.ArrayList(values.Move), before: Image, after: Image, scale: values.Scale, scroll_tolerance_px: f64) Allocator.Error![]values.Region {
     const retained = collector.retain();

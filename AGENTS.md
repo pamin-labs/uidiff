@@ -22,7 +22,7 @@ Follow the public pamin-labs/skills engineering rules in [core](.agents/skills/p
 - `src/root.zig` exposes the public library. It imports only module roots: the files beside each layer directory.
 - `src/value.zig` and `src/value/` hold shared values and the image and memory bounds. Value modules depend only on other values and the standard library.
 - `src/codec.zig` and `src/codec/` handle format detection, bounded file reads, dimension and memory-budget checks, decoding and PNG encoding. Only `src/codec/stb.zig` imports the translated stb_image header, only `src/codec/jpeg.zig` the translated libjpeg-turbo bridge, and only `src/codec/webp.zig` the translated libwebp decoder header; the encoder headers are translated separately for the fixture generator, so the shipped library never includes them. `src/codec/png.zig` exposes PNG registration, decoding and encoding through the bounded streams in `src/codec/png/`.
-- `src/diff.zig` and `src/diff/` compare pixels, align rows, and produce regions. `src/diff/regions.zig` is the facade for the grouping, visible edit rules, and final ordering in `src/diff/regions/`. `src/diff/rows.zig` coordinates the band search, chrome detection, and refinement in `src/diff/rows/`. `src/annotate.zig` and `src/annotate/` number and place labels and draw the annotated sheet. `src/annotate/badges.zig` places badges and exposes the routing and painting in `src/annotate/badges/`. `src/annotate/crops.zig` owns close-up geometry and sampling, and `src/annotate/report_sheet.zig` composes the overview and the detail rows. `src/report.zig` owns the versioned JSON report.
+- `src/diff.zig` owns the comparison API and resolves collected regions. The comparison internals in `src/diff/` are named, with their tiers, under Layers. `src/diff/test_support.zig` supplies fixtures to unit tests and the standalone comparison scenarios. `src/annotate.zig` and `src/annotate/` number and place labels and draw the annotated sheet. `src/annotate/badges.zig` places badges and exposes the routing and painting in `src/annotate/badges/`. `src/annotate/crops.zig` owns close-up geometry and sampling, and `src/annotate/report_sheet.zig` composes the overview and the detail rows. `src/report.zig` owns the versioned JSON report.
 - `src/files.zig` is the file pipeline: it checks the options once, decodes both files, compares them and writes the sheet atomically. The CLI calls it and only translates.
 - `src/cli.zig` is the CLI entry and `src/cli/` its argument syntax and usage text.
 - `bench/` measures the public API.
@@ -34,7 +34,7 @@ Follow the public pamin-labs/skills engineering rules in [core](.agents/skills/p
 
 ## Layers
 
-`tests/layers.zig` reads these two tables. A file imports files of its own layer, except that a file inside a layer's directory never imports the layer's root; it imports another layer only through that layer's root, the first file its row names, and only if its row lists that layer. `std` and `builtin` are always allowed.
+`tests/layers.zig` reads the tables in this section. A file imports files of its own layer, except that a file inside a layer's directory never imports the layer's root; it imports another layer only through that layer's root, the first file its row names, and only if its row lists that layer. `std` and `builtin` are always allowed.
 
 | Layer | Paths | May import |
 | --- | --- | --- |
@@ -48,6 +48,8 @@ Follow the public pamin-labs/skills engineering rules in [core](.agents/skills/p
 | cli | `src/cli.zig` `src/cli/` | `uidiff` |
 | tool | `bench/` `tests/` | `uidiff` |
 
+Unit tests import `src/diff/test_support.zig` from test blocks. The diff root exposes it only in test builds for the standalone scenarios, and the helper calls back through the diff root to compare its fixtures.
+
 Named build modules, and the only files that may import them. The `export` row names the files whose exported functions C code calls back.
 
 | Module | Importers |
@@ -60,7 +62,7 @@ Named build modules, and the only files that may import them. The `export` row n
 | `stb_write_c` | `tests/fixtures/encode.zig` |
 | `webp_encode_c` | `tests/fixtures/encode.zig` |
 | `codec_memory` | `src/codec.zig` `src/codec/png/deflate.zig` `src/codec/png/scanlines.zig` `src/codec/stb.zig` `src/codec/jpeg.zig` `src/codec/webp.zig` `tests/fixtures/encode.zig` |
-| `diff_scenarios` | `tests/diff/` |
+| `diff_scenarios` | `tests/diff/` (comparison API and test-only fixture support) |
 | `fixtures` | `tests/e2e.zig` `tests/decode.zig` `tests/fuzz/` |
 | `e2e_options` | `tests/e2e.zig` |
 | `cli_options` | `src/cli.zig` |
@@ -77,6 +79,20 @@ Only a submodule's facade and implementation files may import its implementation
 | `src/annotate/badges.zig` | `src/annotate/badges/` |
 | `src/codec/png.zig` | `src/codec/png/` |
 | `tests/diff.zig` | `tests/diff/` |
+
+Each unit of the diff internals, with its tier. A unit imports another only if that unit's tier is lower; files inside one unit import each other under the rules above. `src/diff.zig` sits above every tier and `src/diff/test_support.zig` outside them. A file under `src/diff/` that this table does not name fails the test.
+
+| Diff tier | Paths | Holds |
+| --- | --- | --- |
+| 4 | `src/diff/span.zig` | Aligns the changed span, walks its bands and owns their scratch buffers |
+| 3 | `src/diff/motion.zig` | Gathers moves supported by alignment |
+| 3 | `src/diff/unpaired.zig` | Compares rows aligned to a gap |
+| 2 | `src/diff/rows.zig` `src/diff/rows/` | Row hashing, the band search, chrome detection and refinement |
+| 2 | `src/diff/regions.zig` `src/diff/regions/` | Grouping, visible edit rules, retained moves and final ordering |
+| 1 | `src/diff/columns.zig` | Column analysis, card search and the compared scope |
+| 1 | `src/diff/yiq.zig` | YIQ colour distance, antialiasing and writing the change mask |
+| 0 | `src/diff/mask.zig` | Change mask cells, band scratch and byte search |
+| 0 | `src/diff/pixel.zig` | Pixel and block equality kernels |
 
 ## Decoders
 

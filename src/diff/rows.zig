@@ -1,7 +1,6 @@
 //! Hashes and aligns rows into bands for scrolling and resizing.
 
 const std = @import("std");
-const sample = @import("test_support.zig");
 
 const band_model = @import("rows/band.zig");
 const search = @import("rows/search.zig");
@@ -367,6 +366,7 @@ test "inserting and deleting above a divider preserves the deletion" {
 }
 
 test "growth pairs an edited row head with its displaced body" {
+    const sample = @import("test_support.zig");
     const before = try sample.Canvas.init(200, 180);
     defer before.deinit();
     const after = try sample.Canvas.init(200, 220);
@@ -394,6 +394,7 @@ test "growth pairs an edited row head with its displaced body" {
 }
 
 test "an inserted row precedes the moved recolour in an ambiguous alignment" {
+    const sample = @import("test_support.zig");
     const before = try sample.Canvas.init(120, 160);
     defer before.deinit();
     const after = try sample.Canvas.init(120, 160);

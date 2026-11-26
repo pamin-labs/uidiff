@@ -3,7 +3,7 @@ const std = @import("std");
 /// Pixel, geometry and region values used by the scenario fixtures.
 pub const values = @import("../value.zig");
 const regions = @import("regions.zig");
-const engine = @import("compare.zig");
+const diff = @import("../diff.zig");
 const row_alignment = @import("rows.zig");
 const pixel_ops = @import("pixel.zig");
 const Image = values.Image;
@@ -325,8 +325,8 @@ pub fn expectEditAt(before: Canvas, after: Canvas, x: usize, y: usize, max_box_w
 }
 
 /// Compares two procedural canvases at the supplied scale.
-pub fn compareCanvases(before: Canvas, after: Canvas, scale: f64) !engine.Comparison {
-    return engine.compare(std.testing.allocator, before.view, after.view, .{ .scale = .{ .factor = scale } });
+pub fn compareCanvases(before: Canvas, after: Canvas, scale: f64) diff.CompareError!diff.Comparison {
+    return diff.compare(std.testing.allocator, before.view, after.view, .{ .scale = .{ .factor = scale } });
 }
 
 /// Checks all reported regions against the expected boxes.

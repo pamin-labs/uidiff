@@ -1,6 +1,9 @@
 //! Collects and merges connected components from a pixel mask.
 
 const std = @import("std");
+const change_mask = @import("../mask.zig");
+const Cell = change_mask.Cell;
+const Mask = change_mask.Mask;
 const pending = @import("candidate.zig");
 const values = @import("../../value.zig");
 const Size = values.Size;
@@ -134,22 +137,6 @@ pub const Collector = struct {
     }
 };
 
-/// The one-byte state of a pixel in a change mask.
-pub const Cell = enum(u8) {
-    clear,
-    changed,
-    queued,
-    needs_support,
-};
-
-/// A change mask over a band: one byte per pixel, row-major. Zero is
-/// unchanged and one changed; grouping clears it as it goes.
-pub const Mask = struct {
-    cells: []Cell,
-    /// Columns per row.
-    width: usize,
-};
-
 /// Where a band's mask sits in device pixels: its first column, and its first
 /// row on each side that shows it.
 pub const Placement = struct {
@@ -273,7 +260,7 @@ pub fn group(collector: *Collector, mask: Mask, seeds: []u32, at: Placement) Gro
     var fill: Fill = .{ .mask = mask, .seeds = seeds };
     var next: usize = 0;
     // Between fills a cell is zero or changed, never queued.
-    while (nextCell(mask.cells, next, .changed)) |start| {
+    while (change_mask.nextCell(mask.cells, next, .changed)) |start| {
         next = start + 1;
         fill.push(start);
         var count: usize = 0;
@@ -309,7 +296,7 @@ pub fn groupElement(collector: *Collector, mask: Mask, at: Placement) bool {
     var count: usize = 0;
     for (0..top) |y| {
         const row = mask.cells[y * mask.width ..][0..mask.width];
-        const first = nextCell(row, 0, .changed) orelse continue;
+        const first = change_mask.nextCell(row, 0, .changed) orelse continue;
         const last = std.mem.lastIndexOfScalar(u8, std.mem.sliceAsBytes(row[first..]), @backingInt(Cell.changed)) orelse 0;
         left = @min(left, first);
         right = @max(right, first + last + 1);
@@ -323,11 +310,6 @@ pub fn groupElement(collector: *Collector, mask: Mask, at: Placement) bool {
     return true;
 }
 
-/// Finds the next mask state using the standard library's byte search.
-pub inline fn nextCell(cells: []const Cell, start: usize, state: Cell) ?usize {
-    return std.mem.indexOfScalarPos(u8, std.mem.sliceAsBytes(cells), start, @backingInt(state));
-}
-
 // Faint specks and weak edges cannot gain evidence just by touching
 // diagonally. Keep the original cardinal support before joining corners.
 // The component minimum is one for small captures.
@@ -338,7 +320,7 @@ fn minPixels(before: Size, after: Size) usize {
 
 fn discardUnsupported(mask: Mask, minimum: usize) void {
     var start: usize = 0;
-    while (nextCell(mask.cells, start, .needs_support)) |index| {
+    while (change_mask.nextCell(mask.cells, start, .needs_support)) |index| {
         start = index + 1;
         var seen: [min_region_pixels]usize = undefined;
         seen[0] = index;

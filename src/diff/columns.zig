@@ -12,6 +12,17 @@ pub const Span = struct { left: usize, width: usize };
 /// A changed span and the columns available up to the middle of its gutters.
 pub const Group = struct { span: Span, lane: Span };
 
+/// The compared pair and the column span holding every change, in device pixels.
+pub const Scope = struct {
+    before: Image,
+    after: Image,
+    span: Span,
+    /// Where to draw a gap with no changed pixels against its background.
+    bounds: Span,
+    /// The independently aligned column lane, if this is a column group.
+    frame: ?Span = null,
+};
+
 /// A card outline enclosing an edited row.
 pub const Card = struct { columns: Span, top: usize, height: usize };
 
@@ -117,6 +128,16 @@ pub fn sameRows(image: Image, bounds: Span) bool {
     for (1..image.height) |y| {
         const row = image.rowBytes(y, bounds.left, bounds.width);
         if (!std.mem.eql(u8, first, row)) return false;
+    }
+    return true;
+}
+
+/// Checks whether an entire band is filled with the same paint.
+pub fn blankBand(source: Image, first: usize, rows: usize, bounds: Span) bool {
+    const head = source.rowSegment(first, bounds.left, bounds.width);
+    if (!pixel.sameRun(head[1..], head[0 .. head.len - 1])) return false;
+    for (first + 1..first + rows) |y| {
+        if (!pixel.sameRun(head, source.rowSegment(y, bounds.left, bounds.width))) return false;
     }
     return true;
 }
