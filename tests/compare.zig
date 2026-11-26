@@ -14,4 +14,6 @@ test {
     _ = @import("compare/moved_edits.zig");
     _ = @import("compare/overlays.zig");
     _ = @import("compare/reflow.zig");
+    _ = @import("compare/logical.zig");
+    _ = @import("compare/moves.zig");
 }

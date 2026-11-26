@@ -45,7 +45,7 @@ Follow the public pamin-labs/skills engineering rules in [core](.agents/skills/p
 | annotate | `src/annotate.zig` `src/annotate/` | value |
 | report | `src/report.zig` | value |
 | files | `src/files.zig` | value, codec, diff, annotate |
-| testing | `src/testing.zig` `src/testing/` | value, api, src/codec/jpeg.zig, src/codec/stb.zig, src/codec/png_format.zig, src/codec/png/decoder.zig, src/codec/png/deflate.zig, src/codec/png/scanlines.zig, src/diff/regions.zig, src/diff/rows.zig, src/annotate/palette.zig |
+| testing | `src/testing.zig` `src/testing/` | value, api, src/codec/jpeg.zig, src/codec/stb.zig, src/codec/png_format.zig, src/codec/png/decoder.zig, src/codec/png/deflate.zig, src/codec/png/scanlines.zig, src/diff/regions.zig, src/diff/regions/logical.zig, src/diff/regions/moves.zig, src/diff/rows.zig, src/annotate/palette.zig |
 | api | `src/root.zig` | value, codec, diff, annotate, report, files |
 | cli | `src/cli.zig` `src/cli/` | `uidiff` |
 | tool | `bench/` `tests/` | `uidiff` |
