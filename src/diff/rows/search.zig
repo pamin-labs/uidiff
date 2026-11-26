@@ -48,7 +48,9 @@ pub const Problem = struct {
         if (edits == delta) return self.oneDirection(tail, a, b);
 
         // Carry the chosen path's middle coordinate on each diagonal. Split at
-        // that coordinate, then reuse the same frontier in both halves.
+        // that coordinate, then reuse the frontier. Each half has at most
+        // ceil(edits / 2) edits, and one edit always takes the base case.
+        std.debug.assert(edits <= max_edits);
         const half = edits / 2;
         const result = search(true, self.a, self.b, edits, half, frontier) orelse return false;
         const x: usize = result.middle.x;
@@ -83,6 +85,12 @@ const missing: u32 = std.math.maxInt(u32);
 /// search costs O((rows + max_edits) * max_edits) time, so this bounds a tall
 /// unrelated pair; past it, rows are compared by position.
 pub const max_edits = 8192;
+
+// The initial call and at most 13 splits fit in 14 recovery frames.
+const max_recovery_frames = 14;
+comptime {
+    std.debug.assert(max_edits <= 1 << (max_recovery_frames - 1));
+}
 
 fn search(comptime track_middle: bool, a: band_model.Keys, b: band_model.Keys, budget: usize, half: usize, frontier: []Diagonal) ?SearchResult {
     const center = frontier.len / 2;
