@@ -116,11 +116,14 @@ pub fn writeRows(allocator: Allocator, size: values.Size, source: anytype, outpu
 
 fn rgb(bytes: []u8) []const u8 {
     const Blocks = @Vector(16, u8);
-    const picks = @Vector(12, i32){ 0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14 };
+    const picks = @Vector(16, i32){ 0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, 15, 15, 15, 15 };
     var i: usize = 0;
     var out: usize = 0;
     while (i + 16 <= bytes.len) : (i += 16) {
-        bytes[out..][0..12].* = @shuffle(u8, @as(Blocks, bytes[i..][0..16].*), undefined, picks);
+        // Whole-vector load and store: the 12-byte array store is split into
+        // scalar moves. The four extra bytes are overwritten by the next block.
+        const block = @as(*align(1) const Blocks, @ptrCast(bytes[i..][0..16])).*;
+        @as(*align(1) Blocks, @ptrCast(bytes[out..][0..16])).* = @shuffle(u8, block, undefined, picks);
         out += 12;
     }
     while (i < bytes.len) : (i += 4) {
