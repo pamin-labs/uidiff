@@ -156,12 +156,12 @@ fn hasEqualRun(expected: []const Pixel, image: Image, bounds: columns.Span, y: u
 }
 
 test "an interior blank run is ignored only if the layout retains its length" {
-    const sample = @import("../testing/canvas.zig");
-    const before = try sample.Canvas.init(64, 80);
+    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
+    const before = try canvas.Canvas.init(64, 80);
     defer before.deinit();
-    const after = try sample.Canvas.init(64, 80);
+    const after = try canvas.Canvas.init(64, 80);
     defer after.deinit();
-    const ink = sample.inkShade(32, 4);
+    const ink = canvas.inkShade(32, 4);
     before.fill(10, 15, 24, 5, ink);
     before.fill(10, 32, 30, 5, ink);
     after.fill(10, 20, 24, 5, ink);
@@ -174,17 +174,17 @@ test "an interior blank run is ignored only if the layout retains its length" {
 }
 
 test "blank space above a fixed input bar does not inherit unrelated sidebar paint" {
-    const sample = @import("../testing/canvas.zig");
-    const before = try sample.Canvas.init(144, 180);
+    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
+    const before = try canvas.Canvas.init(144, 180);
     defer before.deinit();
-    const after = try sample.Canvas.init(144, 180);
+    const after = try canvas.Canvas.init(144, 180);
     defer after.deinit();
-    before.fill(28, 60, 90, 10, sample.inkShade(32, 4));
-    after.fill(28, 80, 90, 10, sample.inkShade(32, 4));
-    for ([_]sample.Canvas{ before, after }) |canvas| {
-        canvas.fill(0, 30, 18, 130, sample.inkShade(96, 4));
-        canvas.fill(20, 130, 110, 20, sample.inkShade(190, 4));
-        canvas.line(30, 112, 135, 0, 32);
+    before.fill(28, 60, 90, 10, canvas.inkShade(32, 4));
+    after.fill(28, 80, 90, 10, canvas.inkShade(32, 4));
+    for ([_]canvas.Canvas{ before, after }) |image| {
+        image.fill(0, 30, 18, 130, canvas.inkShade(96, 4));
+        image.fill(20, 130, 110, 20, canvas.inkShade(190, 4));
+        image.line(30, 112, 135, 0, 32);
     }
     const scope: Scope = .{ .before = before.view, .after = after.view, .span = .{ .left = 24, .width = 96 }, .bounds = .{ .left = 0, .width = 144 } };
     var boxes: [2]regions.Candidate = undefined;
@@ -196,11 +196,11 @@ test "blank space above a fixed input bar does not inherit unrelated sidebar pai
 }
 
 test "an equal unpaired bottom margin does not produce a removal" {
-    const sample = @import("../testing/canvas.zig");
+    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
     for ([_]Pixel{ @splat(255), .{ 18, 18, 22, 255 } }) |color| {
-        const before = try sample.Canvas.init(64, 40);
+        const before = try canvas.Canvas.init(64, 40);
         defer before.deinit();
-        const after = try sample.Canvas.init(64, 50);
+        const after = try canvas.Canvas.init(64, 50);
         defer after.deinit();
         @memset(before.pixels, color);
         @memset(after.pixels, .{ 96, 67, 77, 255 });

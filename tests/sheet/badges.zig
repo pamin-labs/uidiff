@@ -1,7 +1,7 @@
 //! Checks the visible badge raster through the public sheet renderer.
 const std = @import("std");
 const uidiff = @import("uidiff");
-const canvas = uidiff.testing.canvas;
+const canvas = @import("uidiff_testing").canvas;
 const Pixel = uidiff.Pixel;
 const Image = uidiff.Image;
 const Region = uidiff.Region;

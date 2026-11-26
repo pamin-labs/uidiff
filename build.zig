@@ -228,6 +228,11 @@ fn libraryOptions(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, d
 fn addCheckedLibrary(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoders: Decoders, x86_simd: X86Simd) *Build.Module {
     const module = b.createModule(libraryOptions(b, target, optimize, decoders));
     addDecoderSources(b, module, target, .checked, x86_simd);
+    module.addImport("uidiff_test_canvas", b.createModule(.{
+        .root_source_file = b.path("src/testing/canvas.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
     return module;
 }
 
@@ -676,7 +681,8 @@ fn addSizeCheck(b: *Build, install_cli: *Build.Step.InstallArtifact) void {
 fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoders: Decoders, install_cli: *Build.Step.InstallArtifact, host_generator: *Build.Step.Compile, x86_simd: X86Simd, cli_config: *Build.Module, version: []const u8) void {
     const uidiff = addCheckedLibrary(b, target, optimize, decoders, x86_simd);
     const cases = b.createModule(.{ .root_source_file = b.path("tests/fixtures.zig"), .target = target, .optimize = optimize });
-    _ = addE2e(b, target, optimize, uidiff, cases, install_cli, version);
+    const uidiff_testing = addTestingModule(b, uidiff);
+    _ = addE2e(b, target, optimize, uidiff, uidiff_testing, cases, install_cli, version);
     const filter = b.option([]const u8, "test-filter", "Run only the library's unit tests that match");
     const step = b.step("test", "Run unit, layer, order, fixture and fuzz-corpus tests");
     const filters = if (filter) |pattern| b.allocator.dupe([]const u8, &.{pattern}) catch @panic("OOM") else &.{};
@@ -686,7 +692,10 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
             .root_source_file = b.path(source),
             .target = target,
             .optimize = optimize,
-            .imports = &.{.{ .name = "uidiff", .module = uidiff }},
+            .imports = &.{
+                .{ .name = "uidiff", .module = uidiff },
+                .{ .name = "uidiff_testing", .module = uidiff_testing },
+            },
         });
         step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = scenarios, .filters = filters })).step);
     }
@@ -706,11 +715,16 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
         const styled = std.mem.eql(u8, source, styled_sheet_fuzz_source);
         const mode = if (styled) Optimize.safe else optimize;
         const tested = if (styled and optimize != .safe) addCheckedLibrary(b, target, .safe, decoders, x86_simd) else uidiff;
+        const fuzz_helpers = if (tested == uidiff) uidiff_testing else addTestingModule(b, tested);
         const test_module = b.createModule(.{
             .root_source_file = b.path(source),
             .target = target,
             .optimize = mode,
-            .imports = &.{ .{ .name = "uidiff", .module = tested }, .{ .name = "fixtures", .module = cases } },
+            .imports = &.{
+                .{ .name = "uidiff", .module = tested },
+                .{ .name = "uidiff_testing", .module = fuzz_helpers },
+                .{ .name = "fixtures", .module = cases },
+            },
         });
         if (std.mem.eql(u8, source, cli_source)) test_module.addImport("cli_options", cli_config);
         step.dependOn(&b.addRunArtifact(b.addTest(.{
@@ -741,6 +755,19 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
         .optimize = optimize,
     }) })).step);
     addFixtures(b, step, host_generator);
+}
+
+fn addTestingModule(b: *Build, uidiff: *Build.Module) *Build.Module {
+    return b.createModule(.{
+        .root_source_file = b.path("src/testing.zig"),
+        .target = uidiff.resolved_target,
+        .optimize = uidiff.optimize,
+        // Zig assigns the painter source to one module across both test roots.
+        .imports = &.{
+            .{ .name = "uidiff", .module = uidiff },
+            .{ .name = "uidiff_test_canvas", .module = uidiff.import_table.get("uidiff_test_canvas").? },
+        },
+    });
 }
 
 fn fuzzSources(b: *Build) []const []const u8 {
@@ -804,7 +831,7 @@ fn addRequiredTest(b: *Build, library: *Build.Module, name: []const u8, descript
     b.step(name, description).dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = library, .filters = filters })).step);
 }
 
-fn addE2e(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, uidiff: *Build.Module, cases: *Build.Module, install_cli: *Build.Step.InstallArtifact, version: []const u8) *Build.Step {
+fn addE2e(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, uidiff: *Build.Module, uidiff_testing: *Build.Module, cases: *Build.Module, install_cli: *Build.Step.InstallArtifact, version: []const u8) *Build.Step {
     const options = b.addOptions();
     options.addOptionPathUntracked("executable", .{ .relative = .{ .base = .install_bin, .sub_path = install_cli.artifact.out_filename } });
     options.addOption([]const u8, "usage", @embedFile("src/cli/usage.txt"));
@@ -816,6 +843,7 @@ fn addE2e(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, uidiff: *
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "uidiff", .module = uidiff },
+                .{ .name = "uidiff_testing", .module = uidiff_testing },
                 .{ .name = "fixtures", .module = cases },
                 .{ .name = "e2e_options", .module = options.createModule() },
             },

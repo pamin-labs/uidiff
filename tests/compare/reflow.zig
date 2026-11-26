@@ -2,20 +2,20 @@
 
 const std = @import("std");
 const uidiff = @import("uidiff");
-const sample = uidiff.testing;
-const expect = sample.expect;
-const canvases = sample.canvas;
+const uidiff_testing = @import("uidiff_testing");
+const expect = uidiff_testing.expect;
+const canvas = uidiff_testing.canvas;
 
 test "separate table cell edits stay separate unless both rows exchange intact" {
-    const pair = try canvases.RowExchange.init();
+    const pair = try canvas.RowExchange.init();
     defer pair.deinit();
     const before, const after = .{ pair.before, pair.after };
-    const upper, const pitch = .{ canvases.RowExchange.upper, canvases.RowExchange.pitch };
+    const upper, const pitch = .{ canvas.RowExchange.upper, canvas.RowExchange.pitch };
     const left = 24;
     const right = 140;
     for ([_]usize{ left, right }) |x| {
-        before.fill(x, upper, 30, 16, canvases.inkShade(44, 4));
-        before.fill(x, upper + pitch, 30, 16, canvases.inkShade(126, 4));
+        before.fill(x, upper, 30, 16, canvas.inkShade(44, 4));
+        before.fill(x, upper + pitch, 30, 16, canvas.inkShade(126, 4));
     }
     pair.exchange();
     const table = try expect.compareCanvases(before, after, 1);
@@ -23,7 +23,7 @@ test "separate table cell edits stay separate unless both rows exchange intact" 
     try std.testing.expectEqual(@as(usize, 1), table.regions.len);
     try std.testing.expect(expect.hasRegion(table.regions, .after, left + 1, upper + 1, .changed));
     try std.testing.expect(expect.hasRegion(table.regions, .after, right + 1, upper + pitch + 1, .changed));
-    after.fill(right, upper + pitch, 30, 16, canvases.inkShade(172, 4));
+    after.fill(right, upper + pitch, 30, 16, canvas.inkShade(172, 4));
     const independent = try expect.compareCanvases(before, after, 1);
     defer independent.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 4), independent.regions.len);
@@ -31,12 +31,12 @@ test "separate table cell edits stay separate unless both rows exchange intact" 
 }
 
 test "a tab transfer groups its indicator and reciprocal label colors" {
-    const before = try canvases.Canvas.init(256, 120);
+    const before = try canvas.Canvas.init(256, 120);
     defer before.deinit();
-    const after = try canvases.Canvas.init(256, 120);
+    const after = try canvas.Canvas.init(256, 120);
     defer after.deinit();
-    const active = canvases.inkShade(32, 4);
-    const idle = canvases.inkShade(112, 4);
+    const active = canvas.inkShade(32, 4);
+    const idle = canvas.inkShade(112, 4);
     const indicator = .{ 92, 38, 211, 255 };
     before.fill(32, 24, 68, 9, active);
     before.fill(108, 24, 78, 9, idle);
@@ -51,7 +51,7 @@ test "a tab transfer groups its indicator and reciprocal label colors" {
     try std.testing.expect(expect.hasRegion(transfer.regions, .after, 185, 48, .changed));
 
     // Rename the right-hand label at the same time as moving the indicator.
-    after.fill(108, 24, 78, 9, canvases.white);
+    after.fill(108, 24, 78, 9, canvas.white);
     after.line(108, 186, 24, 7, 48);
     const separate = try expect.compareCanvases(before, after, 1);
     defer separate.deinit(std.testing.allocator);
@@ -61,9 +61,9 @@ test "a tab transfer groups its indicator and reciprocal label colors" {
 }
 
 test "a card grid pairs translated cards across the gutter only when their pixels agree" {
-    const before = try canvases.Canvas.init(340, 130);
+    const before = try canvas.Canvas.init(340, 130);
     defer before.deinit();
-    const after = try canvases.Canvas.init(340, 130);
+    const after = try canvas.Canvas.init(340, 130);
     defer after.deinit();
     const x = 24;
     const pitch = 100;
@@ -71,8 +71,8 @@ test "a card grid pairs translated cards across the gutter only when their pixel
     const height = 64;
     const width = 80;
     for ([_]u8{ 105, 155, 205 }, 0..) |ink, slot| {
-        before.fill(x + pitch * slot, top, width, height, canvases.inkShade(ink, 4));
-        if (slot > 0) after.fill(x + pitch * (slot - 1), top, width, height, canvases.inkShade(ink, 4));
+        before.fill(x + pitch * slot, top, width, height, canvas.inkShade(ink, 4));
+        if (slot > 0) after.fill(x + pitch * (slot - 1), top, width, height, canvas.inkShade(ink, 4));
     }
     const shifted = try expect.compareCanvases(before, after, 1);
     defer shifted.deinit(std.testing.allocator);

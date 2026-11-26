@@ -157,8 +157,8 @@ fn replacementEnd(anchors: []const band_model.Match, old_y: usize, new_y: usize,
 }
 
 test "fixed-header scroll reveals content and skips flat paint" {
-    const canvas = @import("../../testing/canvas.zig");
     const values = @import("../../value.zig");
+    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
     const width = 40;
     const height = 120;
     const header = 10;

@@ -2,9 +2,9 @@
 
 const std = @import("std");
 const uidiff = @import("uidiff");
-const sample = uidiff.testing;
-const expect = sample.expect;
-const canvases = sample.canvas;
+const uidiff_testing = @import("uidiff_testing");
+const expect = uidiff_testing.expect;
+const canvas = uidiff_testing.canvas;
 
 const compare = uidiff.compare;
 const Box = uidiff.Box;
@@ -13,7 +13,7 @@ const Kind = uidiff.Kind;
 const region_padding = uidiff.region_padding;
 
 test "middle insertions box only new content with and without image growth" {
-    const before = try canvases.Canvas.square();
+    const before = try canvas.Canvas.square();
     defer before.deinit();
     before.red(10, 8, 18, 4, 0);
     before.red(28, 40, 12, 4, 0);
@@ -26,21 +26,21 @@ test "middle insertions box only new content with and without image growth" {
 }
 
 test "repeated row tops align at the inserted row and keep its columns together" {
-    const before = try canvases.Canvas.init(260, 240);
+    const before = try canvas.Canvas.init(260, 240);
     defer before.deinit();
     for (0..4) |i_row| {
         const y = 10 + 48 * i_row;
-        before.fill(8, y, 28, 34, canvases.inkShade(80, 4));
-        before.fill(76, y, 100, 12, canvases.inkShade(220, 4));
+        before.fill(8, y, 28, 34, canvas.inkShade(80, 4));
+        before.fill(76, y, 100, 12, canvas.inkShade(220, 4));
         before.line(77, 169, y + 12, i_row, 40);
-        before.fill(224, y + 12, 12, 12, canvases.inkShade(60 + @as(u8, @intCast(21 * i_row)), 4));
+        before.fill(224, y + 12, 12, 12, canvas.inkShade(60 + @as(u8, @intCast(21 * i_row)), 4));
     }
     const after = try before.insert(58, 48, 48);
     defer after.deinit();
     after.copyRows(58, before, 58, 70);
-    after.fill(8, 70, 28, 22, canvases.inkShade(80, 4));
+    after.fill(8, 70, 28, 22, canvas.inkShade(80, 4));
     after.line(76, 156, 70, 123, 40);
-    after.fill(224, 70, 12, 12, canvases.inkShade(123, 4));
+    after.fill(224, 70, 12, 12, canvas.inkShade(123, 4));
 
     const result = try expect.compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
@@ -50,20 +50,20 @@ test "repeated row tops align at the inserted row and keep its columns together"
 }
 
 test "exact panel shifts outrank repeated stationary paint" {
-    const before = try canvases.Canvas.init(320, 320);
+    const before = try canvas.Canvas.init(320, 320);
     defer before.deinit();
-    const after = try canvases.Canvas.init(320, 320);
+    const after = try canvas.Canvas.init(320, 320);
     defer after.deinit();
-    const paint = canvases.inkShade(40, 4);
+    const paint = canvas.inkShade(40, 4);
     before.fill(80, 40, 176, 240, paint);
-    before.fill(81, 242, 174, 38, canvases.inkShade(55, 4));
-    before.fill(92, 251, 15, 7, canvases.inkShade(190, 4));
-    before.fill(100, 67, 23, 5, canvases.inkShade(180, 4));
-    before.fill(94, 110, 100, 4, canvases.inkShade(155, 4));
-    for (110..114) |y| before.fill(104 + y % 3, y, 8, 1, canvases.inkShade(210, 4));
+    before.fill(81, 242, 174, 38, canvas.inkShade(55, 4));
+    before.fill(92, 251, 15, 7, canvas.inkShade(190, 4));
+    before.fill(100, 67, 23, 5, canvas.inkShade(180, 4));
+    before.fill(94, 110, 100, 4, canvas.inkShade(155, 4));
+    for (110..114) |y| before.fill(104 + y % 3, y, 8, 1, canvas.inkShade(210, 4));
     @memcpy(after.pixels, before.pixels);
     after.fill(80, 110, 176, 26, paint);
-    after.fill(100, 110, 94, 4, canvases.inkShade(130, 4));
+    after.fill(100, 110, 94, 4, canvas.inkShade(130, 4));
     after.copyColumns(before, 80, 256, 110, 216, 136);
 
     const result = try expect.compareCanvases(before, after, 2);
@@ -76,18 +76,18 @@ test "exact panel shifts outrank repeated stationary paint" {
 }
 
 test "an inserted row against repeated background is one-sided" {
-    const before = try canvases.Canvas.square();
+    const before = try canvas.Canvas.square();
     defer before.deinit();
-    const after = try canvases.Canvas.init(64, 65);
+    const after = try canvas.Canvas.init(64, 65);
     defer after.deinit();
     after.red(0, 24, 20, 1, 0);
     try expect.check(before, after, 1, &.{.{ .after = Box.fromPixels(0, 24 - region_padding, 20 + region_padding, 1 + 2 * region_padding) }});
 }
 
 test "two-pixel vertical shift boxes the edited word and any revealed content" {
-    const before = try canvases.Canvas.square();
+    const before = try canvas.Canvas.square();
     defer before.deinit();
-    const after = try canvases.Canvas.square();
+    const after = try canvas.Canvas.square();
     defer after.deinit();
     before.red(8, 0, 10, 4, 0);
     before.red(18, 20, 14, 4, 0);
@@ -105,7 +105,7 @@ test "two-pixel vertical shift boxes the edited word and any revealed content" {
 }
 
 test "solid eight-row band between distinct backgrounds gets a full-width box" {
-    const before = try canvases.Canvas.init(80, 120);
+    const before = try canvas.Canvas.init(80, 120);
     defer before.deinit();
     before.red(0, 0, 80, 40, 235);
     before.red(0, 40, 80, 80, 55);
@@ -117,11 +117,11 @@ test "solid eight-row band between distinct backgrounds gets a full-width box" {
 }
 
 test "unrelated tall shots beyond the budget compare by position" {
-    const before = try canvases.Canvas.init(80, 6000);
+    const before = try canvas.Canvas.init(80, 6000);
     defer before.deinit();
-    const after = try canvases.Canvas.init(80, 6000);
+    const after = try canvas.Canvas.init(80, 6000);
     defer after.deinit();
-    for ([_]canvases.Canvas{ before, after }, [_]usize{ 3, 12 }, [_]usize{ 100, 102 }) |shot, x, y| {
+    for ([_]canvas.Canvas{ before, after }, [_]usize{ 3, 12 }, [_]usize{ 100, 102 }) |shot, x, y| {
         shot.red(x, 0, 4, y, 0);
         shot.red(55, y, 10, 6, 0);
         shot.red(x, y + 6, 4, 6000 - y - 6, 0);
@@ -148,7 +148,7 @@ test "a tall image against its reverse stops at the edit budget" {
 }
 
 test "swapped and repeated lines remain visible between shifted anchors" {
-    const before = try canvases.Canvas.init(240, 400);
+    const before = try canvas.Canvas.init(240, 400);
     defer before.deinit();
     before.text(8, 232, 6, 0, 30);
     for ([_]bool{ true, false }) |swap| {
@@ -165,15 +165,15 @@ test "swapped and repeated lines remain visible between shifted anchors" {
 }
 
 test "one or two displacements in a fixed thread get distinct move ranges" {
-    const before = try canvases.Canvas.init(240, 400);
+    const before = try canvas.Canvas.init(240, 400);
     defer before.deinit();
     before.text(8, 232, 50, 0, 30);
-    before.fill(0, 0, 240, 40, canvases.inkShade(45, 4));
-    before.fill(0, 350, 240, 50, canvases.inkShade(60, 4));
-    const after = try canvases.Canvas.init(240, 400);
+    before.fill(0, 0, 240, 40, canvas.inkShade(45, 4));
+    before.fill(0, 350, 240, 50, canvas.inkShade(60, 4));
+    const after = try canvas.Canvas.init(240, 400);
     defer after.deinit();
     for ([_]bool{ false, true }) |remove| {
-        @memset(after.pixels, canvases.inkShade(255, 4));
+        @memset(after.pixels, canvas.inkShade(255, 4));
         after.copyRows(0, before, 0, 100);
         after.copyRows(120, before, 100, if (remove) 244 else 230);
         after.fill(10, 104, 220, 12, .{ 200, 220, 240, 255 });
@@ -200,11 +200,11 @@ test "one or two displacements in a fixed thread get distinct move ranges" {
 }
 
 test "overpainting repeated lines does not create a row movement" {
-    const before = try canvases.Canvas.init(240, 400);
+    const before = try canvas.Canvas.init(240, 400);
     defer before.deinit();
     var y: usize = 10;
     while (y + 9 < before.view.height) : (y += 18) before.line(8, 232, y, 4, 30);
-    const after = try canvases.Canvas.init(240, 400);
+    const after = try canvas.Canvas.init(240, 400);
     defer after.deinit();
     for ([_]usize{ 8, 20, 41 }) |height| {
         for ([_]usize{ 50, 120 }) |width| {
@@ -226,9 +226,9 @@ test "overpainting repeated lines does not create a row movement" {
 test "distant overpaints on repeated lines stay positional" {
     const width = 1200;
     const height = 800;
-    const before = try canvases.Canvas.init(width, height);
+    const before = try canvas.Canvas.init(width, height);
     defer before.deinit();
-    const after = try canvases.Canvas.init(width, height);
+    const after = try canvas.Canvas.init(width, height);
     defer after.deinit();
     var y: usize = 10;
     while (y + 9 <= height) : (y += 40) {
@@ -256,16 +256,16 @@ test "distant overpaints on repeated lines stay positional" {
 }
 
 test "an exact periodic repeat chooses the stationary reading" {
-    const before = try canvases.Canvas.init(200, 400);
+    const before = try canvas.Canvas.init(200, 400);
     defer before.deinit();
-    const after = try canvases.Canvas.init(200, 400);
+    const after = try canvas.Canvas.init(200, 400);
     defer after.deinit();
     var y: usize = 6;
     while (y + 9 <= before.view.height) : (y += 14) before.line(8, 192, y, 3, 30);
     after.copyRows(0, before, 28, 400);
     y = 370;
     while (y + 9 <= after.view.height) : (y += 14) after.line(8, 192, y, 3, 30);
-    after.fill(28, 176, 3, 6, canvases.inkShade(30, 4));
+    after.fill(28, 176, 3, 6, canvas.inkShade(30, 4));
 
     const result = try expect.compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
@@ -279,21 +279,21 @@ test "an exact periodic repeat chooses the stationary reading" {
 
 test "balanced insertion and deletion detect every visible loss in both directions" {
     for ([_]usize{ 400, 400, 520 }, [_]bool{ true, false, false }) |height, chrome| {
-        const before = try canvases.Canvas.init(240, height);
+        const before = try canvas.Canvas.init(240, height);
         defer before.deinit();
-        const after = try canvases.Canvas.init(240, height);
+        const after = try canvas.Canvas.init(240, height);
         defer after.deinit();
-        const clipped = try canvases.Canvas.init(240, height);
+        const clipped = try canvas.Canvas.init(240, height);
         defer clipped.deinit();
-        canvases.auditPage(before, chrome, null, null, 0);
+        canvas.auditPage(before, chrome, null, null, 0);
         for ([_]usize{ 1, 3, 6 }) |insert_at| {
             for (1..4) |rows_count| {
-                canvases.auditPage(clipped, chrome, insert_at, null, rows_count);
+                canvas.auditPage(clipped, chrome, insert_at, null, rows_count);
                 for (insert_at + 1..20) |delete_at| {
                     const y = (if (chrome) @as(usize, 44) else 8) + 18 * delete_at;
                     if (y + 18 * rows_count > height - (if (chrome) @as(usize, 50) else 0)) continue;
-                    canvases.auditPage(after, chrome, insert_at, delete_at, rows_count);
-                    const observable = !sample.sameRun(after.pixels, clipped.pixels);
+                    canvas.auditPage(after, chrome, insert_at, delete_at, rows_count);
+                    const observable = !std.mem.eql(u8, std.mem.sliceAsBytes(after.pixels), std.mem.sliceAsBytes(clipped.pixels));
                     for ([_]bool{ false, true }) |reverse| {
                         const result = try expect.compareCanvases(if (reverse) after else before, if (reverse) before else after, 1);
                         defer result.deinit(std.testing.allocator);
@@ -317,11 +317,11 @@ test "balanced insertion and deletion detect every visible loss in both directio
 }
 
 test "exchanging separated cards preserves the removed card height" {
-    const before = try canvases.Canvas.init(240, 520);
+    const before = try canvas.Canvas.init(240, 520);
     defer before.deinit();
-    const after = try canvases.Canvas.init(240, 520);
+    const after = try canvas.Canvas.init(240, 520);
     defer after.deinit();
-    canvases.auditPage(before, false, null, null, 0);
+    canvas.auditPage(before, false, null, null, 0);
     const old_y = 8 + 10 * 18;
     const new_y = 8 + 18;
     before.fill(8, old_y, 220, 30, .{ 220, 30, 30, 255 });
@@ -341,9 +341,9 @@ test "exchanging separated cards preserves the removed card height" {
 
 test "overpainting repetitive wide pages stays positional" {
     for ([_]usize{ 1000, 3000, 10000 }, [_]usize{ 800, 1200, 4000 }) |width, height| {
-        const before = try canvases.Canvas.init(width, height);
+        const before = try canvas.Canvas.init(width, height);
         defer before.deinit();
-        const after = try canvases.Canvas.init(width, height);
+        const after = try canvas.Canvas.init(width, height);
         defer after.deinit();
         var y: usize = 10;
         while (y + 10 < height) : (y += 40) {

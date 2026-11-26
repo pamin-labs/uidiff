@@ -105,12 +105,24 @@ test "invalid borrowed shapes and non-finite scales fail at the comparison bound
 }
 
 test "comparison releases each allocation on failure" {
-    const expect = @import("testing/expect.zig");
+    const fixture = struct {
+        fn comparePair(allocator: Allocator, before: Image, after: Image) !void {
+            const result = try compare(allocator, before, after, .{});
+            defer result.deinit(allocator);
+            try std.testing.expectEqual(@as(usize, 1), result.regions.len);
+            try std.testing.expectEqual(values.Kind.inserted, result.regions[0].kind);
+        }
+    };
     const old = [_]values.Pixel{ .{ 0, 0, 0, 255 }, .{ 10, 0, 0, 255 }, .{ 20, 0, 0, 255 }, .{ 30, 0, 0, 255 } };
     const new = old[0..2].* ++ [_]values.Pixel{.{ 64, 0, 0, 255 }} ++ old[2..].*;
     const before = Image{ .width = 1, .height = old.len, .pixels = &old };
     const after = Image{ .width = 1, .height = new.len, .pixels = &new };
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, expect.comparePair, .{ before, after });
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, fixture.comparePair, .{ before, after });
+}
+
+test {
+    const canvas = @import("uidiff_test_canvas");
+    std.testing.refAllDecls(canvas.Painters(Image));
 }
 
 test {

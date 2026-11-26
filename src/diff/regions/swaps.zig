@@ -80,11 +80,11 @@ fn exchangedRows(before: Image, after: Image, bands: Box, pitch: usize, rows: us
 }
 
 test "reciprocal row moves are grouped only when both rows exchange intact" {
-    const sample = @import("../../testing/canvas.zig");
-    const pair = try sample.RowExchange.init();
+    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
+    const pair = try canvas.RowExchange.init();
     defer pair.deinit();
     const before, const after = .{ pair.before, pair.after };
-    const upper, const pitch = .{ sample.RowExchange.upper, sample.RowExchange.pitch };
+    const upper, const pitch = .{ canvas.RowExchange.upper, canvas.RowExchange.pitch };
     before.line(22, 212, upper + 10, 4, 60);
     before.line(22, 212, upper + pitch + 10, 9, 60);
     pair.exchange();
@@ -110,10 +110,10 @@ test "reciprocal row moves are grouped only when both rows exchange intact" {
 }
 
 test "audit: a count edit between the exchanged rows remains a separate change" {
-    const sample = @import("../../testing/canvas.zig");
-    const before = try sample.Canvas.init(256, 160);
+    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
+    const before = try canvas.Canvas.init(256, 160);
     defer before.deinit();
-    const after = try sample.Canvas.init(256, 160);
+    const after = try canvas.Canvas.init(256, 160);
     defer after.deinit();
     before.line(24, 160, 40, 1, 62);
     before.line(94, 145, 80, 3, 62);

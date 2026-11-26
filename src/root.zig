@@ -87,9 +87,6 @@ pub const CompareFilesError = files.CompareError;
 /// Decodes two files, compares them and writes the sheet if asked. The caller owns the result.
 pub const compareFiles = files.compareFiles;
 
-/// Fixtures and assertions used in test builds.
-pub const testing = if (builtin.is_test) @import("testing.zig") else void;
-
 /// Compares a pair of borrowed RGBA8 values. The caller owns the result.
 pub fn compare(allocator: std.mem.Allocator, before: Image, after: Image, options: Options) CompareError!Comparison {
     return diff.compare(allocator, before, after, options.comparison());

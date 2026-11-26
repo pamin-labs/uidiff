@@ -1,26 +1,26 @@
 //! Regression scenario for comparison's logical rules.
 const std = @import("std");
 const uidiff = @import("uidiff");
-const sample = uidiff.testing;
-const expect = sample.expect;
-const canvases = sample.canvas;
+const uidiff_testing = @import("uidiff_testing");
+const expect = uidiff_testing.expect;
+const canvas = uidiff_testing.canvas;
 
 test "a compact outline joins edits to its label and value without spanning cards" {
-    const before = try canvases.Canvas.init(480, 164);
+    const before = try canvas.Canvas.init(480, 164);
     defer before.deinit();
-    const after = try canvases.Canvas.init(480, 164);
+    const after = try canvas.Canvas.init(480, 164);
     defer after.deinit();
-    for ([_]canvases.Canvas{ before, after }) |canvas| {
+    for ([_]canvas.Canvas{ before, after }) |image| {
         for ([_]usize{ 20, 254 }) |left| {
-            canvas.fill(left, 20, 198, 112, canvases.inkShade(120, 4));
-            canvas.fill(left + 2, 22, 194, 108, canvases.inkShade(240, 4));
+            image.fill(left, 20, 198, 112, canvas.inkShade(120, 4));
+            image.fill(left + 2, 22, 194, 108, canvas.inkShade(240, 4));
         }
     }
     for ([_]usize{ 52, 286 }) |left| {
-        before.fill(left, 44, 40, 12, canvases.inkShade(64, 4));
-        after.fill(left, 44, 56, 12, canvases.inkShade(72, 4));
-        before.fill(left, 70, 68, 22, canvases.inkShade(64, 4));
-        after.fill(left, 70, 82, 22, canvases.inkShade(72, 4));
+        before.fill(left, 44, 40, 12, canvas.inkShade(64, 4));
+        after.fill(left, 44, 56, 12, canvas.inkShade(72, 4));
+        before.fill(left, 70, 68, 22, canvas.inkShade(64, 4));
+        after.fill(left, 70, 82, 22, canvas.inkShade(72, 4));
     }
     const result = try expect.compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);

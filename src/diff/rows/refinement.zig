@@ -206,7 +206,7 @@ fn sampleBand(comptime mode: enum { colour, silhouette }, before: Image, after: 
 }
 
 test "growth pairs an edited row head with its displaced body" {
-    const canvas = @import("../../testing/canvas.zig");
+    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
     const before = try canvas.Canvas.init(200, 180);
     defer before.deinit();
     const after = try canvas.Canvas.init(200, 220);
@@ -234,7 +234,7 @@ test "growth pairs an edited row head with its displaced body" {
 }
 
 test "an inserted row precedes the moved recolour in an ambiguous alignment" {
-    const canvas = @import("../../testing/canvas.zig");
+    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
     const before = try canvas.Canvas.init(120, 160);
     defer before.deinit();
     const after = try canvas.Canvas.init(120, 160);

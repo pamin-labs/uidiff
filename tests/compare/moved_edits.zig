@@ -2,13 +2,13 @@
 
 const std = @import("std");
 const uidiff = @import("uidiff");
-const sample = uidiff.testing;
-const expect = sample.expect;
-const canvases = sample.canvas;
+const uidiff_testing = @import("uidiff_testing");
+const expect = uidiff_testing.expect;
+const canvas = uidiff_testing.canvas;
 const Pixel = uidiff.Pixel;
 const Kind = uidiff.Kind;
 const region_padding = uidiff.region_padding;
-const min_region_pixels = sample.min_region_pixels;
+const min_region_pixels = canvas.block_size * canvas.block_size;
 
 test "stroke edits survive row movement, neighbouring dark text and a wider crop" {
     const width = 240;
@@ -17,7 +17,7 @@ test "stroke edits survive row movement, neighbouring dark text and a wider crop
     const moved = 30;
     const dark_y = 6 + 14 * 14;
     const light_y = 13 + 14 * 14;
-    const before = try canvases.Canvas.init(width, height);
+    const before = try canvas.Canvas.init(width, height);
     defer before.deinit();
     before.text(8, 232, 6, 0, 30);
     before.text(8, 232, 13, 50, 190);
@@ -31,10 +31,10 @@ test "stroke edits survive row movement, neighbouring dark text and a wider crop
     for ([_]bool{ false, true }) |wider_crop| {
         const after = try before.insert(0, 0, 0);
         defer after.deinit();
-        after.fill(dark_x + 2, dark_y, 1, 9, canvases.inkShade(30, 4));
+        after.fill(dark_x + 2, dark_y, 1, 9, canvas.inkShade(30, 4));
         if (wider_crop) {
-            after.fill(0, 2, 2, 2, canvases.inkShade(0, 4));
-            after.fill(236, 2, 2, 2, canvases.inkShade(0, 4));
+            after.fill(0, 2, 2, 2, canvas.inkShade(0, 4));
+            after.fill(236, 2, 2, 2, canvas.inkShade(0, 4));
         }
         try expect.expectEditAt(before, after, dark_x + 2, dark_y + 4, 20);
     }
@@ -45,12 +45,12 @@ test "stroke edits survive row movement, neighbouring dark text and a wider crop
         after.fill(10, 44, 200, 20, .{ 200, 220, 240, 255 });
         const y = light_y + moved;
         switch (edit_kind) {
-            .dark_widen => after.fill(dark_x + 2, dark_y + moved, 1, 9, canvases.inkShade(30, 4)),
-            .light_widen => after.fill(light_x + 3, y, 1, 9, canvases.inkShade(190, 4)),
+            .dark_widen => after.fill(dark_x + 2, dark_y + moved, 1, 9, canvas.inkShade(30, 4)),
+            .light_widen => after.fill(light_x + 3, y, 1, 9, canvas.inkShade(190, 4)),
             .light_shift => for (y..y + 9) |row| {
                 const pixels = after.row(row);
                 std.mem.copyBackwards(Pixel, pixels[light_x + 1 ..][0..5], pixels[light_x..][0..5]);
-                pixels[light_x] = canvases.white;
+                pixels[light_x] = canvas.white;
             },
         }
         if (edit_kind == .dark_widen) {
@@ -66,12 +66,12 @@ test "small icon motion stays local in a textured viewport" {
     const width = 240;
     const height = 300;
     const color: Pixel = .{ 200, 40, 40, 255 };
-    const before = try canvases.Canvas.init(width, height);
+    const before = try canvas.Canvas.init(width, height);
     defer before.deinit();
     before.text(8, 232, 6, 0, 30);
     before.fill(100, 140, 20, 20, color);
     for (2..4) |shift| {
-        const after = try canvases.Canvas.init(width, height);
+        const after = try canvas.Canvas.init(width, height);
         defer after.deinit();
         after.text(8, 232, 6, 0, 30);
         after.fill(100, 140 + shift, 20, 20, color);
@@ -80,7 +80,7 @@ test "small icon motion stays local in a textured viewport" {
 }
 
 test "edited moved lines still report narrow changes when matching nearby strokes" {
-    const before = try canvases.Canvas.init(240, 400);
+    const before = try canvas.Canvas.init(240, 400);
     defer before.deinit();
     before.text(8, 232, 6, 0, 30);
     const sizes = [_][2]usize{ .{ 3, 6 }, .{ 1, 1 }, .{ 2, 2 }, .{ 6, 2 }, .{ 12, 9 }, .{ 3, 20 }, .{ 3, 30 } };
@@ -88,14 +88,14 @@ test "edited moved lines still report narrow changes when matching nearby stroke
         const base = try before.insert(40, 60, growth);
         defer base.deinit();
         base.fill(10, 44, 200, 50, .{ 200, 220, 240, 255 });
-        const after = try canvases.Canvas.init(base.view.width, base.view.height);
+        const after = try canvas.Canvas.init(base.view.width, base.view.height);
         defer after.deinit();
         @memcpy(after.pixels, base.pixels);
         const limit: usize = if (growth == 0) 380 else 440;
         for (sizes) |size| {
             var y: usize = 110;
             while (y + size[1] < limit) : (y += 3) {
-                const tone = canvases.inkShade(30, 4);
+                const tone = canvas.inkShade(30, 4);
                 var hits: usize = 0;
                 for (y..y + size[1]) |row| {
                     for (base.row(row)[150..][0..size[0]]) |pixel| hits += @intFromBool(!std.meta.eql(pixel, tone));
@@ -128,7 +128,7 @@ test "edited moved lines still report narrow changes when matching nearby stroke
     const after = try before.insert(40, 60, 60);
     defer after.deinit();
     after.fill(10, 44, 200, 50, .{ 200, 220, 240, 255 });
-    after.fill(29, 110, 3, 6, canvases.inkShade(30, 4));
+    after.fill(29, 110, 3, 6, canvas.inkShade(30, 4));
     const edit = try expect.compareCanvases(before, after, 1);
     defer edit.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 2), edit.regions.len);
@@ -136,16 +136,16 @@ test "edited moved lines still report narrow changes when matching nearby stroke
 }
 
 test "thickened or recoloured underlines on moved text stay local" {
-    const before = try canvases.Canvas.init(240, 400);
+    const before = try canvas.Canvas.init(240, 400);
     defer before.deinit();
     before.text(8, 232, 6, 0, 30);
-    before.fill(40, 250, 120, 1, canvases.inkShade(30, 4));
-    before.fill(40, 300, 120, 1, canvases.inkShade(200, 4));
+    before.fill(40, 250, 120, 1, canvas.inkShade(30, 4));
+    before.fill(40, 300, 120, 1, canvas.inkShade(200, 4));
     for ([_]usize{ 0, 281, 331, 330 }, [_]u8{ 0, 30, 200, 230 }) |y, tone| {
         const after = try before.insert(40, 30, 30);
         defer after.deinit();
         after.fill(10, 44, 200, 20, .{ 200, 220, 240, 255 });
-        if (y != 0) after.fill(40, y, 120, 1, canvases.inkShade(tone, 4));
+        if (y != 0) after.fill(40, y, 120, 1, canvas.inkShade(tone, 4));
         const result = try expect.compareCanvases(before, after, 1);
         defer result.deinit(std.testing.allocator);
         if (y == 0) {
@@ -162,20 +162,20 @@ test "thickened or recoloured underlines on moved text stay local" {
 }
 
 test "thicker strokes through repeating text survive temporary row shifts" {
-    const base = try canvases.Canvas.init(240, 400);
+    const base = try canvas.Canvas.init(240, 400);
     defer base.deinit();
     base.text(8, 232, 6, 0, 30);
-    const before = try canvases.Canvas.init(240, 400);
+    const before = try canvas.Canvas.init(240, 400);
     defer before.deinit();
-    const after = try canvases.Canvas.init(240, 400);
+    const after = try canvas.Canvas.init(240, 400);
     defer after.deinit();
     for ([_]u8{ 30, 120, 200 }) |tone| {
         for (1..3) |extra| {
             for (100..380) |y| {
                 @memcpy(before.pixels, base.pixels);
-                before.fill(20, y, 200, 1, canvases.inkShade(tone, 4));
+                before.fill(20, y, 200, 1, canvas.inkShade(tone, 4));
                 @memcpy(after.pixels, before.pixels);
-                after.fill(20, y + 1, 200, extra, canvases.inkShade(tone, 4));
+                after.fill(20, y + 1, 200, extra, canvas.inkShade(tone, 4));
                 const result = try expect.compareCanvases(before, after, 1);
                 defer result.deinit(std.testing.allocator);
                 if (result.regions.len == 0) {
@@ -188,13 +188,13 @@ test "thicker strokes through repeating text survive temporary row shifts" {
 }
 
 test "a light stem edit stays visible beside touching dark text" {
-    const before = try canvases.Canvas.init(240, 400);
+    const before = try canvas.Canvas.init(240, 400);
     defer before.deinit();
     before.text(8, 232, 6, 0, 30);
     var line: usize = 20;
     while (line + 9 < before.view.height) : (line += 28) {
-        before.fill(100, line, 2, 9, canvases.inkShade(30, 4));
-        before.fill(103, line, 2, 9, canvases.inkShade(190, 4));
+        before.fill(100, line, 2, 9, canvas.inkShade(30, 4));
+        before.fill(103, line, 2, 9, canvas.inkShade(190, 4));
     }
     const target = 20 + 28 * 6;
     for ([_]enum { control, widened, right, left, unmoved }{ .control, .widened, .right, .left, .unmoved }) |edit| {
@@ -211,14 +211,14 @@ test "a light stem edit stays visible beside touching dark text" {
                 try std.testing.expect(expect.hasRegion(result.regions, .after, 110, 22, .inserted));
                 continue;
             },
-            .widened, .unmoved => after.fill(105, y, 1, 9, canvases.inkShade(190, 4)),
+            .widened, .unmoved => after.fill(105, y, 1, 9, canvas.inkShade(190, 4)),
             .right => {
-                after.fill(103, y, 1, 9, canvases.white);
-                after.fill(105, y, 1, 9, canvases.inkShade(190, 4));
+                after.fill(103, y, 1, 9, canvas.white);
+                after.fill(105, y, 1, 9, canvas.inkShade(190, 4));
             },
             .left => {
-                after.fill(102, y, 1, 9, canvases.inkShade(190, 4));
-                after.fill(104, y, 1, 9, canvases.white);
+                after.fill(102, y, 1, 9, canvas.inkShade(190, 4));
+                after.fill(104, y, 1, 9, canvas.white);
             },
         }
         const x: usize = switch (edit) {
@@ -231,19 +231,19 @@ test "a light stem edit stays visible beside touching dark text" {
 }
 
 test "repeated table rows keep recoloured or deleted cells after a shift" {
-    const before = try canvases.Canvas.init(240, 400);
+    const before = try canvas.Canvas.init(240, 400);
     defer before.deinit();
     var y: usize = 0;
     while (y + 20 <= before.view.height) : (y += 20) {
-        before.fill(10, y + 2, 220, 1, canvases.inkShade(220, 4));
-        before.fill(20, y + 8, 40, 6, canvases.inkShade(90, 4));
-        before.fill(120, y + 8, 40, 6, canvases.inkShade(90, 4));
+        before.fill(10, y + 2, 220, 1, canvas.inkShade(220, 4));
+        before.fill(20, y + 8, 40, 6, canvas.inkShade(90, 4));
+        before.fill(120, y + 8, 40, 6, canvas.inkShade(90, 4));
     }
     for ([_]usize{ 0, 40 }) |growth| {
         const after = try before.insert(60, 40, growth);
         defer after.deinit();
         after.fill(10, 64, 200, 30, .{ 200, 220, 240, 255 });
-        for ([_]Pixel{ .{ 90, 90, 160, 255 }, canvases.white }) |color| {
+        for ([_]Pixel{ .{ 90, 90, 160, 255 }, canvas.white }) |color| {
             after.fill(120, 248, 40, 6, color);
             const result = try expect.compareCanvases(before, after, 1);
             defer result.deinit(std.testing.allocator);
@@ -261,20 +261,20 @@ test "repeated table rows keep recoloured or deleted cells after a shift" {
 }
 
 test "anchor boundaries and translucent edits remain visible on moved rows" {
-    const before = try canvases.Canvas.init(240, 400);
+    const before = try canvas.Canvas.init(240, 400);
     defer before.deinit();
     before.text(8, 232, 6, 0, 30);
     for ([_]usize{ 99, 100, 101, 113, 114, 115 }) |y| {
         const after = try before.insert(40, 60, 60);
         defer after.deinit();
         after.fill(10, 44, 200, 50, .{ 200, 220, 240, 255 });
-        after.fill(60, y, 3, 3, canvases.inkShade(30, 4));
+        after.fill(60, y, 3, 3, canvas.inkShade(30, 4));
         const result = try expect.compareCanvases(before, after, 1);
         defer result.deinit(std.testing.allocator);
         try std.testing.expect(expect.hasRegion(result.regions, .after, 61, y + 1, null));
     }
 
-    const transparent = try canvases.Canvas.init(200, 300);
+    const transparent = try canvas.Canvas.init(200, 300);
     defer transparent.deinit();
     @memset(transparent.pixels, .{ 255, 255, 255, 0 });
     transparent.text(8, 192, 6, 0, 30);
@@ -289,12 +289,12 @@ test "anchor boundaries and translucent edits remain visible on moved rows" {
 }
 
 test "redrawn status pills in stationary rows cannot borrow each other's offset" {
-    const before = try canvases.Canvas.init(360, 230);
+    const before = try canvas.Canvas.init(360, 230);
     defer before.deinit();
-    const after = try canvases.Canvas.init(360, 230);
+    const after = try canvas.Canvas.init(360, 230);
     defer after.deinit();
-    for ([_]canvases.Canvas{ before, after }) |canvas| {
-        for (0..4) |i| canvas.line(18, 220, 28 + 48 * i, i, 48);
+    for ([_]canvas.Canvas{ before, after }) |image| {
+        for (0..4) |i| image.line(18, 220, 28 + 48 * i, i, 48);
     }
     const a: uidiff.Pixel = .{ 160, 190, 230, 255 };
     const b: uidiff.Pixel = .{ 242, 150, 120, 255 };
@@ -302,8 +302,8 @@ test "redrawn status pills in stationary rows cannot borrow each other's offset"
     for ([_]usize{ 64, 112 }, [_]uidiff.Pixel{ a, b }, [_]uidiff.Pixel{ c, a }) |y, old, new| {
         before.fill(245, y, 70, 24, old);
         after.fill(245, y, 70, 24, new);
-        before.fill(255, y + 9, 18, 5, canvases.inkShade(60, 4));
-        after.fill(255, y + 9, 18, 5, canvases.inkShade(60, 4));
+        before.fill(255, y + 9, 18, 5, canvas.inkShade(60, 4));
+        after.fill(255, y + 9, 18, 5, canvas.inkShade(60, 4));
     }
     const result = try expect.compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);

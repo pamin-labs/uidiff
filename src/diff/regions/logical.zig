@@ -226,7 +226,7 @@ test "one-sided stacks join across a blank seam but keep painted rows separate" 
 }
 
 test {
-    const canvas = @import("../../testing/canvas.zig");
+    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
     const moves_rules = @import("moves.zig");
     const before = try canvas.Canvas.init(480, 164);
     defer before.deinit();

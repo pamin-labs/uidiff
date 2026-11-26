@@ -536,7 +536,7 @@ test "wide reports use bounded overviews and merge overlapping focus crops" {
     const allocator = std.testing.allocator;
     const pixels = try allocator.alloc(Pixel, 3600 * 300);
     defer allocator.free(pixels);
-    const canvas = @import("../testing/canvas.zig");
+    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
     @memset(pixels, canvas.white);
     const image: Image = .{ .width = 3600, .height = 300, .pixels = pixels };
     const regions = [_]Region{

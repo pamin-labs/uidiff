@@ -2,22 +2,22 @@
 
 const std = @import("std");
 const uidiff = @import("uidiff");
-const sample = uidiff.testing;
-const expect = sample.expect;
-const canvases = sample.canvas;
+const uidiff_testing = @import("uidiff_testing");
+const expect = uidiff_testing.expect;
+const canvas = uidiff_testing.canvas;
 const Box = uidiff.Box;
 const Kind = uidiff.Kind;
 const region_padding = uidiff.region_padding;
 const max_regions = uidiff.max_regions;
-const test_gap = sample.merge_gap.count();
+const test_gap = 12;
 
 test "one line of text joins its changed runs across word space" {
-    const before = try canvases.Canvas.init(120, 100);
+    const before = try canvas.Canvas.init(120, 100);
     defer before.deinit();
-    const after = try canvases.Canvas.init(120, 100);
+    const after = try canvas.Canvas.init(120, 100);
     defer after.deinit();
-    after.fill(12, 35, 14, 16, canvases.inkShade(30, 4));
-    after.fill(53, 35, 14, 16, canvases.inkShade(30, 4));
+    after.fill(12, 35, 14, 16, canvas.inkShade(30, 4));
+    after.fill(53, 35, 14, 16, canvas.inkShade(30, 4));
     const result = try expect.compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 1), result.regions.len);
@@ -26,9 +26,9 @@ test "one line of text joins its changed runs across word space" {
 }
 
 test "the exposed edges of a sideways card form one changed box" {
-    const before = try canvases.Canvas.init(150, 120);
+    const before = try canvas.Canvas.init(150, 120);
     defer before.deinit();
-    const after = try canvases.Canvas.init(150, 120);
+    const after = try canvas.Canvas.init(150, 120);
     defer after.deinit();
     before.fill(30, 25, 60, 70, .{ 85, 100, 145, 255 });
     after.fill(50, 25, 60, 70, .{ 85, 100, 145, 255 });
@@ -40,18 +40,18 @@ test "the exposed edges of a sideways card form one changed box" {
 }
 
 test "a stationary column divider separates two same-line changes" {
-    const before = try canvases.Canvas.init(280, 100);
+    const before = try canvas.Canvas.init(280, 100);
     defer before.deinit();
-    const after = try canvases.Canvas.init(280, 100);
+    const after = try canvas.Canvas.init(280, 100);
     defer after.deinit();
-    for ([_]canvases.Canvas{ before, after }) |canvas| {
-        canvas.fill(0, 0, 110, 100, .{ 240, 242, 246, 255 });
-        canvas.fill(110, 0, 1, 100, canvases.inkShade(205, 4));
+    for ([_]canvas.Canvas{ before, after }) |image| {
+        image.fill(0, 0, 110, 100, .{ 240, 242, 246, 255 });
+        image.fill(110, 0, 1, 100, canvas.inkShade(205, 4));
     }
-    before.fill(92, 28, 11, 16, canvases.inkShade(50, 4));
-    after.fill(92, 28, 11, 16, canvases.inkShade(110, 4));
-    before.fill(126, 28, 25, 16, canvases.inkShade(40, 4));
-    after.fill(126, 28, 25, 16, canvases.inkShade(95, 4));
+    before.fill(92, 28, 11, 16, canvas.inkShade(50, 4));
+    after.fill(92, 28, 11, 16, canvas.inkShade(110, 4));
+    before.fill(126, 28, 25, 16, canvas.inkShade(40, 4));
+    after.fill(126, 28, 25, 16, canvas.inkShade(95, 4));
     const result = try expect.compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 2), result.regions.len);
@@ -59,54 +59,54 @@ test "a stationary column divider separates two same-line changes" {
 }
 
 test "one changed block has one padded box" {
-    const before = try canvases.Canvas.square();
+    const before = try canvas.Canvas.square();
     defer before.deinit();
-    const after = try canvases.Canvas.square();
+    const after = try canvas.Canvas.square();
     defer after.deinit();
     after.block(10, 12);
-    const b = expect.paddedBox(10, 12, canvases.block_size, canvases.block_size);
+    const b = expect.paddedBox(10, 12, canvas.block_size, canvas.block_size);
     try expect.check(before, after, 1, &.{.{ .before = b, .after = b }});
 }
 
 test "two distant blocks are numbered top to bottom" {
-    const before = try canvases.Canvas.square();
+    const before = try canvas.Canvas.square();
     defer before.deinit();
-    const after = try canvases.Canvas.square();
+    const after = try canvas.Canvas.square();
     defer after.deinit();
     after.block(40, 40);
     after.block(10, 10);
-    const first = expect.paddedBox(10, 10, canvases.block_size, canvases.block_size);
-    const second = expect.paddedBox(40, 40, canvases.block_size, canvases.block_size);
+    const first = expect.paddedBox(10, 10, canvas.block_size, canvas.block_size);
+    const second = expect.paddedBox(40, 40, canvas.block_size, canvas.block_size);
     try expect.check(before, after, 1, &.{ .{ .before = first, .after = first }, .{ .before = second, .after = second } });
 }
 
 test "nearby blocks merge across the allowed gap" {
-    const before = try canvases.Canvas.square();
+    const before = try canvas.Canvas.square();
     defer before.deinit();
-    const after = try canvases.Canvas.square();
+    const after = try canvas.Canvas.square();
     defer after.deinit();
     after.block(10, 10);
-    after.block(10 + canvases.block_size + test_gap, 10);
-    const b = expect.paddedBox(10, 10, 2 * canvases.block_size + test_gap, canvases.block_size);
+    after.block(10 + canvas.block_size + test_gap, 10);
+    const b = expect.paddedBox(10, 10, 2 * canvas.block_size + test_gap, canvas.block_size);
     try expect.check(before, after, 1, &.{.{ .before = b, .after = b }});
 }
 
 test "merging joins a chain of nearby blocks" {
-    const before = try canvases.Canvas.square();
+    const before = try canvas.Canvas.square();
     defer before.deinit();
-    const after = try canvases.Canvas.square();
+    const after = try canvas.Canvas.square();
     defer after.deinit();
-    for (0..3) |i| after.block(10 + i * (canvases.block_size + test_gap), 10);
+    for (0..3) |i| after.block(10 + i * (canvas.block_size + test_gap), 10);
     try expect.count(before, after, 1);
 }
 
 test "shot scale joins paragraph glyphs but leaves a separate button" {
     const scale = 3;
-    const before = try canvases.Canvas.init(300, 300);
+    const before = try canvas.Canvas.init(300, 300);
     defer before.deinit();
-    const after = try canvases.Canvas.init(300, 300);
+    const after = try canvas.Canvas.init(300, 300);
     defer after.deinit();
-    const size = canvases.block_size * scale;
+    const size = canvas.block_size * scale;
     const start = 10 * scale;
     const step = size + test_gap * scale;
     for (0..2) |row| for (0..4) |column| after.red(start + column * step, start + row * step, size, size, 0);
@@ -122,9 +122,9 @@ test "scattered changes are coalesced to at most eight regions" {
     const spacing = test_gap * 4;
     const side = max_regions + 1;
     const size = (side + 1) * spacing;
-    const before = try canvases.Canvas.init(size, size);
+    const before = try canvas.Canvas.init(size, size);
     defer before.deinit();
-    const after = try canvases.Canvas.init(size, size);
+    const after = try canvas.Canvas.init(size, size);
     defer after.deinit();
     for (1..side + 1) |row| for (1..side + 1) |column| after.block(column * spacing, row * spacing);
     const result = try expect.compareCanvases(before, after, 1);
@@ -133,22 +133,22 @@ test "scattered changes are coalesced to at most eight regions" {
 }
 
 test "size changes survive the noise minimum and padding clips at canvas edges" {
-    const tiny = try canvases.Canvas.init(1, 1);
+    const tiny = try canvas.Canvas.init(1, 1);
     defer tiny.deinit();
-    const tall = try canvases.Canvas.init(1, 2);
+    const tall = try canvas.Canvas.init(1, 2);
     defer tall.deinit();
     try expect.check(tiny, tall, 1, &.{.{ .after = Box.fromPixels(0, 0, 1, 2) }});
-    const before = try canvases.Canvas.square();
+    const before = try canvas.Canvas.square();
     defer before.deinit();
-    const after = try canvases.Canvas.square();
+    const after = try canvas.Canvas.square();
     defer after.deinit();
     after.block(0, 0);
-    const mark = Box.fromPixels(0, 0, canvases.block_size + region_padding, canvases.block_size + region_padding);
+    const mark = Box.fromPixels(0, 0, canvas.block_size + region_padding, canvas.block_size + region_padding);
     try expect.check(before, after, 1, &.{.{ .before = mark, .after = mark }});
 }
 
 test "an insertion stays separate from a nearby recolour" {
-    const before = try canvases.Canvas.init(80, 104);
+    const before = try canvas.Canvas.init(80, 104);
     defer before.deinit();
     before.red(8, 0, 20, 6, 0);
     before.red(20, 34, 4, 4, 0);
@@ -165,9 +165,9 @@ test "an insertion stays separate from a nearby recolour" {
 }
 
 test "fractional device scale is applied to box padding" {
-    const before = try canvases.Canvas.square();
+    const before = try canvas.Canvas.square();
     defer before.deinit();
-    const after = try canvases.Canvas.square();
+    const after = try canvas.Canvas.square();
     defer after.deinit();
     after.block(20, 24);
     const expected = Box.fromPixels(9, 13, 24, 24);
@@ -175,9 +175,9 @@ test "fractional device scale is applied to box padding" {
 }
 
 test "many spaced edits still obey the region cap on a dark page" {
-    const before = try canvases.Canvas.init(1200, 2000);
+    const before = try canvas.Canvas.init(1200, 2000);
     defer before.deinit();
-    const after = try canvases.Canvas.init(1200, 2000);
+    const after = try canvas.Canvas.init(1200, 2000);
     defer after.deinit();
     @memset(before.pixels, .{ 18, 18, 22, 255 });
     before.text(10, 180, 10, 5, 220);

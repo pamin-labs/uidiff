@@ -2,27 +2,27 @@
 
 const std = @import("std");
 const uidiff = @import("uidiff");
-const sample = uidiff.testing;
-const expect = sample.expect;
-const canvases = sample.canvas;
+const uidiff_testing = @import("uidiff_testing");
+const expect = uidiff_testing.expect;
+const canvas = uidiff_testing.canvas;
 const Box = uidiff.Box;
 const Pixel = uidiff.Pixel;
 const Kind = uidiff.Kind;
 const region_padding = uidiff.region_padding;
-const min_region_pixels = sample.min_region_pixels;
+const min_region_pixels = canvas.block_size * canvas.block_size;
 
-fn sidebarPage() !canvases.Canvas {
-    const before = try canvases.Canvas.init(320, 400);
+fn sidebarPage() !canvas.Canvas {
+    const before = try canvas.Canvas.init(320, 400);
     before.text(4, 56, 6, 100, 30);
     before.text(96, 316, 6, 0, 30);
     return before;
 }
 
-fn growMainColumn(before: canvases.Canvas) !canvases.Canvas {
+fn growMainColumn(before: canvas.Canvas) !canvas.Canvas {
     const width = before.view.width;
     const height = before.view.height;
     const inserted = 60;
-    const after = try canvases.Canvas.init(width, height + inserted);
+    const after = try canvas.Canvas.init(width, height + inserted);
     after.copyColumns(before, 0, 60, 0, height, 0);
     after.copyColumns(before, 96, width, 0, 40, 0);
     after.copyColumns(before, 96, width, 40, height, 40 + inserted);
@@ -31,15 +31,15 @@ fn growMainColumn(before: canvases.Canvas) !canvases.Canvas {
 }
 
 test "card corner edits never align their narrow border columns as moves" {
-    const before = try canvases.Canvas.init(800, 600);
+    const before = try canvas.Canvas.init(800, 600);
     defer before.deinit();
-    const after = try canvases.Canvas.init(800, 600);
+    const after = try canvas.Canvas.init(800, 600);
     defer after.deinit();
     @memset(before.pixels, .{ 245, 245, 247, 255 });
     @memset(after.pixels, .{ 245, 245, 247, 255 });
     for ([_]usize{ 60, 300 }) |y| {
-        canvases.strokeRounded(before, y, 4);
-        canvases.strokeRounded(after, y, 16);
+        canvas.strokeRounded(before, y, 4);
+        canvas.strokeRounded(after, y, 16);
         // A separator can have the same ink as the outline.
         if (y == 300) {
             const edge = before.row(y)[480];
@@ -58,19 +58,19 @@ test "card corner edits never align their narrow border columns as moves" {
 }
 
 test "a blank sidebar group keeps a new mark stationary beside inserted cards" {
-    const before = try canvases.Canvas.init(600, 500);
+    const before = try canvas.Canvas.init(600, 500);
     defer before.deinit();
-    const after = try canvases.Canvas.init(600, 500);
+    const after = try canvas.Canvas.init(600, 500);
     defer after.deinit();
     const sidebar: Pixel = .{ 235, 238, 245, 255 };
     before.fill(0, 0, 180, 500, sidebar);
     for (0..10) |i_row| before.line(12, 55, 20 + 36 * i_row, 19 + i_row, 40);
-    canvases.fillCardList(before, null);
+    canvas.fillCardList(before, null);
     for ([_][2]usize{ .{ 60, 92 }, .{ 130, 122 }, .{ 160, 142 }, .{ 130, 205 }, .{ 160, 390 } }) |position| {
         const mark_x, const mark_y = position;
         @memcpy(after.pixels, before.pixels);
-        after.fill(180, 0, 420, 500, canvases.white);
-        canvases.fillCardList(after, 3);
+        after.fill(180, 0, 420, 500, canvas.white);
+        canvas.fillCardList(after, 3);
         after.fill(mark_x, mark_y, 17, 17, .{ 200, 40, 40, 255 });
 
         const result = try expect.compareCanvases(before, after, 1);
@@ -87,12 +87,12 @@ test "a blank sidebar group keeps a new mark stationary beside inserted cards" {
 }
 
 test "added columns and changed overlap survive different strides" {
-    const before = try canvases.Canvas.init(40, 40);
+    const before = try canvas.Canvas.init(40, 40);
     defer before.deinit();
-    const after = try canvases.Canvas.init(50, 40);
+    const after = try canvas.Canvas.init(50, 40);
     defer after.deinit();
     after.block(10, 10);
-    const mark = expect.paddedBox(10, 10, canvases.block_size, canvases.block_size);
+    const mark = expect.paddedBox(10, 10, canvas.block_size, canvas.block_size);
     try expect.check(before, after, 1, &.{ .{ .after = Box.fromPixels(40 - region_padding, 0, 10 + region_padding, 40) }, .{ .before = mark, .after = mark } });
 }
 
@@ -100,17 +100,17 @@ test "stationary sidebar with a small colour difference does not prevent a 606-p
     const height = 1400;
     const at = 80;
     const shift = 606;
-    const before = try canvases.Canvas.init(100, height);
+    const before = try canvas.Canvas.init(100, height);
     defer before.deinit();
-    const after = try canvases.Canvas.init(100, height);
+    const after = try canvas.Canvas.init(100, height);
     defer after.deinit();
     for (0..height) |y| before.red(2, y, 10, 1, @intCast((y * 7) % 250));
-    canvases.paintBands(before, 30, 70);
+    canvas.paintBands(before, 30, 70);
     @memcpy(after.pixels, before.pixels);
     for (0..height) |y| after.row(y)[2][1] = 254;
     for (at..height) |y| {
         if (y < at + shift) {
-            @memset(after.row(y)[20..], canvases.white);
+            @memset(after.row(y)[20..], canvas.white);
         } else @memcpy(after.row(y)[20..], before.row(y - shift)[20..]);
     }
     after.red(35, 90, 40, 40, 90);
@@ -123,9 +123,9 @@ test "stationary sidebar with a small colour difference does not prevent a 606-p
 }
 
 test "wider viewport aligns rows and shows only the added strip" {
-    const before = try canvases.Canvas.init(70, 90);
+    const before = try canvas.Canvas.init(70, 90);
     defer before.deinit();
-    const after = try canvases.Canvas.init(80, 90);
+    const after = try canvas.Canvas.init(80, 90);
     defer after.deinit();
     before.red(8, 0, 15, 4, 0);
     before.red(18, 30, 22, 6, 0);
@@ -161,7 +161,7 @@ test "growing and shrinking columns keep their insertion and independent edits" 
     for (cases) |edit| {
         const after = try growMainColumn(before);
         defer after.deinit();
-        after.fill(edit.x, edit.y, edit.width, edit.height, canvases.inkShade(edit.tone, 4));
+        after.fill(edit.x, edit.y, edit.width, edit.height, canvas.inkShade(edit.tone, 4));
         const result = try expect.compareCanvases(before, after, 1);
         defer result.deinit(std.testing.allocator);
         try std.testing.expect(expect.hasRegion(result.regions, .after, 120, 50, .inserted));
@@ -181,7 +181,7 @@ test "both moving columns preserve a two-sided edit in each" {
     const height = 400;
     const before = try sidebarPage();
     defer before.deinit();
-    const after = try canvases.Canvas.init(320, height);
+    const after = try canvas.Canvas.init(320, height);
     defer after.deinit();
     after.copyColumns(before, 0, 60, 0, 30, 0);
     after.copyColumns(before, 0, 60, 30, height - 20, 50);
@@ -189,8 +189,8 @@ test "both moving columns preserve a two-sided edit in each" {
     after.copyColumns(before, 96, 320, 40, height - 60, 100);
     after.fill(4, 32, 50, 16, .{ 220, 200, 240, 255 });
     after.fill(100, 44, 200, 50, .{ 200, 220, 240, 255 });
-    after.fill(28, 302, 3, 6, canvases.inkShade(30, 4));
-    after.fill(200, 250, 3, 6, canvases.inkShade(30, 4));
+    after.fill(28, 302, 3, 6, canvas.inkShade(30, 4));
+    after.fill(200, 250, 3, 6, canvas.inkShade(30, 4));
     const result = try expect.compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 4), result.regions.len);
@@ -202,7 +202,7 @@ test "sparse marks and real extensions survive independent column alignment" {
     const height = 400;
     const before = try sidebarPage();
     defer before.deinit();
-    const after = try canvases.Canvas.init(320, height + 60);
+    const after = try canvas.Canvas.init(320, height + 60);
     defer after.deinit();
     after.copyColumns(before, 0, 60, 0, height, 0);
     after.copyColumns(before, 96, 320, 0, 40, 0);
@@ -213,7 +213,7 @@ test "sparse marks and real extensions survive independent column alignment" {
         .{ 20, 450, 1, 1 }, .{ 5, 455, 30, 1 }, .{ 20, 430, 10, 10 },
     }, 0..) |m, i| {
         const tone: u8 = if (i == 5) 240 else 30;
-        after.fill(m[0], m[1], m[2], m[3], canvases.inkShade(tone, 4));
+        after.fill(m[0], m[1], m[2], m[3], canvas.inkShade(tone, 4));
         const result = try expect.compareCanvases(before, after, 1);
         defer result.deinit(std.testing.allocator);
         try std.testing.expect(expect.hasRegion(result.regions, .after, 120, 50, .inserted));
@@ -221,20 +221,20 @@ test "sparse marks and real extensions survive independent column alignment" {
         const reverse = try expect.compareCanvases(after, before, 1);
         defer reverse.deinit(std.testing.allocator);
         try std.testing.expectEqual(m[2] * m[3] >= min_region_pixels, expect.hasRegion(reverse.regions, .before, m[0], m[1], .removed));
-        after.fill(m[0], m[1], m[2], m[3], canvases.white);
+        after.fill(m[0], m[1], m[2], m[3], canvas.white);
     }
 }
 
 test "independently aligned columns retain clipped text and different strides" {
-    const full = try canvases.Canvas.init(320, 480);
+    const full = try canvas.Canvas.init(320, 480);
     defer full.deinit();
     full.text(4, 56, 6, 100, 30);
     full.text(96, 296, 6, 0, 30);
     for ([_]usize{ 300, 320 }, [_]usize{ 400, 403 }) |width, height| {
-        const before = try canvases.Canvas.init(width, height);
+        const before = try canvas.Canvas.init(width, height);
         defer before.deinit();
         before.copyColumns(full, 0, width, 0, height, 0);
-        const after = try canvases.Canvas.init(320, height + 60);
+        const after = try canvas.Canvas.init(320, height + 60);
         defer after.deinit();
         after.copyColumns(full, 0, 60, 0, if (width == 300) height else height + 60, 0);
         after.copyColumns(before, 96, width, 0, 40, 0);
@@ -242,7 +242,7 @@ test "independently aligned columns retain clipped text and different strides" {
         after.fill(100, 44, 180, 50, .{ 200, 220, 240, 255 });
         const x: usize = if (width == 300) 20 else 30;
         const y: usize = if (width == 300) 440 else 300;
-        after.fill(x, y, if (width == 300) 6 else 3, 6, canvases.inkShade(30, 4));
+        after.fill(x, y, if (width == 300) 6 else 3, 6, canvas.inkShade(30, 4));
         const result = try expect.compareCanvases(before, after, 1);
         defer result.deinit(std.testing.allocator);
         try std.testing.expect(expect.hasRegion(result.regions, .after, 120, 50, .inserted));
@@ -260,21 +260,21 @@ test "independently aligned columns retain clipped text and different strides" {
 }
 
 test "a moved main column describes its own x span beside a fixed sidebar" {
-    const before = try canvases.Canvas.init(320, 400);
+    const before = try canvas.Canvas.init(320, 400);
     defer before.deinit();
     before.text(4, 56, 50, 100, 30);
     before.text(96, 316, 50, 0, 30);
-    before.fill(0, 0, 320, 40, canvases.inkShade(45, 4));
-    before.fill(0, 350, 320, 50, canvases.inkShade(60, 4));
-    const after = try canvases.Canvas.init(320, 400);
+    before.fill(0, 0, 320, 40, canvas.inkShade(45, 4));
+    before.fill(0, 350, 320, 50, canvas.inkShade(60, 4));
+    const after = try canvas.Canvas.init(320, 400);
     defer after.deinit();
     @memcpy(after.pixels, before.pixels);
-    after.fill(96, 40, 224, 310, canvases.inkShade(255, 4));
+    after.fill(96, 40, 224, 310, canvas.inkShade(255, 4));
     after.copyColumns(before, 96, 320, 40, 120, 40);
     after.copyColumns(before, 96, 320, 120, 310, 160);
     after.fill(100, 124, 200, 32, .{ 200, 220, 240, 255 });
     for (0..2) |pass| {
-        if (pass == 1) after.fill(20, 200, 3, 6, canvases.inkShade(30, 4));
+        if (pass == 1) after.fill(20, 200, 3, 6, canvas.inkShade(30, 4));
         const result = try expect.compareCanvases(before, after, 1);
         defer result.deinit(std.testing.allocator);
         try std.testing.expectEqual(pass + 1, result.regions.len);
@@ -286,11 +286,11 @@ test "a moved main column describes its own x span beside a fixed sidebar" {
 }
 
 test "a compact insertion at the end of a narrow column retains its shift" {
-    const before = try canvases.Canvas.init(400, 600);
+    const before = try canvas.Canvas.init(400, 600);
     defer before.deinit();
-    before.fill(140, 20, 250, 520, canvases.inkShade(235, 4));
-    for (0..20) |i| before.fill(20, 10 + 18 * i, 18, if (i == 19) 4 else 7, canvases.inkShade(@intCast(20 + i), 4));
-    const after = try canvases.Canvas.init(400, 600);
+    before.fill(140, 20, 250, 520, canvas.inkShade(235, 4));
+    for (0..20) |i| before.fill(20, 10 + 18 * i, 18, if (i == 19) 4 else 7, canvas.inkShade(@intCast(20 + i), 4));
+    const after = try canvas.Canvas.init(400, 600);
     defer after.deinit();
     @memcpy(after.pixels, before.pixels);
     const row = 10 + 19 * 18;
@@ -306,9 +306,9 @@ test "a compact insertion at the end of a narrow column retains its shift" {
 
 test "solid overpaints of repeated lines stay two-sided across column widths" {
     for ([_]usize{ 600, 2000 }) |height| {
-        const before = try canvases.Canvas.init(400, height);
+        const before = try canvas.Canvas.init(400, height);
         defer before.deinit();
-        const after = try canvases.Canvas.init(400, height);
+        const after = try canvas.Canvas.init(400, height);
         defer after.deinit();
         var y: usize = 10;
         while (y + 10 < height) : (y += 18) before.line(10, 170, y, y / 18, 30);

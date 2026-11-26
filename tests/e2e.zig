@@ -204,7 +204,7 @@ test "a wide source uses the preview bounds and rejects a truncated input" {
     const width = 32_768;
     const pixels = try allocator.alloc(uidiff.Pixel, width);
     defer allocator.free(pixels);
-    @memset(pixels, uidiff.testing.canvas.white);
+    @memset(pixels, @import("uidiff_testing").canvas.white);
     var encoded: std.Io.Writer.Allocating = .init(allocator);
     defer encoded.deinit();
     try uidiff.encodePng(allocator, .{ .width = width, .height = 1, .pixels = pixels }, &encoded.writer);
@@ -331,7 +331,7 @@ test "a PNG with a one-pixel diagonal exits with a change report" {
     defer tmp.cleanup();
     const pixels = try allocator.alloc(uidiff.Pixel, width * height);
     defer allocator.free(pixels);
-    @memset(pixels, uidiff.testing.canvas.white);
+    @memset(pixels, @import("uidiff_testing").canvas.white);
     var encoded: std.Io.Writer.Allocating = .init(allocator);
     defer encoded.deinit();
     const image: uidiff.Image = .{ .width = width, .height = height, .pixels = pixels };

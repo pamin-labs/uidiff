@@ -251,7 +251,7 @@ test "a two-row alias does not hide a thirty-row scroll through periodic content
 }
 
 test "inserting and deleting above a divider preserves the deletion" {
-    const canvas = @import("../testing/canvas.zig");
+    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
     const width = 96;
     const height = 120;
     const first = 24;

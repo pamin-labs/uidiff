@@ -375,23 +375,23 @@ test "a taller button excludes unchanged card borders on unpaired rows" {
     const allocator = std.testing.allocator;
     const width = 360;
     const height = 280;
-    const sample = @import("../testing/canvas.zig");
-    const before = try sample.Canvas.init(width, height);
+    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
+    const before = try canvas.Canvas.init(width, height);
     defer before.deinit();
-    const after = try sample.Canvas.init(width, height);
+    const after = try canvas.Canvas.init(width, height);
     defer after.deinit();
-    const border = sample.inkShade(170, 4);
+    const border = canvas.inkShade(170, 4);
     const button: Pixel = .{ 37, 99, 235, 255 };
-    for ([_]sample.Canvas{ before, after }, [_]usize{ 0, 14 }) |canvas, growth| {
-        canvas.fill(24, 20, 2, 146 + growth, border);
-        canvas.fill(320, 20, 2, 146 + growth, border);
-        canvas.fill(24, 20, 298, 2, border);
-        canvas.fill(24, 164 + growth, 298, 2, border);
-        canvas.line(48, 222, 48, 2, 28);
-        canvas.fill(48, 107, 100 + growth, 26 + growth, button);
-        canvas.line(60, 126, 114 + growth / 2, 4, 255);
-        canvas.line(40, 305, 199 + growth, 5, 28);
-        canvas.line(40, 300, 220 + growth, 6, 28);
+    for ([_]canvas.Canvas{ before, after }, [_]usize{ 0, 14 }) |image, growth| {
+        image.fill(24, 20, 2, 146 + growth, border);
+        image.fill(320, 20, 2, 146 + growth, border);
+        image.fill(24, 20, 298, 2, border);
+        image.fill(24, 164 + growth, 298, 2, border);
+        image.line(48, 222, 48, 2, 28);
+        image.fill(48, 107, 100 + growth, 26 + growth, button);
+        image.line(60, 126, 114 + growth / 2, 4, 255);
+        image.line(40, 305, 199 + growth, 5, 28);
+        image.line(40, 300, 220 + growth, 6, 28);
     }
     const span: columns.Span = .{ .left = 24, .width = 298 };
     const scope: columns.Scope = .{ .before = before.view, .after = after.view, .span = span, .bounds = span };

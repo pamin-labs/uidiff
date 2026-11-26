@@ -1,8 +1,8 @@
 //! Assertions for comparison scenarios.
 const std = @import("std");
-const uidiff = @import("../root.zig");
-const canvas = @import("canvas.zig");
-const Canvas = canvas.Canvas;
+const uidiff = @import("uidiff");
+const canvas = @import("uidiff_test_canvas");
+const Canvas = canvas.Painters(uidiff.Image).Canvas;
 
 const CompareCheckError = uidiff.CompareError || error{TestExpectedEqual};
 const LocateEditError = uidiff.CompareError || error{ MissingEdit, TestUnexpectedResult };
@@ -86,12 +86,4 @@ pub fn count(before: Canvas, after: Canvas, expected: usize) CompareCheckError!v
     const actual = try compareCanvases(before, after, 1);
     defer actual.deinit(std.testing.allocator);
     try std.testing.expectEqual(expected, actual.regions.len);
-}
-
-/// Checks the insertion fixture using the allocator supplied by the failure runner.
-pub fn comparePair(allocator: std.mem.Allocator, before: uidiff.Image, after: uidiff.Image) CompareCheckError!void {
-    const result = try uidiff.compare(allocator, before, after, .{});
-    defer result.deinit(allocator);
-    try std.testing.expectEqual(@as(usize, 1), result.regions.len);
-    try std.testing.expectEqual(uidiff.Kind.inserted, result.regions[0].kind);
 }
