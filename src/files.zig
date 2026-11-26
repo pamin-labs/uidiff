@@ -46,7 +46,6 @@ pub const WriteError = EncodeSheetError || Io.Dir.CreateFileAtomicError ||
 /// File, codec, comparison and sheet failures.
 pub const CompareError = codec.ReadError || codec.DecodeError || diff.CompareError || WriteError;
 
-const DecodeResult = (codec.ReadError || codec.DecodeError)!codec.Decoded;
 const DecodedPair = struct { before: codec.Decoded, after: codec.Decoded };
 
 // Decoder blocks retain their allocator until both images are released.
@@ -138,13 +137,12 @@ fn loadPair(io: Io, shared: *SharedAllocator, paths: Paths, cap: usize, diagnost
         return decodeInOrder(io, allocator, first, null, paths, cap, diagnostics);
     defer second.close(io);
     // The caller decodes before while one worker decodes after. Keep the
-    // shared allocator and both handles alive until the worker has joined.
+    // shared allocator and both handles alive until the task has completed.
     const locked = shared.allocator();
-    var second_result: DecodeResult = undefined;
-    const worker = std.Thread.spawn(.{}, decodeOnThread, .{ second, io, locked, cap, &second_result }) catch
+    var worker = io.concurrent(codec.FileInput.decode, .{ second, io, locked, cap }) catch
         return decodeInOrder(io, allocator, first, second, paths, cap, diagnostics);
     const first_result = first.decode(io, locked, cap);
-    worker.join();
+    const second_result = worker.await(io);
     var before = first_result catch |err| {
         if (second_result) |image| {
             var unused = image;
@@ -155,10 +153,6 @@ fn loadPair(io: Io, shared: *SharedAllocator, paths: Paths, cap: usize, diagnost
     errdefer before.deinit();
     diagnostics.path = paths.after;
     return .{ .before = before, .after = try second_result };
-}
-
-fn decodeOnThread(input: codec.FileInput, io: Io, allocator: Allocator, cap: usize, output: *DecodeResult) void {
-    output.* = input.decode(io, allocator, cap);
 }
 
 fn decodeInOrder(io: Io, allocator: Allocator, first: codec.FileInput, second: ?codec.FileInput, paths: Paths, cap: usize, diagnostics: *Diagnostics) CompareError!DecodedPair {
