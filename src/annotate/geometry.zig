@@ -163,7 +163,7 @@ pub fn nearPane(y: usize, pane: Rect, ui: Layout) bool {
 }
 
 /// Projects a source rectangle onto a pane showing the complete image.
-pub fn offsetMark(box: ?SourceRect, pane: Rect, size: Size) ?Rect {
+pub noinline fn offsetMark(box: ?SourceRect, pane: Rect, size: Size) ?Rect {
     const source = box orelse return null;
     return mapMark(source, .{ .x = 0, .y = 0, .w = size.width, .h = size.height }, pane);
 }
@@ -189,7 +189,7 @@ pub fn imageRect(image: Image, box: ?values.Box) ?SourceRect {
 }
 
 /// Validates and rounds a box against a known source image size.
-pub fn rectAtSize(size: Size, box: ?values.Box) ?SourceRect {
+pub noinline fn rectAtSize(size: Size, box: ?values.Box) ?SourceRect {
     const b = box orelse return null;
     const w: f64 = @floatFromInt(size.width);
     const h: f64 = @floatFromInt(size.height);
