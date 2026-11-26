@@ -681,7 +681,7 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
     const step = b.step("test", "Run unit, layer, order, fixture and fuzz-corpus tests");
     const filters = if (filter) |pattern| b.allocator.dupe([]const u8, &.{pattern}) catch @panic("OOM") else &.{};
     step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = uidiff, .filters = filters, .use_llvm = fuzz_use_llvm })).step);
-    for ([_][]const u8{"tests/compare.zig"}) |source| {
+    for ([_][]const u8{ "tests/compare.zig", "tests/sheet.zig" }) |source| {
         const scenarios = b.createModule(.{
             .root_source_file = b.path(source),
             .target = target,

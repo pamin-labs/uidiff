@@ -31,7 +31,7 @@ Follow the public pamin-labs/skills engineering rules in [core](.agents/skills/p
 - `skills/uidiff/` documents screenshot capture, comparison and report interpretation for agents.
 - `scripts/` contains developer tooling. `scripts/release/` packages the CLI, renders the Homebrew formula and tests the launcher and installers. The installers are `install.sh` and `install.ps1` at the repository root.
 - `.github/` contains the release target list and workflows. Dispatch `release.yml` from `main` with a `version` input. The workflow commits that version to `build.zig.zon`, builds the ReleaseSafe matrix shared with CI, creates the tagged GitHub release, mirrors assets to R2 and publishes npm packages through OIDC with provenance. Stable releases also update the Homebrew tap from the published formula asset.
-- `tests/compare.zig` registers the comparison scenarios in `tests/compare/`, which use the diff facade and shared procedural fixtures through the public `uidiff` module. `tests/` runs the installed CLI (`tests/e2e.zig`), decodes the fixtures through the public API (`tests/decode.zig`), checks the binary size budget, and checks source layout, layering and declaration order. `tests/fuzz/` holds one fuzz target per top-level file, each its own test binary. `tests/fixtures.zig` is the fixture set's root; `tests/fixtures/` holds the synthetic fixture generator, its encoders, the freshness check and the generated images with expected reports. Unit tests live beside the code they exercise.
+- `tests/compare.zig` registers the comparison scenarios in `tests/compare/`, and `tests/sheet.zig` registers the annotated sheet scenarios in `tests/sheet/`. Both use the public `uidiff` module and its test-only fixtures. `tests/` runs the installed CLI (`tests/e2e.zig`), decodes the fixtures through the public API (`tests/decode.zig`), checks the binary size budget, and checks source layout, layering and declaration order. `tests/fuzz/` holds one fuzz target per top-level file, each its own test binary. `tests/fixtures.zig` is the fixture set's root; `tests/fixtures/` holds the synthetic fixture generator, its encoders, the freshness check and the generated images with expected reports. Unit tests live beside the code they exercise.
 
 ## Layers
 
@@ -45,7 +45,7 @@ Follow the public pamin-labs/skills engineering rules in [core](.agents/skills/p
 | annotate | `src/annotate.zig` `src/annotate/` | value |
 | report | `src/report.zig` | value |
 | files | `src/files.zig` | value, codec, diff, annotate |
-| testing | `src/testing.zig` `src/testing/` | value, api, src/codec/jpeg.zig, src/codec/stb.zig, src/codec/png_format.zig, src/codec/png/decoder.zig, src/codec/png/deflate.zig, src/codec/png/scanlines.zig, src/diff/regions.zig, src/diff/regions/logical.zig, src/diff/regions/moves.zig, src/diff/rows.zig, src/annotate/palette.zig |
+| testing | `src/testing.zig` `src/testing/` | value, api, annotate, src/codec/jpeg.zig, src/codec/stb.zig, src/codec/png_format.zig, src/codec/png/decoder.zig, src/codec/png/deflate.zig, src/codec/png/scanlines.zig, src/diff/regions.zig, src/diff/regions/logical.zig, src/diff/regions/moves.zig, src/diff/rows.zig, src/annotate/palette.zig, src/annotate/badges.zig, src/annotate/copy.zig, src/annotate/focus.zig, src/annotate/geometry.zig, src/annotate/placement.zig, src/annotate/text.zig |
 | api | `src/root.zig` | value, codec, diff, annotate, report, files |
 | cli | `src/cli.zig` `src/cli/` | `uidiff` |
 | tool | `bench/` `tests/` | `uidiff` |
@@ -81,6 +81,7 @@ Only a submodule's facade and implementation files may import its implementation
 | `src/annotate/badges.zig` | `src/annotate/badges/` |
 | `src/codec/png.zig` | `src/codec/png/` |
 | `tests/compare.zig` | `tests/compare/` |
+| `tests/sheet.zig` | `tests/sheet/` |
 
 Each unit of the diff internals, with its tier. A unit imports another only if that unit's tier is lower; files inside one unit import each other under the rules above. `src/diff.zig` sits above every tier. A file under `src/diff/` that this table does not name fails the test.
 
