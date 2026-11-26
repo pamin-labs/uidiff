@@ -1,6 +1,6 @@
 /* libjpeg uses longjmp for fatal errors. C owns the jump buffer and the
    live setjmp frame. The Zig callback keeps its cleanup state in its caller. */
-#include "jpeg.h"
+#include "bridge.h"
 #include <setjmp.h>
 
 struct decode_error {

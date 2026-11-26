@@ -24,7 +24,7 @@ const X86Simd = enum { shipped, baseline, without_ssse3, without_sse4, without_a
 // run with UBSan in the checked test build and in fuzzing.
 const shipped_mode: Optimize = .safe;
 const codec_mode: Optimize = .fast;
-const jpeg_public_config = "#define UIDIFF_JPEG_PUBLIC_CONFIG 1\n#include \"jpeg_build_config.h\"\n#undef UIDIFF_JPEG_PUBLIC_CONFIG\n";
+const jpeg_public_config = "#define UIDIFF_JPEG_PUBLIC_CONFIG 1\n#include \"build_config.h\"\n#undef UIDIFF_JPEG_PUBLIC_CONFIG\n";
 const png_compression_level = 3;
 /// The shipped CLI's size budget for every CI target. Run zig build size
 /// with -Dtarget to measure a specific binary.
@@ -313,9 +313,9 @@ fn addJpegDecoder(b: *Build, module: *Build.Module, target: Build.ResolvedTarget
     configureJpeg(b, module, jpeg, files, neon);
     const vendor_flags = std.mem.concat(b.allocator, []const u8, &.{
         &codec_section_flags,                                                                                                                        &fuzz_coverage_flags, flags,
-        &.{ "-fvisibility=hidden", "-DNO_GETENV", "-include", b.root.joinString(b.allocator, "src/codec/jpeg_build_config.h") catch @panic("OOM") },
+        &.{ "-fvisibility=hidden", "-DNO_GETENV", "-include", b.root.joinString(b.allocator, "src/codec/jpeg/build_config.h") catch @panic("OOM") },
     }) catch @panic("OOM");
-    module.addCSourceFile(.{ .file = b.path("src/codec/jpeg.c"), .flags = &(codec_section_flags ++ fuzz_coverage_flags) });
+    module.addCSourceFile(.{ .file = b.path("src/codec/jpeg/bridge.c"), .flags = &(codec_section_flags ++ fuzz_coverage_flags) });
     module.addCSourceFiles(.{ .root = jpeg.path("src"), .flags = vendor_flags, .files = &.{
         "jcomapi.c",            "jdapimin.c",           "jdatasrc.c",           "jdhuff.c",
         "jdinput.c",            "jdmarker.c",           "jdphuff.c",            "jmemmgr.c",
@@ -382,11 +382,11 @@ fn configureJpeg(b: *Build, module: *Build.Module, jpeg: *Build.Dependency, file
     module.addCMacro("UIDIFF_JPEG_VERSION", b.fmt("\"{s}\"", .{version}));
     if (neon) module.addCMacro("UIDIFF_JPEG_NEON", "1");
     _ = files.add("jconfig.h", jpeg_public_config);
-    _ = files.add("jconfigint.h", "#define UIDIFF_JPEG_INTERNAL_CONFIG 1\n#include \"jpeg_build_config.h\"\n#undef UIDIFF_JPEG_INTERNAL_CONFIG\n");
+    _ = files.add("jconfigint.h", "#define UIDIFF_JPEG_INTERNAL_CONFIG 1\n#include \"build_config.h\"\n#undef UIDIFF_JPEG_INTERNAL_CONFIG\n");
     module.addIncludePath(files.getDirectory());
     module.addIncludePath(jpeg.path("src"));
     module.addIncludePath(jpeg.path("simd"));
-    module.addIncludePath(b.path("src/codec"));
+    module.addIncludePath(b.path("src/codec/jpeg"));
 }
 
 fn pinnedValue(source: []const u8, anchor: []const u8, delimiter: u8) []const u8 {
@@ -647,10 +647,10 @@ fn addDecoders(b: *Build, target: Build.ResolvedTarget) Decoders {
     const jpeg = b.dependency("libjpeg_turbo", .{});
     const jpeg_config = b.addWriteFiles();
     _ = jpeg_config.add("jconfig.h", jpeg_public_config);
-    const jpeg_c = b.addTranslateC(.{ .root_source_file = b.path("src/codec/jpeg.h"), .target = target, .optimize = shipped_mode });
+    const jpeg_c = b.addTranslateC(.{ .root_source_file = b.path("src/codec/jpeg/bridge.h"), .target = target, .optimize = shipped_mode });
     jpeg_c.addIncludePath(jpeg_config.getDirectory());
     jpeg_c.addIncludePath(jpeg.path("src"));
-    jpeg_c.addIncludePath(b.path("src/codec"));
+    jpeg_c.addIncludePath(b.path("src/codec/jpeg"));
     const stb_c = b.addTranslateC(.{ .root_source_file = b.path("src/codec/png/stb.h"), .target = target, .optimize = shipped_mode });
     stb_c.addIncludePath(stb.path(""));
     stb_c.defineCMacro("STBI_NO_STDIO", null);
@@ -965,7 +965,7 @@ fn addJpegFixtures(b: *Build) Build.LazyPath {
     const c = b.addTranslateC(.{ .root_source_file = header, .target = b.graph.host, .optimize = .safe });
     c.addIncludePath(config.getDirectory());
     c.addIncludePath(jpeg.path("src"));
-    c.addIncludePath(b.path("src/codec"));
+    c.addIncludePath(b.path("src/codec/jpeg"));
     const module = b.createModule(.{
         .root_source_file = b.path("tests/fixtures/jpeg_generate.zig"),
         .target = b.graph.host,
