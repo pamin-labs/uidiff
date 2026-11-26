@@ -80,8 +80,7 @@ pub fn writeRows(allocator: Allocator, size: values.Size, source: anytype, outpu
         if (y == 0) {
             try compress.write(&.{png_format.up_filter});
             if (rgb_only) {
-                @memcpy(filtered, row);
-                try compress.write(rgb(filtered));
+                try compress.write(packRgb(false, filtered, row, &.{}));
             } else {
                 try compress.write(row);
             }
@@ -98,36 +97,46 @@ pub fn writeRows(allocator: Allocator, size: values.Size, source: anytype, outpu
         }
         const method = if (rgb_only) preferredFilter(row, above) else png_format.up_filter;
         try compress.write(&.{method});
-        switch (method) {
-            png_format.sub_filter => {
+        const encoded = switch (method) {
+            png_format.sub_filter => sub: {
                 const pixel = @sizeOf(values.Pixel);
-                filtered[0..pixel].* = row[0..pixel].*;
-                filter(filtered[pixel..], row[pixel..], row[0 .. row.len - pixel]);
+                filtered[0..3].* = row[0..3].*;
+                const encoded_rgb = packRgb(true, filtered[3..], row[pixel..], row[0 .. row.len - pixel]);
+                break :sub filtered[0 .. 3 + encoded_rgb.len];
             },
-            png_format.paeth_filter => filterPaeth(filtered, row, above),
-            else => filter(filtered, row, above),
-        }
+            png_format.paeth_filter => paeth: {
+                filterPaeth(filtered, row, above);
+                break :paeth packRgb(false, filtered, filtered, &.{});
+            },
+            else => up: {
+                if (rgb_only) break :up packRgb(true, filtered, row, above);
+                filter(filtered, row, above);
+                break :up filtered;
+            },
+        };
         above = row;
-        try compress.write(if (rgb_only) rgb(filtered) else filtered);
+        try compress.write(encoded);
     }
     try compress.finish();
     try deflate.chunk(output, "IEND", "");
 }
 
-fn rgb(bytes: []u8) []const u8 {
+fn packRgb(comptime subtract: bool, bytes: []u8, current: []const u8, predictor: []const u8) []const u8 {
     const Blocks = @Vector(16, u8);
     const picks = @Vector(16, i32){ 0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, 15, 15, 15, 15 };
     var i: usize = 0;
     var out: usize = 0;
-    while (i + 16 <= bytes.len) : (i += 16) {
+    while (i + 16 <= current.len) : (i += 16) {
         // Whole-vector load and store: the 12-byte array store is split into
         // scalar moves. The four extra bytes are overwritten by the next block.
-        const block = @as(*align(1) const Blocks, @ptrCast(bytes[i..][0..16])).*;
+        var block = @as(*align(1) const Blocks, @ptrCast(current[i..][0..16])).*;
+        if (subtract) block -%= @as(*align(1) const Blocks, @ptrCast(predictor[i..][0..16])).*;
         @as(*align(1) Blocks, @ptrCast(bytes[out..][0..16])).* = @shuffle(u8, block, undefined, picks);
         out += 12;
     }
-    while (i < bytes.len) : (i += 4) {
-        bytes[out..][0..3].* = bytes[i..][0..3].*;
+    while (i < current.len) : (i += 4) {
+        const block: @Vector(3, u8) = current[i..][0..3].*;
+        bytes[out..][0..3].* = if (subtract) block -% @as(@Vector(3, u8), predictor[i..][0..3].*) else block;
         out += 3;
     }
     return bytes[0..out];
