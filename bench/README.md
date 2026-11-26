@@ -19,9 +19,10 @@ change regions and, for 56 moved cases, their vertical offsets.
   The table reports the median of 15 rounds, rotating tool order between
   rounds after one warm-up per command. The uidiff column was refreshed
   independently on the original `real-chat-noa-desktop-light-insert-message`
-  pair at its recorded scale, alternating the final ReleaseSafe CLI and
-  v0.0.2. The competitor measurements and versions come from the original
-  run. Elapsed time is measured around process launch and exit. CPU time is
+  pair at its recorded scale, alternating fresh ReleaseSafe processes from
+  the current source and v0.0.3. Each binary ran once to warm the file caches.
+  The competitor measurements and versions come from the original run.
+  Elapsed time is measured around process launch and exit. CPU time is
   user plus system time and peak RSS is in MiB, both from child process
   usage. The install row reports tool size with Node listed separately
   where it is required.
