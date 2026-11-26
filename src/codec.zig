@@ -18,6 +18,8 @@ const Io = std.Io;
 pub const encodePng = png.write;
 /// Encodes PNG from a source that provides rows.
 pub const encodePngRows = png.writeRows;
+/// Encodes PNG rows, with optional I/O concurrency for compression.
+pub const encodePngRowsWithIo = png.writeRowsWithIo;
 /// Allocation, invalid image or output failures while encoding.
 pub const EncodeError = png.EncodeError;
 /// The largest encoded input file or byte stream accepted, in bytes.

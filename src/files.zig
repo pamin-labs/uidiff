@@ -123,9 +123,13 @@ pub fn compareFiles(io: Io, allocator: Allocator, paths: Paths, options: Options
 
 /// Streams a comparison sheet as PNG into a caller-supplied writer.
 pub fn encodeComparisonSheet(allocator: Allocator, before: values.Image, after: values.Image, result: diff.Comparison, output: *Io.Writer) EncodeSheetError!void {
+    return encodeSheet(null, allocator, before, after, result, output);
+}
+
+fn encodeSheet(io: ?Io, allocator: Allocator, before: values.Image, after: values.Image, result: diff.Comparison, output: *Io.Writer) EncodeSheetError!void {
     const sheet = try annotate.ReportRows.init(allocator, before, after, result.regions, result.moves);
     defer sheet.deinit(allocator);
-    try codec.encodePngRows(allocator, sheet.size(), sheet, output);
+    try codec.encodePngRowsWithIo(io, allocator, sheet.size(), sheet, output);
 }
 
 fn loadPair(io: Io, shared: *SharedAllocator, paths: Paths, cap: usize, diagnostics: *Diagnostics) CompareError!DecodedPair {
@@ -181,7 +185,7 @@ fn writeSheet(io: Io, allocator: Allocator, path: []const u8, before: values.Ima
     const buffer = try allocator.alloc(u8, write_buffer_bytes);
     defer allocator.free(buffer);
     var writer = file.file.writer(io, buffer);
-    encodeComparisonSheet(allocator, before, after, result, &writer.interface) catch |err| switch (err) {
+    encodeSheet(io, allocator, before, after, result, &writer.interface) catch |err| switch (err) {
         error.WriteFailed => return writer.err orelse err,
         else => |other| return other,
     };

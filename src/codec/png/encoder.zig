@@ -7,7 +7,8 @@ const values = @import("../../value.zig");
 const png_format = @import("../png_format.zig");
 const stb = @import("../stb.zig");
 const Allocator = std.mem.Allocator;
-const Writer = std.Io.Writer;
+const Io = std.Io;
+const Writer = Io.Writer;
 const Image = values.Image;
 
 const Filtered = struct { method: u8, bytes: []const u8 };
@@ -26,6 +27,12 @@ const BorrowedRows = struct {
 
 const sheet_strip_rows = 8;
 
+const parallel_min_bytes = 6 * 1024 * 1024;
+
+const target_strip_bytes = 768 * 1024;
+
+const max_strip_workers = 4;
+
 const filter_sample_pixels = 6;
 
 const filter_switch_margin = 4;
@@ -41,6 +48,12 @@ pub fn write(allocator: Allocator, image: Image, output: *Writer) deflate.Encode
 /// provided row buffer or lend a row to copy into the strip.
 /// Sources may supply isOpaque for RGB output.
 pub fn writeRows(allocator: Allocator, size: values.Size, source: anytype, output: *Writer) deflate.EncodeError!void {
+    return writeRowsWithIo(null, allocator, size, source, output);
+}
+
+/// Encodes large sheets with parallel deflate strips when given an I/O backend.
+/// A borrowed row must remain readable through the next source call.
+pub fn writeRowsWithIo(io: ?Io, allocator: Allocator, size: values.Size, source: anytype, output: *Writer) deflate.EncodeError!void {
     if (!@hasDecl(@TypeOf(source), "row"))
         @compileError("a PNG row source must provide row(y, scratch)");
     if (size.pixelCount() == null) return error.InvalidImage;
@@ -53,6 +66,21 @@ pub fn writeRows(allocator: Allocator, size: values.Size, source: anytype, outpu
     header[8..13].* = .{ png_format.sample_depth, if (rgb_only) png_format.rgb_color else png_format.rgba_color, 0, 0, 0 };
     try deflate.chunk(output, png_format.header_type, &header);
 
+    const encoded_row_bytes = 1 + size.width * @as(usize, if (rgb_only) 3 else @sizeOf(values.Pixel));
+    const workers = if (io != null and encoded_row_bytes * size.height >= parallel_min_bytes)
+        // std.Io exposes no CPU count; on one CPU, strips would only cost memory.
+        @min(max_strip_workers, std.Thread.getCpuCount() catch 1)
+    else
+        1;
+    if (workers > 1) {
+        try writeStrips(io.?, allocator, size, source, output, rgb_only, encoded_row_bytes, workers);
+    } else {
+        try writeSerial(allocator, size, source, output, rgb_only);
+    }
+    try deflate.chunk(output, "IEND", "");
+}
+
+fn writeSerial(allocator: Allocator, size: values.Size, source: anytype, output: *Writer, rgb_only: bool) deflate.EncodeError!void {
     const row_bytes = size.width * @sizeOf(values.Pixel);
     const staged_rows: usize = if (@TypeOf(source) == BorrowedRows) 0 else sheet_strip_rows + 1;
     const buffer = try allocator.alignedAlloc(u8, .@"4", deflate.chunk_bytes + row_bytes + staged_rows * row_bytes);
@@ -84,7 +112,77 @@ pub fn writeRows(allocator: Allocator, size: values.Size, source: anytype, outpu
         above = row;
     }
     try compress.finish();
-    try deflate.chunk(output, "IEND", "");
+}
+
+fn writeStrips(io: Io, allocator: Allocator, size: values.Size, source: anytype, output: *Writer, rgb_only: bool, encoded_row_bytes: usize, workers: usize) deflate.EncodeError!void {
+    const strip_rows = @max(1, target_strip_bytes / encoded_row_bytes);
+    const strip_bytes = strip_rows * encoded_row_bytes;
+    const compressed_bytes = deflate.Strip.outputBound(strip_bytes);
+    const slot_bytes = deflate.history_bytes + strip_bytes + compressed_bytes;
+    const row_bytes = size.width * @sizeOf(values.Pixel);
+    const buffer = try allocator.alignedAlloc(u8, .@"4", 3 * row_bytes + workers * slot_bytes);
+    defer allocator.free(buffer);
+    const rows = std.mem.bytesAsSlice(values.Pixel, buffer[0 .. 2 * row_bytes]);
+    const filtered = buffer[2 * row_bytes ..][0..row_bytes];
+    const slots = buffer[3 * row_bytes ..];
+
+    var backing = allocator;
+    var streams: [max_strip_workers]deflate.Strip = undefined;
+    var initialized: usize = 0;
+    defer for (streams[0..initialized]) |*stream| stream.deinit();
+    for (streams[0..workers]) |*stream| {
+        try stream.init(&backing);
+        initialized += 1;
+    }
+    var pending: [max_strip_workers]?Io.Future(deflate.EncodeError!deflate.Strip.Result) = @splat(null);
+    defer for (pending[0..workers]) |*slot| {
+        if (slot.*) |*task| {
+            // The primary operation already returned its error. Wait before
+            // releasing buffers the other workers may still use.
+            _ = task.await(io) catch {};
+        }
+    };
+
+    var stream: deflate.StripStream = .{ .output = output };
+    try stream.start();
+    var previous: []const u8 = &.{};
+    var above: []const u8 = &.{};
+    var first: usize = 0;
+    var index: usize = 0;
+    while (first < size.height) : (index += 1) {
+        const slot = index % workers;
+        if (pending[slot]) |*task| {
+            try stream.write(try task.await(io));
+            pending[slot] = null;
+        }
+        const workspace = slots[slot * slot_bytes ..][0..slot_bytes];
+        const history = workspace[0..@min(deflate.history_bytes, previous.len)];
+        // Different slots own consecutive strips, so the previous input
+        // remains available even while its worker is compressing it.
+        @memcpy(history, previous[previous.len - history.len ..]);
+        const end = @min(size.height, first + strip_rows);
+        const input = workspace[deflate.history_bytes..][0 .. (end - first) * encoded_row_bytes];
+        for (first..end) |y| {
+            const scratch = rows[(y % 2) * size.width ..][0..size.width];
+            const row = std.mem.sliceAsBytes(source.row(y, scratch));
+            const encoded = filterRow(row, above, filtered, rgb_only);
+            const encoded_row = input[(y - first) * encoded_row_bytes ..][0..encoded_row_bytes];
+            encoded_row[0] = encoded.method;
+            @memcpy(encoded_row[1..], encoded.bytes);
+            above = row;
+        }
+        const out = workspace[deflate.history_bytes + strip_bytes ..];
+        const flush: deflate.Strip.Flush = if (end == size.height) .finish else .sync;
+        pending[slot] = io.async(deflate.Strip.compress, .{ &streams[slot], history, input, out, flush });
+        previous = input;
+        first = end;
+    }
+    for (index -| workers..index) |i| {
+        const slot = &pending[i % workers];
+        try stream.write(try slot.*.?.await(io));
+        slot.* = null;
+    }
+    try stream.finish();
 }
 
 fn filterRow(row: []const u8, above: []const u8, filtered: []u8, rgb_only: bool) Filtered {
@@ -124,8 +222,9 @@ fn packRgb(comptime subtract: bool, bytes: []u8, current: []const u8, predictor:
     var i: usize = 0;
     var out: usize = 0;
     while (i + 16 <= current.len) : (i += 16) {
-        // Whole-vector load and store: the 12-byte array store is split into
-        // scalar moves. The four extra bytes are overwritten by the next block.
+        // A 12-byte store is split into scalar moves. The whole-vector store
+        // stays within the supplied RGBA-sized buffer, and its four surplus
+        // bytes are overwritten by the next block or excluded from the result.
         var block = @as(*align(1) const Blocks, @ptrCast(current[i..][0..16])).*;
         if (subtract) block -%= @as(*align(1) const Blocks, @ptrCast(predictor[i..][0..16])).*;
         @as(*align(1) Blocks, @ptrCast(bytes[out..][0..16])).* = @shuffle(u8, block, undefined, picks);
@@ -291,6 +390,72 @@ test "staged PNG rows preserve the predictor across two strip boundaries and a t
         const decoded = try decoder.decode(allocator, streamed.written(), header, values.max_decode_bytes);
         defer stb.release(allocator, decoded);
         try std.testing.expectEqualSlices(values.Pixel, image.pixels, decoded);
+    }
+}
+
+test "sheets below the parallel threshold use the serial encoder" {
+    const allocator = std.testing.allocator;
+    const width = 1025;
+    const height = 1027;
+    const pixels = try allocator.alloc(values.Pixel, width * height);
+    defer allocator.free(pixels);
+    for (pixels, 0..) |*pixel, i| {
+        pixel.* = .{ @intCast(i % 179), @intCast(i / width % 227), @intCast(i % 211), 255 };
+    }
+    const image: Image = .{ .width = width, .height = height, .pixels = pixels };
+    const Source = struct {
+        image: Image,
+
+        pub fn isOpaque(_: @This()) bool {
+            return true;
+        }
+
+        pub fn row(self: @This(), y: usize, _: []values.Pixel) []const values.Pixel {
+            return self.image.row(y);
+        }
+    };
+    var streamed: Writer.Allocating = .init(allocator);
+    defer streamed.deinit();
+    var serial: Writer.Allocating = .init(allocator);
+    defer serial.deinit();
+    try writeRowsWithIo(std.testing.io, allocator, image.size(), Source{ .image = image }, &streamed.writer);
+    try write(allocator, image, &serial.writer);
+    try std.testing.expectEqualSlices(u8, serial.written(), streamed.written());
+}
+
+test "a failing writer stops parallel strips and releases every buffer" {
+    const allocator = std.testing.allocator;
+    const width = 1291;
+    const height = 1633;
+    const pixels = try allocator.alloc(values.Pixel, width * height);
+    defer allocator.free(pixels);
+    for (pixels, 0..) |*pixel, i| pixel.* = .{ @intCast(i % 251), @intCast(i / width % 199), @intCast(i % 149), 101 };
+    const image: Image = .{ .width = width, .height = height, .pixels = pixels };
+    // Room for the header and part of the first strip only.
+    var buffer: [64 * 1024]u8 = undefined;
+    var output: Writer = .fixed(&buffer);
+    try std.testing.expectError(error.WriteFailed, writeRowsWithIo(std.testing.io, allocator, image.size(), BorrowedRows{ .image = image }, &output));
+}
+
+test "overlapped strip compression reconstructs RGBA and RGB rows across worker reuse" {
+    const allocator = std.testing.allocator;
+    const width = 1291;
+    const height = 1633;
+    const pixels = try allocator.alloc(values.Pixel, width * height);
+    defer allocator.free(pixels);
+    const image: Image = .{ .width = width, .height = height, .pixels = pixels };
+    var output: Writer.Allocating = .init(allocator);
+    defer output.deinit();
+    for ([_]u8{ 255, 101 }) |alpha| {
+        for (pixels, 0..) |*pixel, i| {
+            pixel.* = .{ @intCast(i % 251), @intCast(i / width % 199), @intCast(i % 149), alpha };
+        }
+        output.clearRetainingCapacity();
+        try writeRowsWithIo(std.testing.io, allocator, image.size(), BorrowedRows{ .image = image }, &output.writer);
+        const header = try stb.probe(allocator, output.written(), values.max_decode_bytes);
+        const decoded = try decoder.decode(allocator, output.written(), header, values.max_decode_bytes);
+        defer stb.release(allocator, decoded);
+        try std.testing.expectEqualSlices(values.Pixel, pixels, decoded);
     }
 }
 
