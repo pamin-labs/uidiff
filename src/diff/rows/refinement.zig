@@ -36,8 +36,8 @@ pub const max_replacement_rows = 64;
 pub fn refineElements(before: band.Keys, after: band.Keys, limits: band.Limits, bands: []band.Band) void {
     const sample = limits.sample orelse return;
     if (bands.len < 2) return;
-    recoverGrowingEdits(sample, limits.scroll, bands);
-    refineMixedPaths(sample, limits.scroll, bands);
+    recoverGrowingEdits(sample.*, limits.scroll, bands);
+    refineMixedPaths(sample.*, limits.scroll, bands);
     for (bands[0 .. bands.len - 1], bands[1..]) |*row_band, next| {
         if (row_band.mode != .regular or @min(row_band.removed, row_band.added) != 0) continue;
         const inserted = row_band.added != 0;
@@ -226,7 +226,7 @@ test "growth pairs an edited row head with its displaced body" {
         .{ .before = 70, .after = 70, .removed = 32, .added = 72 },
         .{ .before = 102, .after = 142, .removed = 78, .added = 78 },
     };
-    refineElements(&old, &new, .{ .scroll = 2, .replacement = 24, .sample = .{ .pair = .{ .before = before.view, .after = after.view }, .columns = .{ .left = 0, .width = 200 } } }, &bands);
+    refineElements(&old, &new, .{ .scroll = 2, .replacement = 24, .sample = &.{ .pair = .{ .before = before.view, .after = after.view }, .columns = .{ .left = 0, .width = 200 } } }, &bands);
     try std.testing.expectEqual(@as(usize, 0), bands[1].removed);
     try std.testing.expectEqual(@as(usize, 40), bands[1].added);
     try std.testing.expectEqual(@as(usize, 110), bands[2].after);
@@ -257,7 +257,7 @@ test "an inserted row precedes the moved recolour in an ambiguous alignment" {
     refineElements(&old_keys, &new_keys, .{
         .scroll = 4,
         .replacement = 48,
-        .sample = .{ .pair = .{ .before = before.view, .after = after.view }, .columns = .{ .left = 0, .width = 120 } },
+        .sample = &.{ .pair = .{ .before = before.view, .after = after.view }, .columns = .{ .left = 0, .width = 120 } },
     }, &bands);
     try std.testing.expectEqual(@as(usize, 0), bands[0].removed);
     try std.testing.expectEqual(@as(usize, 20), bands[0].added);

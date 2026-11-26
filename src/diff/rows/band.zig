@@ -26,7 +26,8 @@ pub const Limits = struct {
     scroll: usize,
     replacement: usize,
     narrow_edit: bool = false,
-    sample: ?Sample = null,
+    /// Borrows the sample for the duration of the alignment call.
+    sample: ?*const Sample = null,
 };
 
 /// One run of exactly matched row keys.

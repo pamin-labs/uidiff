@@ -194,7 +194,7 @@ test "fixed-header scroll reveals content and skips flat paint" {
             @memset(row[4..36], .{ 112, 96, 60, 255 });
         };
         band.keys(scrolled, 0, width, &b);
-        const result = assembleBands(&a, &b, .{ .scroll = 2, .replacement = 24, .sample = .{ .pair = .{ .before = original, .after = scrolled }, .columns = .{ .left = 0, .width = width } } }, .{
+        const result = assembleBands(&a, &b, .{ .scroll = 2, .replacement = 24, .sample = &.{ .pair = .{ .before = original, .after = scrolled }, .columns = .{ .left = 0, .width = width } } }, .{
             .rows = &matches,
             .footer = matches.len,
             .first_offset = 0,

@@ -54,17 +54,18 @@ pub fn matchBands(allocator: Allocator, before: band.Keys, after: band.Keys, lim
     const viewport = before.len == after.len;
     if (viewport and main.prefix != 0) {
         if (recolour.positionalPaintBands(before, after, main.prefix, limits, bands)) |aligned| return aligned;
-    }
-    if (viewport and main.prefix != 0 and limits.sample != null) {
-        if (insertion.panelInsertion(before, after, main.prefix, limits, bands)) |aligned| return aligned;
-        var reversed = limits;
-        reversed.sample.?.pair = limits.sample.?.pair.reversed();
-        if (insertion.panelInsertion(after, before, main.prefix, reversed, bands)) |aligned| {
-            for (aligned) |*row_band| {
-                std.mem.swap(usize, &row_band.before, &row_band.after);
-                std.mem.swap(usize, &row_band.removed, &row_band.added);
+        if (limits.sample) |sample| {
+            if (insertion.panelInsertion(before, after, main.prefix, limits, bands)) |aligned| return aligned;
+            var reversed = limits;
+            const reversed_sample: band.Sample = .{ .pair = sample.pair.reversed(), .columns = sample.columns };
+            reversed.sample = &reversed_sample;
+            if (insertion.panelInsertion(after, before, main.prefix, reversed, bands)) |aligned| {
+                for (aligned) |*row_band| {
+                    std.mem.swap(usize, &row_band.before, &row_band.after);
+                    std.mem.swap(usize, &row_band.removed, &row_band.added);
+                }
+                return aligned;
             }
-            return aligned;
         }
     }
     const positional = if (viewport)
@@ -275,7 +276,7 @@ test "inserting and deleting above a divider preserves the deletion" {
     }
     const a: value.Image = .{ .width = width, .height = height, .pixels = std.mem.bytesAsSlice(value.Pixel, std.mem.asBytes(&old)) };
     const b: value.Image = .{ .width = width, .height = height, .pixels = std.mem.bytesAsSlice(value.Pixel, std.mem.asBytes(&new)) };
-    const limits: band.Limits = .{ .scroll = 2, .replacement = 24, .sample = .{ .pair = .{ .before = a, .after = b }, .columns = .{ .left = 24, .width = 48 } } };
+    const limits: band.Limits = .{ .scroll = 2, .replacement = 24, .sample = &.{ .pair = .{ .before = a, .after = b }, .columns = .{ .left = 24, .width = 48 } } };
     var before: [height]u64 = undefined;
     var after: [height]u64 = undefined;
     keys(a, limits.sample.?.columns.left, limits.sample.?.columns.width, &before);

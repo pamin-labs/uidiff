@@ -180,7 +180,7 @@ fn alignSpan(allocator: Allocator, scope: columns.Scope, scroll_limit_px: usize,
         // Unchanged columns on the same rows are additional evidence of a
         // local overwrite, especially when repeating lines can match at a pitch.
         .narrow_edit = scope.span.width <= @min(scope.pair.before.width, scope.pair.after.width) / 2,
-        .sample = .{ .pair = scope.pair, .columns = scope.span },
+        .sample = &.{ .pair = scope.pair, .columns = scope.span },
     };
     const aligned = try rows.matchBands(allocator, old_keys, new_keys, limits, bands, filtered, workspace) orelse return null;
     rows.refineElements(old_keys, new_keys, limits, aligned);
