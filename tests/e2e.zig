@@ -3,6 +3,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const uidiff = @import("uidiff");
 const canvas = @import("uidiff_testing").canvas;
+const png_format = @import("png_format");
 const options = @import("e2e_options");
 const fixtures = @import("fixtures");
 const testing = std.testing;
@@ -97,17 +98,12 @@ test "an annotated sheet is written atomically beside a normal report" {
     }
     const bytes = try tmp.dir.readFileAlloc(testing.io, "sheet.png", allocator, .limited(uidiff.max_encoded_bytes));
     defer allocator.free(bytes);
-    try testing.expect(bytes.len >= 8);
-    var chunks = bytes[8..]; // Skip the PNG signature.
-    while (chunks.len != 0) {
-        try testing.expect(chunks.len >= 12); // Length, tag, and checksum.
-        const data_len = std.mem.readInt(u32, chunks[0..4], .big);
-        try testing.expect(data_len <= chunks.len - 12);
-        const payload = chunks[4..][0 .. 4 + @as(usize, data_len)];
-        const stored = std.mem.readInt(u32, chunks[4 + payload.len ..][0..4], .big);
-        try testing.expectEqual(std.hash.Crc32.hash(payload), stored);
-        chunks = chunks[8 + payload.len ..];
+    try testing.expect(std.mem.startsWith(u8, bytes, png_format.signature));
+    var chunks: png_format.Chunks = .{ .bytes = bytes };
+    while (chunks.next()) |chunk| {
+        try testing.expectEqual(std.hash.Crc32.hash(chunk.tag_and_data), chunk.checksum);
     }
+    try testing.expectEqual(bytes.len, chunks.offset);
     var sheet = try uidiff.decode(allocator, bytes);
     defer sheet.deinit();
     var source = try uidiff.decodeFile(testing.io, allocator, before);

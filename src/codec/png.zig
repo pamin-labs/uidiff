@@ -7,7 +7,7 @@ const Io = std.Io;
 const zlib = @import("png/zlib.zig");
 const encoder = @import("png/encoder.zig");
 const decoder = @import("png/decoder.zig");
-const png_format = @import("png/format.zig");
+const png_format = @import("png_format");
 const stb = @import("png/stb.zig");
 
 /// Malformed PNG bytes, a decode past the memory budget, or allocation failure.

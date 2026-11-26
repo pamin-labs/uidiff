@@ -1,5 +1,47 @@
-//! PNG signature and first-chunk fields shared by probing and writing.
+//! PNG headers, chunk framing, and scanline filter definitions.
 const std = @import("std");
+
+/// A framed PNG chunk, including the bytes covered by its stored CRC.
+pub const Chunk = struct {
+    offset: usize,
+    end: usize,
+    kind: [4]u8,
+    data: []const u8,
+    tag_and_data: []const u8,
+    checksum: u32,
+};
+
+/// Walks chunks from offset up to the end of bytes. A truncated chunk
+/// leaves offset unchanged, so callers can distinguish it from exhaustion.
+pub const Chunks = struct {
+    bytes: []const u8,
+    offset: usize = signature.len,
+
+    pub fn next(self: *Chunks) ?Chunk {
+        const start = self.offset;
+        const rest = self.bytes[start..];
+        if (rest.len < chunk_overhead) return null;
+        const length = readU32(rest, 0);
+        if (length > rest.len - chunk_overhead) return null;
+        const checksum_offset = chunk_prefix + @as(usize, length);
+        const end = start + checksum_offset + @sizeOf(u32);
+        self.offset = end;
+        return .{
+            .offset = start,
+            .end = end,
+            .kind = rest[@sizeOf(u32)..chunk_prefix].*,
+            .data = rest[chunk_prefix..checksum_offset],
+            .tag_and_data = rest[@sizeOf(u32)..checksum_offset],
+            .checksum = readU32(rest, checksum_offset),
+        };
+    }
+};
+
+/// The colour types used by the PNG codec.
+pub const Colour = enum(u8) { gray = 0, rgb = 2, indexed = 3, gray_alpha = 4, rgba = 6 };
+
+/// PNG scanline predictor, in its wire representation.
+pub const Filter = enum(u8) { none, sub, up, average, paeth };
 
 /// Marks a file as PNG, before its chunk framing.
 pub const signature = "\x89PNG\r\n\x1a\n";
@@ -20,25 +62,35 @@ pub const profile_offset = dimensions_offset + 2 * @sizeOf(u32);
 pub const color_offset = profile_offset + 1;
 /// Bits per sample in the streaming profiles.
 pub const sample_depth = 8;
-/// PNG colour type with one grayscale sample.
-pub const gray_color = 0;
-/// PNG colour type with red, green and blue channels.
-pub const rgb_color = 2;
-/// PNG colour type with one palette index.
-pub const indexed_color = 3;
-/// PNG colour type with grayscale and alpha channels.
-pub const gray_alpha_color = 4;
-/// PNG colour type with red, green, blue and alpha channels.
-pub const rgba_color = 6;
+/// Offset of the first chunk after IHDR and its CRC.
+pub const header_end = header_bytes + @sizeOf(u32);
 
-/// Up uses the previous scanline as its predictor.
-pub const up_filter = 2;
+const chunk_prefix = 2 * @sizeOf(u32);
+const chunk_overhead = chunk_prefix + @sizeOf(u32);
 
-/// Sub uses the preceding pixel as its predictor.
-pub const sub_filter = 1;
+/// Writes the signature and an eight-bit noninterlaced IHDR. The codec's
+/// chunk writer supplies framing and the CRC implementation.
+pub fn writeHeader(comptime writeChunk: anytype, out: *std.Io.Writer, width: u32, height: u32, colour: Colour) std.Io.Writer.Error!void {
+    try out.writeAll(signature);
+    var header: [header_data_bytes]u8 = undefined;
+    std.mem.writeInt(u32, header[0..4], width, .big);
+    std.mem.writeInt(u32, header[4..8], height, .big);
+    header[8..13].* = .{ sample_depth, @backingInt(colour), 0, 0, 0 };
+    try writeChunk(out, header_type, &header);
+}
 
-/// Paeth chooses the nearest of three neighbouring samples.
-pub const paeth_filter = 4;
+/// Chooses the nearest of three neighbouring 8-bit samples.
+pub fn paeth(a: u8, b: u8, c: u8) u8 {
+    const left = @abs(@as(i16, b) - c);
+    const top = @abs(@as(i16, a) - c);
+    const corner = @abs(@as(i16, a) + b - c - c);
+    return if (left <= @min(top, corner)) a else if (top <= corner) b else c;
+}
+
+/// Reads a big-endian PNG field at a previously bounded offset.
+pub fn readU32(bytes: []const u8, offset: usize) u32 {
+    return std.mem.readInt(u32, bytes[offset..][0..@sizeOf(u32)], .big);
+}
 
 test {
     std.testing.refAllDecls(@This());

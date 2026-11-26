@@ -2,21 +2,21 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const values = @import("../../value.zig");
-const format = @import("format.zig");
+const format = @import("png_format");
 const memory = @import("codec_memory");
 const zlib = @import("zlib_c");
 
-const Filter = enum(u8) { none, sub, up, average, paeth };
+const Filter = format.Filter;
 const Range = struct { first: usize, end: usize };
 const Block = @Vector(vector_bytes, u8);
 const BlockBytes = [vector_bytes]u8;
 
 /// Colour types accepted by the noninterlaced 8-bit decoder.
 pub const Profile = enum(u8) {
-    gray = format.gray_color,
-    rgb = format.rgb_color,
-    indexed = format.indexed_color,
-    rgba = format.rgba_color,
+    gray = @backingInt(format.Colour.gray),
+    rgb = @backingInt(format.Colour.rgb),
+    indexed = @backingInt(format.Colour.indexed),
+    rgba = @backingInt(format.Colour.rgba),
 
     pub fn samplesPerPixel(self: Profile) usize {
         return switch (self) {
@@ -111,8 +111,6 @@ const rgb_channels = 3;
 const vector_bytes = 16;
 const block_bytes = vector_bytes;
 const rgb_block_bytes = block_bytes / channels * rgb_channels;
-const chunk_overhead = 3 * @sizeOf(u32);
-const chunk_prefix = 2 * @sizeOf(u32);
 // The larger span amortizes dictionary updates on Apple silicon.
 const inflate_bytes = if (builtin.os.tag == .macos and builtin.cpu.arch == .aarch64) 64 * 1024 else 32 * 1024;
 
@@ -131,7 +129,7 @@ pub fn decode(bytes: []const u8, size: values.Size) memory.Error!?[]values.Pixel
     const chunks = collectChunks(bytes, profile, &palette) orelse return null;
     const width = size.width;
     const height = size.height;
-    if (width != be32(bytes, format.dimensions_offset) or height != be32(bytes, format.dimensions_offset + @sizeOf(u32))) return null;
+    if (width != format.readU32(bytes, format.dimensions_offset) or height != format.readU32(bytes, format.dimensions_offset + @sizeOf(u32))) return null;
     const count = size.pixelCount() orelse return null;
     const stride = width * channels;
     const input_bytes = width * profile.samplesPerPixel() + 1;
@@ -168,23 +166,21 @@ pub fn decode(bytes: []const u8, size: values.Size) memory.Error!?[]values.Pixel
 }
 
 fn collectChunks(bytes: []const u8, profile: Profile, palette: *[256]values.Pixel) ?Chunks {
-    var pos: usize = format.header_bytes + @sizeOf(u32);
-    if (pos > bytes.len) return null;
+    if (format.header_end > bytes.len) return null;
+    var chunks: format.Chunks = .{ .bytes = bytes, .offset = format.header_end };
     var range: ?Range = null;
     var palette_len: usize = 0;
     var has_alpha = false;
-    while (bytes.len - pos >= chunk_overhead) {
-        const size = be32(bytes, pos);
-        if (size > bytes.len - pos - chunk_overhead) return null;
-        const next = pos + size + chunk_overhead;
-        const kind = bytes[pos + @sizeOf(u32) ..][0..4].*;
+    while (chunks.next()) |chunk| {
+        const size = chunk.data.len;
+        const kind = chunk.kind;
         switch (@as(u32, @bitCast(kind))) {
             @as(u32, @bitCast(@as([4]u8, "IDAT".*))) => {
                 if (profile == .indexed and palette_len == 0) return null;
                 if (range) |prior| {
-                    if (prior.end != pos) return null;
-                    range = .{ .first = prior.first, .end = next };
-                } else range = .{ .first = pos, .end = next };
+                    if (prior.end != chunk.offset) return null;
+                    range = .{ .first = prior.first, .end = chunk.end };
+                } else range = .{ .first = chunk.offset, .end = chunk.end };
             },
             @as(u32, @bitCast(@as([4]u8, "IEND".*))) => {
                 if (size != 0) return null;
@@ -193,7 +189,7 @@ fn collectChunks(bytes: []const u8, profile: Profile, palette: *[256]values.Pixe
             @as(u32, @bitCast(@as([4]u8, "PLTE".*))) => {
                 if (profile != .indexed or range != null or palette_len != 0) return null;
                 if (size == 0 or size % rgb_channels != 0 or size > palette.len * rgb_channels) return null;
-                const data = bytes[pos + chunk_prefix ..][0..size];
+                const data = chunk.data;
                 palette_len = @divExact(size, rgb_channels);
                 for (palette[0..palette_len], std.mem.bytesAsSlice([rgb_channels]u8, data)) |*pixel, rgb| {
                     pixel.* = rgb ++ [1]u8{255};
@@ -201,27 +197,24 @@ fn collectChunks(bytes: []const u8, profile: Profile, palette: *[256]values.Pixe
             },
             @as(u32, @bitCast(@as([4]u8, "tRNS".*))) => {
                 if (profile != .indexed or range != null or has_alpha or palette_len == 0 or size > palette_len) return null;
-                const data = bytes[pos + chunk_prefix ..][0..size];
+                const data = chunk.data;
                 for (palette[0..size], data) |*pixel, alpha| pixel[3] = alpha;
                 has_alpha = true;
             },
             @as(u32, @bitCast(@as([4]u8, "acTL".*))) => return null,
             else => if (kind[0] & 32 == 0) return null,
         }
-        pos = next;
     }
     return null;
-}
-
-fn be32(bytes: []const u8, pos: usize) usize {
-    return std.mem.readInt(u32, bytes[pos..][0..@sizeOf(u32)], .big);
 }
 
 fn inflateRows(bytes: []const u8, range: Range, output: *[inflate_bytes]u8, rows: *Rows) memory.Error!bool {
     // Match the legacy checksum policy, leaving unusual header/trailer splits
     // to that decoder. The zlib header bounds the raw dictionary to 32 KiB.
-    if (be32(bytes, range.first) < 2) return false;
-    const cmf, const flg = bytes[range.first + chunk_prefix ..][0..2].*;
+    var chunks: format.Chunks = .{ .bytes = bytes[0..range.end], .offset = range.first };
+    const first = chunks.next() orelse return false;
+    if (first.data.len < 2) return false;
+    const cmf, const flg = first.data[0..2].*;
     if (cmf & 15 != zlib.Z_DEFLATED or cmf >> 4 > 7 or flg & 32 != 0 or (@as(u16, cmf) * 256 + flg) % 31 != 0) return false;
     var stream: zlib.zng_stream = std.mem.zeroes(zlib.zng_stream);
     stream.zalloc = zalloc;
@@ -237,13 +230,12 @@ fn inflateRows(bytes: []const u8, range: Range, output: *[inflate_bytes]u8, rows
 }
 
 fn consumeIdats(bytes: []const u8, range: Range, output: *[inflate_bytes]u8, rows: *Rows, stream: *zlib.zng_stream) memory.Error!bool {
-    var pos = range.first;
-    while (pos < range.end) {
-        const available = be32(bytes, pos);
-        const src = bytes[pos + chunk_prefix ..][0..available];
-        const head: usize = if (pos == range.first) 2 else 0;
-        pos += available + chunk_overhead;
-        const tail: usize = if (pos == range.end) 4 else 0;
+    var chunks: format.Chunks = .{ .bytes = bytes[0..range.end], .offset = range.first };
+    while (chunks.next()) |chunk| {
+        const src = chunk.data;
+        const available = src.len;
+        const head: usize = if (chunk.offset == range.first) 2 else 0;
+        const tail: usize = if (chunk.end == range.end) 4 else 0;
         if (available < head + tail) return false;
         stream.next_in = src[head..].ptr;
         // The chunk length originates in a validated u32 PNG length.

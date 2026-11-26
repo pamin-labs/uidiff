@@ -3,7 +3,7 @@
 const std = @import("std");
 const c = @import("stb_c");
 const values = @import("../../value.zig");
-const png_format = @import("format.zig");
+const png_format = @import("png_format");
 const memory = @import("codec_memory");
 const types = @import("../types.zig");
 const Allocator = std.mem.Allocator;
@@ -126,7 +126,7 @@ test "PNG headers outside the image limits report ImageTooLarge" {
     for (cases) |case| {
         const dimensions: [8]u8 = @splat(0);
         var header = (png_format.header_prefix ++ dimensions ++
-            [_]u8{ png_format.sample_depth, png_format.rgba_color, 0, 0, 0 }).*;
+            [_]u8{ png_format.sample_depth, @backingInt(png_format.Colour.rgba), 0, 0, 0 }).*;
         std.mem.writeInt(u32, header[png_format.dimensions_offset..][0..4], case.width, .big);
         std.mem.writeInt(u32, header[png_format.dimensions_offset + 4 ..][0..4], case.height, .big);
         try std.testing.expectError(case.expected, probe(std.testing.allocator, &header, values.max_decode_bytes));

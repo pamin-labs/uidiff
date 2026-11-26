@@ -4,14 +4,14 @@ const std = @import("std");
 const zlib = @import("zlib.zig");
 const decoder = @import("decoder.zig");
 const values = @import("../../value.zig");
-const png_format = @import("format.zig");
+const png_format = @import("png_format");
 const stb = @import("stb.zig");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const Writer = Io.Writer;
 const Image = values.Image;
 
-const Filtered = struct { method: u8, bytes: []const u8 };
+const Filtered = struct { method: png_format.Filter, bytes: []const u8 };
 
 const BorrowedRows = struct {
     image: Image,
@@ -59,14 +59,9 @@ pub fn writeRowsWithIo(io: ?Io, allocator: Allocator, size: values.Size, source:
     if (!@hasDecl(@TypeOf(source), "row"))
         @compileError("a PNG row source must provide row(y, scratch)");
     if (size.pixelCount() == null) return error.InvalidImage;
-    try output.writeAll(png_format.signature);
     const rgb_only = if (@hasDecl(@TypeOf(source), "isOpaque")) source.isOpaque() else false;
-    var header: [png_format.header_data_bytes]u8 = undefined;
     // Valid images have at most max_extent pixels per axis, which fits u32.
-    std.mem.writeInt(u32, header[0..4], @intCast(size.width), .big);
-    std.mem.writeInt(u32, header[4..8], @intCast(size.height), .big);
-    header[8..13].* = .{ png_format.sample_depth, if (rgb_only) png_format.rgb_color else png_format.rgba_color, 0, 0, 0 };
-    try zlib.chunk(output, png_format.header_type, &header);
+    try png_format.writeHeader(zlib.chunk, output, @intCast(size.width), @intCast(size.height), if (rgb_only) .rgb else .rgba);
 
     const encoded_row_bytes = 1 + size.width * @as(usize, if (rgb_only) 3 else @sizeOf(values.Pixel));
     const workers = if (io != null and encoded_row_bytes * size.height >= parallel_min_bytes)
@@ -109,7 +104,7 @@ fn writeSerial(allocator: Allocator, size: values.Size, source: anytype, output:
         };
         const row = std.mem.sliceAsBytes(pixels);
         const encoded = filterRow(row, above, filtered, rgb_only);
-        try compress.write(&.{encoded.method});
+        try compress.write(&.{@backingInt(encoded.method)});
         try compress.write(encoded.bytes);
         above = row;
     }
@@ -169,7 +164,7 @@ fn writeStrips(io: Io, allocator: Allocator, size: values.Size, source: anytype,
             const row = std.mem.sliceAsBytes(source.row(y, scratch));
             const encoded = filterRow(row, above, filtered, rgb_only);
             const encoded_row = input[(y - first) * encoded_row_bytes ..][0..encoded_row_bytes];
-            encoded_row[0] = encoded.method;
+            encoded_row[0] = @backingInt(encoded.method);
             @memcpy(encoded_row[1..], encoded.bytes);
             above = row;
         }
@@ -190,22 +185,22 @@ fn writeStrips(io: Io, allocator: Allocator, size: values.Size, source: anytype,
 fn filterRow(row: []const u8, above: []const u8, filtered: []u8, rgb_only: bool) Filtered {
     const pixel = @sizeOf(values.Pixel);
     if (above.len == 0) return .{
-        .method = png_format.up_filter,
+        .method = .up,
         .bytes = if (rgb_only) packRgb(false, filtered, row, &.{}) else row,
     };
     if (rgb_only and std.mem.eql(u8, row, above)) {
         const zeros = filtered[0 .. row.len / pixel * 3];
         @memset(zeros, 0);
-        return .{ .method = png_format.up_filter, .bytes = zeros };
+        return .{ .method = .up, .bytes = zeros };
     }
-    const method = if (rgb_only) preferredFilter(row, above) else png_format.up_filter;
+    const method = if (rgb_only) preferredFilter(row, above) else .up;
     const bytes = switch (method) {
-        png_format.sub_filter => sub: {
+        .sub => sub: {
             filtered[0..3].* = row[0..3].*;
             const encoded = packRgb(true, filtered[3..], row[pixel..], row[0 .. row.len - pixel]);
             break :sub filtered[0 .. 3 + encoded.len];
         },
-        png_format.paeth_filter => paeth: {
+        .paeth => paeth: {
             filterPaeth(filtered, row, above);
             break :paeth packRgb(false, filtered, filtered, &.{});
         },
@@ -252,7 +247,7 @@ fn filter(out: []u8, current: []const u8, predictor: []const u8) void {
     for (out[i..], current[i..], predictor[i..]) |*byte, now, from| byte.* = now -% from;
 }
 
-fn preferredFilter(row: []const u8, above: []const u8) u8 {
+fn preferredFilter(row: []const u8, above: []const u8) png_format.Filter {
     // Nonzero residuals interrupt runs. Sample the row and favor Up when
     // choosing another predictor saves only a few of them.
     const pixel = @sizeOf(values.Pixel);
@@ -266,19 +261,19 @@ fn preferredFilter(row: []const u8, above: []const u8) u8 {
             middle == std.mem.readInt(u32, above[x..][0..pixel], .little)) continue;
         for (0..3) |c| {
             const i = x + c;
-            const left: i16 = row[i - pixel];
-            const top: i16 = above[i];
-            const corner: i16 = above[i - pixel];
-            const px: i16 = row[i];
-            const p = paethPredictor(left, top, corner);
+            const left = row[i - pixel];
+            const top = above[i];
+            const corner = above[i - pixel];
+            const px = row[i];
+            const p = png_format.paeth(left, top, corner);
             up += @intFromBool(px != top);
             sub += @intFromBool(px != left);
             paeth += @intFromBool(px != p);
         }
     }
-    if (paeth + paeth / filter_switch_margin < @min(up, sub)) return png_format.paeth_filter;
-    if (sub + sub / filter_switch_margin < up) return png_format.sub_filter;
-    return png_format.up_filter;
+    if (paeth + paeth / filter_switch_margin < @min(up, sub)) return .paeth;
+    if (sub + sub / filter_switch_margin < up) return .sub;
+    return .up;
 }
 
 fn filterPaeth(out: []u8, current: []const u8, above: []const u8) void {
@@ -300,18 +295,11 @@ fn filterPaeth(out: []u8, current: []const u8, above: []const u8) void {
         out[i..][0..half].* = @as(Bytes, current[i..][0..half].*) -% @as(Bytes, @intCast(predictor));
     }
     while (i < out.len) : (i += 1) {
-        const a: i16 = current[i - pixel];
-        const b: i16 = above[i];
-        const c: i16 = above[i - pixel];
-        out[i] = current[i] -% @as(u8, @intCast(paethPredictor(a, b, c)));
+        const a = current[i - pixel];
+        const b = above[i];
+        const c = above[i - pixel];
+        out[i] = current[i] -% png_format.paeth(a, b, c);
     }
-}
-
-fn paethPredictor(a: i16, b: i16, c: i16) i16 {
-    const left = @abs(b - c);
-    const top = @abs(a - c);
-    const corner = @abs(a + b - c - c);
-    return if (left <= @min(top, corner)) a else if (top <= corner) b else c;
 }
 
 fn encodeOnce(allocator: Allocator, image: Image) !void {
@@ -339,14 +327,11 @@ test "each emitted chunk carries the PNG checksum" {
     var out: Writer.Allocating = .init(allocator);
     defer out.deinit();
     try write(allocator, .{ .width = 2, .height = 1, .pixels = &pixels }, &out.writer);
-    var chunks = out.written()[png_format.signature.len..];
-    while (chunks.len != 0) {
-        const length = std.mem.readInt(u32, chunks[0..4], .big);
-        const tag_and_data = chunks[4..][0 .. 4 + length];
-        const stored = std.mem.readInt(u32, chunks[8 + length ..][0..4], .big);
-        try std.testing.expectEqual(std.hash.Crc32.hash(tag_and_data), stored);
-        chunks = chunks[12 + length ..];
+    var chunks: png_format.Chunks = .{ .bytes = out.written() };
+    while (chunks.next()) |chunk| {
+        try std.testing.expectEqual(std.hash.Crc32.hash(chunk.tag_and_data), chunk.checksum);
     }
+    try std.testing.expectEqual(out.written().len, chunks.offset);
 }
 
 test "encoding releases each allocation on failure" {

@@ -12,6 +12,7 @@ const Decoders = struct {
     webp: *Build.Module,
     zlib: *Build.Module,
     memory: *Build.Module,
+    png_format: *Build.Module,
 };
 
 /// How a build compiles the C decoders: in their own measured mode for the
@@ -220,6 +221,7 @@ fn libraryOptions(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, d
             .{ .name = "webp_c", .module = decoders.webp },
             .{ .name = "zlib_c", .module = decoders.zlib },
             .{ .name = "codec_memory", .module = decoders.memory },
+            .{ .name = "png_format", .module = decoders.png_format },
             .{ .name = "required_test_options", .module = defaults.createModule() },
         }) catch @panic("OOM"),
     };
@@ -661,6 +663,7 @@ fn addDecoders(b: *Build, target: Build.ResolvedTarget) Decoders {
         .stb = stb_c.createModule(),
         .webp = webp_c.createModule(),
         .zlib = zlib_c.createModule(),
+        .png_format = b.createModule(.{ .root_source_file = b.path("src/codec/png/format.zig"), .target = target }),
         .memory = b.createModule(.{ .root_source_file = b.path("src/codec/memory.zig"), .target = target }),
     };
 }
@@ -846,6 +849,7 @@ fn addE2e(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, uidiff: *
                 .{ .name = "uidiff_testing", .module = uidiff_testing },
                 .{ .name = "fixtures", .module = cases },
                 .{ .name = "e2e_options", .module = options.createModule() },
+                .{ .name = "png_format", .module = uidiff.import_table.get("png_format").? },
             },
         }),
     });
