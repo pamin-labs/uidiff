@@ -45,12 +45,12 @@ Follow the public pamin-labs/skills engineering rules in [core](.agents/skills/p
 | annotate | `src/annotate.zig` `src/annotate/` | value |
 | report | `src/report.zig` | value |
 | files | `src/files.zig` | value, codec, diff, annotate |
-| testing | `src/testing.zig` `src/testing/` | value, uidiff, src/codec/jpeg.zig, src/codec/stb.zig, src/codec/png_format.zig, src/codec/png/decoder.zig, src/codec/png/deflate.zig, src/codec/png/scanlines.zig |
+| testing | `src/testing.zig` `src/testing/` | uidiff |
 | api | `src/root.zig` | value, codec, diff, annotate, report, files |
 | cli | `src/cli.zig` `src/cli/` | `uidiff` |
 | tool | `bench/` `tests/` | `uidiff` |
 
-Outside the testing layer, only test declarations in `src/` can path-import a testing leaf. Scenario runners and fuzz targets import fixtures by the named `uidiff_testing` module. Source unit tests and the private testing module share the named `uidiff_test_canvas` leaf because Zig assigns each source file to one module per compilation. The testing row lists the internal source paths its helpers may import.
+Outside the testing layer, only test declarations in `src/` can path-import a testing leaf. Scenario runners and fuzz targets import fixtures by the named `uidiff_testing` module. Source unit tests and the private testing module share the named `uidiff_test_canvas` leaf because Zig assigns each source file to one module per compilation.
 
 Named build modules, and the only files that may import them. The `export` row names the files whose exported functions C code calls back.
 
@@ -70,10 +70,10 @@ Named build modules, and the only files that may import them. The `export` row n
 | `e2e_options` | `tests/e2e.zig` |
 | `cli_options` | `src/cli.zig` |
 | `fixture_options` | `tests/fixtures/fresh.zig` |
-| `required_test_options` | `src/testing/required.zig` |
+| `required_test_options` | `src/root.zig` |
 | `export` | `src/codec/memory.zig` |
 
-Only a submodule's facade and implementation files may import its implementation directory, except for explicitly listed testing imports. Implementation files cannot import their own facade.
+Only a submodule's facade and implementation files may import its implementation directory. Implementation files cannot import their own facade.
 
 | Submodule root | Implementation directory |
 | --- | --- |
@@ -113,7 +113,7 @@ PNG chunk checksums use zlib-ng's CRC-32. On x86_64, zlib-ng detects PCLMULQDQ a
 - `zig build e2e`
 - `zig build test-threaded` on Linux
 - `zig build test-png-rows` and `zig build test-x86-fallback` on the CI architectures
-- `bash scripts/fuzz.sh` (every fuzz target: the CLI's argument parser and each file in `tests/fuzz/`)
+- `bash scripts/fuzz.sh` (the inline CLI and PNG targets and each target in `tests/fuzz/`)
 - `zig build bench`
 - `zig build size`
 - `python3 scripts/readme-images.py check` and `python3 scripts/test-readme-images.py` (validate local README image links)

@@ -97,7 +97,13 @@ test "module roots expose their API" {
 }
 
 test "required test selection" {
-    try @import("testing/required.zig").check();
+    const filter = @import("required_test_options").filter;
+    if (filter.len == 0) return;
+    for (builtin.test_functions) |entry| {
+        if (std.mem.endsWith(u8, entry.name, ".test.required test selection")) continue;
+        if (std.mem.indexOf(u8, entry.name, filter) != null) return;
+    }
+    return error.NoSelectedTests;
 }
 
 test {

@@ -76,7 +76,7 @@ const sample_agents =
     \\| diff | `src/diff.zig` `src/diff/` | value |
     \\| codec | `src/codec.zig` `src/codec/` | value |
     \\| annotate | `src/annotate.zig` `src/annotate/` | value |
-    \\| testing | `src/testing.zig` `src/testing/` | value, src/codec/jpeg.zig |
+    \\| testing | `src/testing.zig` `src/testing/` | uidiff |
     \\| api | `src/root.zig` | value, diff, codec, annotate |
     \\| cli | `src/cli.zig` `src/cli/` | `uidiff` |
     \\| tool | `bench/` `tests/` | `uidiff` |
@@ -249,7 +249,6 @@ fn allowedImport(allocator: Allocator, rules: Rules, source: *const Source, node
         const decl = enclosingDeclaration(tree, node) orelse return false;
         return tree.nodeTag(decl) == .test_decl;
     }
-    if (std.mem.eql(u8, from.paths[0], testing_root) and contains(from.imports, resolved)) return true;
     if (try rules.diffUnitOf(from_path)) |from_unit| {
         if (try rules.diffUnitOf(resolved)) |to_unit| {
             if (from_unit != to_unit and to_unit.tier >= from_unit.tier) return false;
