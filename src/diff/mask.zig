@@ -17,6 +17,9 @@ pub const Mask = struct {
     width: usize,
 };
 
+/// Scratch reused by every band: one mask cell per pixel and the fill's seeds.
+pub const Scratch = struct { cells: []Cell, seeds: []u32 };
+
 /// Finds the next mask state using the standard library's byte search.
 pub inline fn nextCell(cells: []const Cell, start: usize, state: Cell) ?usize {
     return std.mem.indexOfScalarPos(u8, std.mem.sliceAsBytes(cells), start, @backingInt(state));

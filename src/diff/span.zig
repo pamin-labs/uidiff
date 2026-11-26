@@ -16,8 +16,7 @@ const Image = values.Image;
 const Pixel = values.Pixel;
 const Raster = yiq.Raster;
 
-/// Scratch reused by every band: one mask byte per pixel and the fill's seeds.
-const Scratch = struct { mask: []change_mask.Cell, seeds: []u32 };
+const Scratch = change_mask.Scratch;
 
 const CompareBuffers = struct {
     mask: []change_mask.Cell = &.{},
@@ -43,7 +42,7 @@ const CompareBuffers = struct {
         }
         try self.seeds.ensureTotalCapacityPrecise(allocator, seed_rows);
         self.seeds.items.len = seed_rows;
-        return .{ .mask = self.mask[0..area], .seeds = self.seeds.items };
+        return .{ .cells = self.mask[0..area], .seeds = self.seeds.items };
     }
 };
 
@@ -204,7 +203,7 @@ fn compareSpan(allocator: Allocator, collector: *Collector, scope: columns.Scope
     for (changes) |band| max_rows = @max(max_rows, band.removed, band.added);
     // Each band lies within at least one validated image, so its area fits the pixel cap.
     const scratch = try buffers.prepare(allocator, width * max_rows);
-    const mask = scratch.mask;
+    const mask = scratch.cells;
     const seeds = scratch.seeds;
 
     for (changes) |band| {
@@ -229,7 +228,7 @@ fn compareSpan(allocator: Allocator, collector: *Collector, scope: columns.Scope
         }
         const old_tail = band.before + paired;
         const new_tail = band.after + paired;
-        unpaired.collect(collector, scope, scratch.mask, scratch.seeds, .{
+        unpaired.collect(collector, scope, scratch, .{
             .side = .before,
             .y = old_tail,
             .count = band.removed - paired,
@@ -248,13 +247,13 @@ fn compareSpan(allocator: Allocator, collector: *Collector, scope: columns.Scope
                 null,
             else => null,
         };
-        unpaired.collect(collector, scope, scratch.mask, scratch.seeds, .{ .side = .after, .y = new_tail, .count = band.added - paired, .background = background, .element = band.mode == .element });
+        unpaired.collect(collector, scope, scratch, .{ .side = .after, .y = new_tail, .count = band.added - paired, .background = background, .element = band.mode == .element });
     }
     if (aligned == null and extension != 0) {
         const old_is_taller = before.height > after.height;
         if (scope.frame != null) {
             const short = if (old_is_taller) after else before;
-            unpaired.collect(collector, scope, scratch.mask, scratch.seeds, .{
+            unpaired.collect(collector, scope, scratch, .{
                 .side = if (old_is_taller) .before else .after,
                 .y = overlap,
                 .count = extension,
@@ -345,9 +344,9 @@ test "mask growth avoids having both sizes live on a remapping allocator" {
         // Reserve the seeds first so the mask is eligible for in-place growth.
         try buffers.seeds.ensureTotalCapacityPrecise(allocator, large_area);
         const small = try buffers.prepare(allocator, small_area);
-        @memset(small.mask, .clear);
+        @memset(small.cells, .clear);
         const large = try buffers.prepare(allocator, large_area);
-        try std.testing.expectEqual(large_area, large.mask.len);
+        try std.testing.expectEqual(large_area, large.cells.len);
         try std.testing.expectEqual(@as(usize, 0), counting.freed_bytes);
         // No frees occurred, so total allocated bytes is the peak live count.
         const peak = large_area * (@sizeOf(u32) + @sizeOf(change_mask.Cell));

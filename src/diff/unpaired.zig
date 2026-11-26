@@ -19,7 +19,7 @@ pub const Rows = struct { side: values.Side, y: usize, count: usize, background:
 const min_bar_rows = 2;
 
 /// Collects changes for rows aligned to a gap.
-pub fn collect(collector: *Collector, scope: Scope, scratch_mask: []change_mask.Cell, seeds: []u32, rows: Rows) void {
+pub fn collect(collector: *Collector, scope: Scope, scratch: change_mask.Scratch, rows: Rows) void {
     if (rows.count == 0) return;
     const source = if (rows.side == .before) scope.before else scope.after;
     const left = scope.span.left;
@@ -51,7 +51,7 @@ pub fn collect(collector: *Collector, scope: Scope, scratch_mask: []change_mask.
             b.background = .{ .row = source.row(y - 1) };
         }
     }
-    const mask = scratch_mask[0 .. width * rows.count];
+    const mask = scratch.cells[0 .. width * rows.count];
     const at: regions.Placement = .{
         .left = left,
         .rows = if (rows.side == .before) .{ .before = y } else .{ .after = y },
@@ -60,7 +60,7 @@ pub fn collect(collector: *Collector, scope: Scope, scratch_mask: []change_mask.
         const cells: change_mask.Mask = .{ .cells = mask, .width = width };
         if (rows.element) {
             if (regions.groupElement(collector, cells, at)) return;
-        } else if (regions.group(collector, cells, seeds, at) != .empty) return;
+        } else if (regions.group(collector, cells, scratch.seeds, at) != .empty) return;
     }
     if (rows.background != null) return;
     const blank = columns.blankBand(source, y, rows.count, scope.bounds);
@@ -191,7 +191,7 @@ test "blank space above a fixed input bar does not inherit unrelated sidebar pai
     var collector: Collector = .{ .boxes = &boxes, .gap_px = 0, .max_gap_px = 144 };
     var mask: [96 * 20]change_mask.Cell = undefined;
     var seeds: [20]u32 = undefined;
-    collect(&collector, scope, &mask, &seeds, .{ .side = .before, .y = 110, .count = 20, .opposite = 130 });
+    collect(&collector, scope, .{ .cells = &mask, .seeds = &seeds }, .{ .side = .before, .y = 110, .count = 20, .opposite = 130 });
     try std.testing.expectEqual(@as(usize, 0), collector.len);
 }
 
@@ -216,10 +216,10 @@ test "an equal unpaired bottom margin does not produce a removal" {
         var mask: [64 * 6]change_mask.Cell = undefined;
         var seeds: [6]u32 = undefined;
         const margin: Rows = .{ .side = .before, .y = 34, .count = 6, .opposite = 44 };
-        collect(&collector, scope, &mask, &seeds, margin);
+        collect(&collector, scope, .{ .cells = &mask, .seeds = &seeds }, margin);
         try std.testing.expectEqual(@as(usize, 0), collector.len);
         @memset(after.pixels, .{ 96, 67, 77, 255 });
-        collect(&collector, scope, &mask, &seeds, margin);
+        collect(&collector, scope, .{ .cells = &mask, .seeds = &seeds }, margin);
         try std.testing.expectEqual(@as(usize, 1), collector.len);
     }
 }
