@@ -2,7 +2,7 @@
 const std = @import("std");
 const uidiff = @import("uidiff");
 const png_format = @import("png_format");
-const cases = @import("cases.zig");
+const cases = @import("fixture_cases");
 const encode = @import("encode.zig");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
@@ -296,6 +296,5 @@ fn save(io: Io, allocator: Allocator, out: Io.Dir, path: []const u8, format: cas
 
 test {
     std.testing.refAllDecls(@This());
-    std.testing.refAllDecls(cases);
     std.testing.refAllDecls(encode);
 }

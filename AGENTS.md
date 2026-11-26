@@ -19,8 +19,9 @@ Follow the public pamin-labs/skills engineering rules in [core](.agents/skills/p
 
 ## Layout
 
-Zig source files use snake_case identifiers as basenames. `tests/order.zig` checks that a direct Zig file import binds to its basename without `.zig`. Named build modules and declarations selected from an import keep their own names.
+Zig source files use snake_case identifiers as basenames. `tests/source/order.zig` checks that a direct Zig file import binds to its basename without `.zig`. Named build modules and declarations selected from an import keep their own names.
 
+- `build.zig` names the build steps and wires the products and checks. `build/codecs.zig` compiles, patches and translates the vendored C libraries.
 - `src/root.zig` exposes the public library. It imports only module roots, the files beside each layer directory.
 - `src/testing.zig` is the private `uidiff_testing` module created for repository test runners. It exposes procedural RGBA canvases and painters, assertions over public comparison results, and bounded RGBA inputs for fuzzing.
 - `src/value.zig` and `src/value/` hold shared values and the image and memory bounds. Value modules depend only on other values and the standard library.
@@ -31,16 +32,16 @@ Zig source files use snake_case identifiers as basenames. `tests/order.zig` chec
 - `src/annotate/badges/` owns badge placement, routing and painting behind `src/annotate/badges.zig`.
 - `src/pipeline.zig` is the file pipeline: it checks the options once, decodes both files, compares them and writes the sheet atomically. The CLI calls it and only translates.
 - `src/cli.zig` is the CLI entry and `src/cli/` its argument syntax and usage text.
-- `bench/` measures the public API.
+- `bench/` measures the public API. `tools/fixtures/` generates the committed fixtures and `tools/size.zig` checks the CLI binary size.
 - `npm/` contains the JavaScript launcher. The release tooling stages its manifest and the scoped launcher and its native platform packages from the build version and target list.
 - `skills/uidiff/` documents screenshot capture, comparison and report interpretation for agents.
 - `scripts/` contains developer tooling. `scripts/release/` packages the CLI, renders the Homebrew formula and tests the launcher and installers. The installers are `install.sh` and `install.ps1` at the repository root.
 - `.github/` contains the release target list and workflows. Dispatch `release.yml` from `main` with a `version` input. The workflow commits that version to `build.zig.zon`, builds the ReleaseSafe matrix shared with CI, creates the tagged GitHub release, mirrors assets to R2 and publishes npm packages through OIDC with provenance. Stable releases also update the Homebrew tap from the published formula asset.
-- `tests/compare.zig` registers the comparison scenarios in `tests/compare/`, and `tests/sheet.zig` registers the annotated sheet scenarios in `tests/sheet/`. Both use the public `uidiff` module and the private `uidiff_testing` module. `tests/` runs the installed CLI (`tests/e2e.zig`), decodes the fixtures through the public API (`tests/decode.zig`), checks the binary size budget, and checks source layout, layering and declaration order. `tests/fuzz/` holds one fuzz target per top-level file, each its own test binary. `tests/fixtures.zig` is the fixture set's root; `tests/fixtures/` holds the synthetic fixture generator, its encoders, the freshness check and the generated images with expected reports. A unit test sits at the end of the file whose code it exercises. A comparison or sheet scenario lives in its area under `tests/compare/` or `tests/sheet/`. Shared test helpers live in `src/testing/`, with committed fixture metadata and sample reads owned by `tests/fixtures.zig`. Private fuzz targets sit beside the code they exercise, including the CLI arguments target, and public API fuzz targets live in `tests/fuzz/`.
+- `tests/compare.zig` registers the comparison scenarios in `tests/compare/`, and `tests/sheet.zig` registers the annotated sheet scenarios in `tests/sheet/`. Both use the public `uidiff` module and the private `uidiff_testing` module. `tests/` runs the installed CLI (`tests/e2e.zig`), decodes the fixtures through the public API (`tests/decode.zig`), and checks source layout, layering and declaration order in `tests/source/`. It also runs the generator and size checker unit tests. `tests/fuzz/` holds one fuzz target per top-level file, each its own test binary. `tests/fixtures.zig` is the fixture set's root; `tests/fixtures/` holds fixture metadata, the freshness check and the generated images with expected reports. A unit test sits at the end of the file whose code it exercises. A comparison or sheet scenario lives in its area under `tests/compare/` or `tests/sheet/`. Shared test helpers live in `src/testing/`, with committed fixture metadata and sample reads owned by `tests/fixtures.zig`. Private fuzz targets sit beside the code they exercise, including the CLI arguments target, and public API fuzz targets live in `tests/fuzz/`.
 
 ## Layers
 
-`tests/layers.zig` reads the tables in this section. A file imports files of its own layer, except that a file inside a layer's directory never imports the layer's root; it imports another layer only through that layer's root, the first file its row names, and only if its row lists that layer. `std` and `builtin` are always allowed.
+`tests/source/layers.zig` reads the tables in this section. A file imports files of its own layer, except that a file inside a layer's directory never imports the layer's root; it imports another layer only through that layer's root, the first file its row names, and only if its row lists that layer. `std` and `builtin` are always allowed.
 
 | Layer | Paths | May import |
 | --- | --- | --- |
@@ -53,7 +54,9 @@ Zig source files use snake_case identifiers as basenames. `tests/order.zig` chec
 | testing | `src/testing.zig` `src/testing/` | uidiff |
 | api | `src/root.zig` | value, codec, diff, annotate, report, pipeline |
 | cli | `src/cli.zig` `src/cli/` | `uidiff` |
-| tool | `bench/` `tests/` | `uidiff` |
+| build | `build/` | value |
+| test | `tests/` | `uidiff` |
+| tool | `bench/` `tools/` | `uidiff` |
 
 `src/testing/jpeg.zig` belongs to `uidiff` and is path-imported by test declarations in `src/codec/jpeg.zig` and `src/pipeline.zig`, `src/testing/canvas.zig` is `uidiff_test_canvas`, and the remaining files in `src/testing/` belong to `uidiff_testing`. Scenario runners and fuzz targets use procedural images and fuzz inputs from `uidiff_testing`. The named `fixtures` module describes the committed fixture set. Source unit tests and the private testing module share the named `uidiff_test_canvas` leaf because Zig assigns each source file to one module per compilation.
 
@@ -61,20 +64,22 @@ Named build modules, and the only files that may import them. The `export` row n
 
 | Module | Importers |
 | --- | --- |
-| `png_format` | `src/codec/png.zig` `src/codec/png/` `tests/e2e.zig` `tests/decode.zig` `tests/fixtures/generate.zig` |
+| `png_format` | `src/codec/png.zig` `src/codec/png/` `tests/e2e.zig` `tests/decode.zig` `tools/fixtures/generate.zig` |
 | `stb_c` | `src/codec/png/stb.zig` |
-| `jpeg_encode_c` | `tests/fixtures/jpeg_generate.zig` |
+| `jpeg_encode_c` | `tools/fixtures/jpeg_generate.zig` |
 | `jpeg_c` | `src/codec/jpeg.zig` |
 | `webp_c` | `src/codec/webp.zig` |
 | `zlib_c` | `src/codec/png/zlib.zig` |
-| `stb_write_c` | `tests/fixtures/encode.zig` |
-| `webp_encode_c` | `tests/fixtures/encode.zig` |
-| `codec_memory` | `src/codec.zig` `src/codec/png/zlib.zig` `src/codec/png/scanlines.zig` `src/codec/png/stb.zig` `src/codec/jpeg.zig` `src/codec/webp.zig` `tests/fixtures/encode.zig` |
+| `stb_write_c` | `tools/fixtures/encode.zig` |
+| `webp_encode_c` | `tools/fixtures/encode.zig` |
+| `codec_memory` | `src/codec.zig` `src/codec/png/zlib.zig` `src/codec/png/scanlines.zig` `src/codec/png/stb.zig` `src/codec/jpeg.zig` `src/codec/webp.zig` `tools/fixtures/encode.zig` |
 | `uidiff_test_canvas` | `src/testing.zig` `src/testing/expect.zig` `src/diff.zig` `src/diff/` `src/annotate/sheet/plan.zig` |
 | `uidiff_testing` | `tests/compare/` `tests/sheet/` `tests/decode.zig` `tests/e2e.zig` `tests/fuzz/` |
 | `fixtures` | `tests/e2e.zig` `tests/decode.zig` `tests/fuzz/` |
 | `e2e_options` | `tests/e2e.zig` |
 | `cli_options` | `src/cli.zig` |
+| `fixture_cases` | `tools/fixtures/generate.zig` `tools/fixtures/encode.zig` |
+| `fixture_jpeg` | `tools/fixtures/jpeg_generate.zig` |
 | `fixture_options` | `tests/fixtures/fresh.zig` |
 | `required_test_options` | `src/root.zig` |
 | `export` | `src/codec/memory.zig` |
@@ -116,7 +121,7 @@ The diff and annotate internals use tiers. Within a layer, a unit imports anothe
 
 ## Decoders
 
-The noninterlaced 8-bit RGB, RGBA, grayscale and indexed PNG path uses zlib-ng to inflate scanlines. Grayscale and indexed rows unfilter in one-byte samples before expansion to RGBA. Indexed images support PLTE and palette tRNS. Grayscale colour keys, unusual palettes and out-of-range indices fall back to stb_image. The PNG writer streams through zlib-ng at level 3. stb_image decodes other PNG profiles. Both PNG paths preserve tolerance for CRC and Adler checksum values. libjpeg-turbo decodes 8-bit JPEG with the accurate integer IDCT and fancy chroma upsampling. Its Arm64 build uses C NEON intrinsics. libwebp decodes WebP. The shipped binary builds C decoders for size; tests and fuzzing compile them inside the Zig module, in its mode, so UBSan traps undefined behaviour in Debug and safe builds. Under `zig build test --fuzz` vendored C runs on fuzzed input without coverage feedback: Zig 0.17's fuzzer cannot read clang's coverage tables, so `fuzz_coverage_flags` in `build.zig` turns clang's instrumentation off, and only the Zig code steers the fuzzer. The shared allocation hooks in `src/codec/memory.zig` charge each decode against its budget. stb's PNG budget is sized from the header. JPEG and WebP charge their decoded buffers and scratch allocations against the caller's cap. The file pipeline uses at most one decode worker per comparison for all formats. Both decoders keep their own state and budget. The caller joins the worker and reports a before-side failure first.
+The noninterlaced 8-bit RGB, RGBA, grayscale and indexed PNG path uses zlib-ng to inflate scanlines. Grayscale and indexed rows unfilter in one-byte samples before expansion to RGBA. Indexed images support PLTE and palette tRNS. Grayscale colour keys, unusual palettes and out-of-range indices fall back to stb_image. The PNG writer streams through zlib-ng at level 3. stb_image decodes other PNG profiles. Both PNG paths preserve tolerance for CRC and Adler checksum values. libjpeg-turbo decodes 8-bit JPEG with the accurate integer IDCT and fancy chroma upsampling. Its Arm64 build uses C NEON intrinsics. libwebp decodes WebP. The shipped binary builds C decoders for size; tests and fuzzing compile them inside the Zig module, in its mode, so UBSan traps undefined behaviour in Debug and safe builds. Under `zig build test --fuzz` vendored C runs on fuzzed input without coverage feedback: Zig 0.17's fuzzer cannot read clang's coverage tables, so `fuzz_coverage_flags` in `build/codecs.zig` turns clang's instrumentation off, and only the Zig code steers the fuzzer. The shared allocation hooks in `src/codec/memory.zig` charge each decode against its budget. stb's PNG budget is sized from the header. JPEG and WebP charge their decoded buffers and scratch allocations against the caller's cap. The file pipeline uses at most one decode worker per comparison for all formats. Both decoders keep their own state and budget. The caller joins the worker and reports a before-side failure first.
 
 `zig build jpeg-fixtures` regenerates the JPEG profiles with the pinned scalar encoder. The test gate verifies both the encoded fixtures and their decoded pixel hashes.
 

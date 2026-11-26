@@ -5,7 +5,7 @@ const stb = @import("stb_write_c");
 const webp = @import("webp_encode_c");
 const memory = @import("codec_memory");
 const uidiff = @import("uidiff");
-const cases = @import("cases.zig");
+const cases = @import("fixture_cases");
 const Writer = std.Io.Writer;
 
 const Sink = struct {

@@ -1,6 +1,6 @@
 //! Regenerates the small procedural JPEG profiles with the pinned encoder.
 const std = @import("std");
-const jpeg = @import("jpeg.zig");
+const jpeg = @import("fixture_jpeg");
 const jpeg_encode_c = @import("jpeg_encode_c");
 const Io = std.Io;
 

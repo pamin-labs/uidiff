@@ -26,7 +26,7 @@ pub const ListError = Io.Dir.OpenError || Io.Dir.SelectiveWalker.Error || Alloca
 pub const ParseError = Io.Dir.ReadFileAllocError || Allocator.Error || error{SyntaxError};
 
 /// The directories every source test covers.
-pub const roots = [_][]const u8{ "src", "bench", "tests", "npm", "scripts", "skills", ".github" };
+pub const roots = [_][]const u8{ "src", "build", "bench", "tools", "tests", "npm", "scripts", "skills", ".github" };
 
 /// Largest source file read.
 const max_source_bytes = 1024 * 1024;
