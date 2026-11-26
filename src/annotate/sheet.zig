@@ -2,12 +2,12 @@
 const std = @import("std");
 const plan = @import("plan.zig");
 const copy = @import("copy.zig");
-const values = @import("../value.zig");
+const value = @import("../value.zig");
 const geometry = @import("geometry.zig");
 const palette = @import("palette.zig");
 const text = @import("text.zig");
 const canvas = @import("canvas.zig");
-const focus_layout = @import("focus.zig");
+const focus = @import("focus.zig");
 const crops = @import("crops.zig");
 const badges = @import("badges.zig");
 const ribbons = @import("ribbons.zig");
@@ -28,8 +28,8 @@ const insert_band = palette.insert_band;
 const kindName = palette.kindName;
 const tint = palette.tint;
 const Line = canvas.Line;
-const focus_caption_height = focus_layout.focus_caption_height;
-const focusColumn = focus_layout.focusColumn;
+const focus_caption_height = focus.focus_caption_height;
+const focusColumn = focus.focusColumn;
 const Pane = geometry.Pane;
 const paneRect = geometry.paneRect;
 const roundSpan = canvas.roundSpan;
@@ -40,11 +40,11 @@ const badge = badges.badge;
 const drawMark = badges.drawMark;
 const overviewDiameter = badges.overviewDiameter;
 const Allocator = std.mem.Allocator;
-const Image = values.Image;
-const Size = values.Size;
-const Pixel = values.Pixel;
-const Region = values.Region;
-const Move = values.Move;
+const Image = value.Image;
+const Size = value.Size;
+const Pixel = value.Pixel;
+const Region = value.Region;
+const Move = value.Move;
 
 /// Failures laying out a styled comparison or allocating its pixels.
 pub const RenderError = plan.RenderError;
@@ -157,18 +157,18 @@ pub const Rows = struct {
     noinline fn drawFocus(self: Rows, line: Line) void {
         const sheet_plan = self.plan;
         const badge_reach = badgeDiameter(sheet_plan.pane_layout) -| focus_caption_height;
-        for (sheet_plan.focuses, 0..) |focus, index| {
+        for (sheet_plan.focuses, 0..) |window, index| {
             // A badge placed above a short crop can extend into the gap
             // before the caption. Unused merge entries have zero height.
-            if (focus.height == 0 or line.y + badge_reach < focus.top or line.y >= focus.top + focus.height) continue;
-            for (focus.crops, [2]Image{ sheet_plan.before.image, sheet_plan.after.image }, focus.captions, 0..) |patch, image, caption, side| {
+            if (window.height == 0 or line.y + badge_reach < window.top or line.y >= window.top + window.height) continue;
+            for (window.crops, [2]Image{ sheet_plan.before.image, sheet_plan.after.image }, window.captions, 0..) |patch, image, caption, side| {
                 const x = focusColumn(side);
-                line.text(x, focus.top, caption.bytes(), .regular, text.caption_size, secondary);
+                line.text(x, window.top, caption.bytes(), .regular, text.caption_size, secondary);
                 if (patch) |p| {
                     paintCrop(line, p, image);
                     line.stroke(p.to.outset(1), 2, 1, outline_gray);
                 } else {
-                    line.text(x, focus.top + focus_caption_height, copy.not_on_side, .regular, text.caption_size, muted);
+                    line.text(x, window.top + focus_caption_height, copy.not_on_side, .regular, text.caption_size, muted);
                 }
             }
             for (sheet_plan.details) |detail| {
@@ -240,7 +240,7 @@ test "the streaming gutter connects shifted rows and shows the insertion wedge" 
     const allocator = std.testing.allocator;
     const pixels: [32 * 128]Pixel = @splat(white);
     const image: Image = .{ .width = 32, .height = 128, .pixels = &pixels };
-    const insert: Region = .{ .number = 1, .kind = .inserted, .after = values.Box.fromPixels(3, 44, 20, 10) };
+    const insert: Region = .{ .number = 1, .kind = .inserted, .after = value.Box.fromPixels(3, 44, 20, 10) };
     const moved: Move = .{ .before = .{ .y = 40, .height = 60 }, .after = .{ .y = 60, .height = 60 }, .x = .init(0), .width = .init(32) };
     const rows = try Rows.init(allocator, image, image, &.{insert}, &.{moved});
     defer rows.deinit(allocator);

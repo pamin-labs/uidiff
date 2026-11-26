@@ -1,7 +1,7 @@
 //! Crop context, scaling, and pane painting.
 const std = @import("std");
 const copy = @import("copy.zig");
-const values = @import("../value.zig");
+const value = @import("../value.zig");
 const geometry = @import("geometry.zig");
 const text = @import("text.zig");
 const canvas = @import("canvas.zig");
@@ -15,8 +15,8 @@ const textWidth = text.textWidth;
 const outline_gray = palette.outline_gray;
 const muted = palette.muted;
 const tint = palette.tint;
-const Pixel = values.Pixel;
-const Image = values.Image;
+const Pixel = value.Pixel;
+const Image = value.Image;
 
 /// Maps a rectangle of source pixels to a rectangle on the sheet.
 pub const Crop = struct { from: SourceRect, to: Rect };
@@ -26,7 +26,7 @@ pub const Zoom = struct {
     numerator: usize,
     denominator: usize = 1,
 
-    pub fn fit(self: Zoom, source: SourceRect, slot: values.Size) Zoom {
+    pub fn fit(self: Zoom, source: SourceRect, slot: value.Size) Zoom {
         return self.limitedBy(slot.width, source.w).limitedBy(slot.height, source.h);
     }
 
@@ -71,7 +71,7 @@ const text_column_search_px = max_crop_w;
 /// Plans both detail crops at the largest common zoom that fits their slots.
 pub fn cropPair(images: [2]Image, boxes: [2]?SourceRect, x: [2]usize, y: usize, slot: usize, pane_layout: PaneLayout) [2]?Crop {
     const inset = pane_layout.px(detail_inset_px);
-    const available: values.Size = .{ .width = slot - 2 * inset, .height = pane_layout.px(max_crop_h) - 2 * inset };
+    const available: value.Size = .{ .width = slot - 2 * inset, .height = pane_layout.px(max_crop_h) - 2 * inset };
     const target = pane_layout.px(detail_zoom_target_px);
     var zoom: Zoom = .{ .numerator = target };
     var windows: [2]?SourceRect = @splat(null);
@@ -92,7 +92,7 @@ pub fn cropPair(images: [2]Image, boxes: [2]?SourceRect, x: [2]usize, y: usize, 
 }
 
 /// Draws the detail crop or its absent-side label on one row.
-pub noinline fn drawDetail(line: Line, patch: ?Crop, image: Image, x: usize, slot: usize, top: usize, height: usize, kind: values.Kind, pane_layout: PaneLayout) void {
+pub noinline fn drawDetail(line: Line, patch: ?Crop, image: Image, x: usize, slot: usize, top: usize, height: usize, kind: value.Kind, pane_layout: PaneLayout) void {
     if (patch) |p| {
         const border = pane_layout.px(3);
         const rect = p.to.outset(border);

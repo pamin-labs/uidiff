@@ -1,7 +1,7 @@
 //! Detects insertions followed by exact shifted rows and viewport clipping.
 
 const std = @import("std");
-const band_model = @import("band.zig");
+const band = @import("band.zig");
 const search = @import("search.zig");
 const recolour = @import("recolour.zig");
 const columns = @import("../columns.zig");
@@ -14,7 +14,7 @@ pub const max_panel_shift = 512;
 const max_panel_candidates = 8;
 
 /// Matches a compact insertion when the rest of the column shifts exactly.
-pub fn compactInsertion(before: band_model.Keys, after: band_model.Keys, limit: usize, bands: []band_model.Band) ?[]band_model.Band {
+pub fn compactInsertion(before: band.Keys, after: band.Keys, limit: usize, bands: []band.Band) ?[]band.Band {
     if (before.len != after.len) return null;
     const problem = search.Problem.init(before, after);
     if (problem.a.len < 2) return null;
@@ -27,9 +27,9 @@ pub fn compactInsertion(before: band_model.Keys, after: band_model.Keys, limit: 
 /// Detects a shifted list whose tail is clipped by a stationary panel.
 // Some panels contain long stretches of repeated paint. Their exact moving
 // rows can account for fewer edits than the stationary background in Myers.
-pub fn panelInsertion(before: band_model.Keys, after: band_model.Keys, first: usize, limits: band_model.Limits, bands: []band_model.Band) ?[]band_model.Band {
+pub fn panelInsertion(before: band.Keys, after: band.Keys, first: usize, limits: band.Limits, bands: []band.Band) ?[]band.Band {
     const image = (limits.images orelse return null)[0];
-    const last = band_model.changedEnd(before, after, first, before.len);
+    const last = band.changedEnd(before, after, first, before.len);
     if (last == before.len) return null;
     const end = @min(last, first + max_panel_shift + 1);
     var candidate = first + limits.scroll + 1;
@@ -69,7 +69,7 @@ pub fn panelInsertion(before: band_model.Keys, after: band_model.Keys, first: us
 /// Aligns an inserted band followed by a byte-exact shifted tail.
 // A single insertion followed by an exact shifted tail needs no Myers
 // frontier. Use the first distinct row as the candidate shift's anchor.
-pub fn clippedInsertion(problem: search.Problem, limit: usize, bands: []band_model.Band) ?[]band_model.Band {
+pub fn clippedInsertion(problem: search.Problem, limit: usize, bands: []band.Band) ?[]band.Band {
     const old = problem.a;
     const new = problem.b;
     const marker = for (old[1..], 1..) |key, y| {

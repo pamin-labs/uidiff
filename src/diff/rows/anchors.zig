@@ -1,11 +1,11 @@
 //! Extracts and verifies the foreground anchors of an alignment.
 
 const std = @import("std");
-const band_model = @import("band.zig");
+const band = @import("band.zig");
 const search = @import("search.zig");
 
 /// Checks whether at least one anchor contains distinct moved content.
-pub fn hasDisplacedContent(anchors: []const band_model.Match, before: band_model.Keys, after: band_model.Keys) bool {
+pub fn hasDisplacedContent(anchors: []const band.Match, before: band.Keys, after: band.Keys) bool {
     for (anchors) |anchor| {
         if (anchor.offset() == 0) continue;
         var left_source = false;
@@ -29,7 +29,7 @@ pub fn hasDisplacedContent(anchors: []const band_model.Match, before: band_model
 // Once a run fixes the insertion's displacement, rows below the old
 // viewport edge cannot anchor its remaining visible tail. A repeat there
 // would otherwise pull the alignment back down and turn clipping into removal.
-pub fn visibleAnchors(content: []const band_model.Match, before: band_model.Keys, after: band_model.Keys, after_end: usize, limit: usize) usize {
+pub fn visibleAnchors(content: []const band.Match, before: band.Keys, after: band.Keys, after_end: usize, limit: usize) usize {
     if (content.len < 2) return content.len;
     for (content[0 .. content.len - 1], content[1..], 1..) |m, next, kept| {
         if (m.after <= m.before) continue;
@@ -52,7 +52,7 @@ pub fn visibleAnchors(content: []const band_model.Match, before: band_model.Keys
 }
 
 /// Appends a matching row, extending the preceding run when contiguous.
-pub fn extend(content: []band_model.Match, count: *usize, m: band_model.Match) void {
+pub fn extend(content: []band.Match, count: *usize, m: band.Match) void {
     if (count.* > 0 and content[count.* - 1].offset() == m.offset()) {
         content[count.* - 1].length = m.before - content[count.* - 1].before + 1;
     } else {
@@ -62,7 +62,7 @@ pub fn extend(content: []band_model.Match, count: *usize, m: band_model.Match) v
 }
 
 /// Aligns the foreground keys and restores their original row indices.
-pub fn alignContent(before: band_model.Keys, after: band_model.Keys, old_background: ?u64, new_background: ?u64, explained: usize, frontier: []search.Diagonal, raw: []band_model.Match, filtered: []u64) ?[]const band_model.Match {
+pub fn alignContent(before: band.Keys, after: band.Keys, old_background: ?u64, new_background: ?u64, explained: usize, frontier: []search.Diagonal, raw: []band.Match, filtered: []u64) ?[]const band.Match {
     const old_keys = selectContent(before, old_background, new_background, filtered[0..before.len]);
     const new_keys = selectContent(after, old_background, new_background, filtered[before.len..]);
     if (@min(old_keys.len, new_keys.len) <= explained) return null;
@@ -82,7 +82,7 @@ pub fn isContent(key: u64, old_background: ?u64, new_background: ?u64) bool {
 }
 
 /// Finds the most frequent row key in the supplied image.
-pub fn background(counts: *std.AutoHashMapUnmanaged(u64, usize), rows: band_model.Keys) ?u64 {
+pub fn background(counts: *std.AutoHashMapUnmanaged(u64, usize), rows: band.Keys) ?u64 {
     var key: ?u64 = null;
     var best: usize = 1;
     for (rows) |row| {
@@ -97,7 +97,7 @@ pub fn background(counts: *std.AutoHashMapUnmanaged(u64, usize), rows: band_mode
     return key;
 }
 
-fn selectContent(input: band_model.Keys, old_background: ?u64, new_background: ?u64, output: []u64) band_model.Keys {
+fn selectContent(input: band.Keys, old_background: ?u64, new_background: ?u64, output: []u64) band.Keys {
     var len: usize = 0;
     for (input) |key| {
         if (!isContent(key, old_background, new_background)) continue;
@@ -107,7 +107,7 @@ fn selectContent(input: band_model.Keys, old_background: ?u64, new_background: ?
     return output[0..len];
 }
 
-fn restoreRows(input: band_model.Keys, old_background: ?u64, new_background: ?u64, matches: []band_model.Match, comptime field: enum { before, after }) void {
+fn restoreRows(input: band.Keys, old_background: ?u64, new_background: ?u64, matches: []band.Match, comptime field: enum { before, after }) void {
     var selected: usize = 0;
     var next: usize = 0;
     for (input, 0..) |key, row| {

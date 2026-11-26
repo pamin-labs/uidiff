@@ -1,18 +1,18 @@
 //! Orders, numbers and pads the finalized regions.
 
 const std = @import("std");
-const pending = @import("candidate.zig");
-const values = @import("../../value.zig");
-const Size = values.Size;
-const Box = values.Box;
-const Region = values.Region;
+const candidate = @import("candidate.zig");
+const value = @import("../../value.zig");
+const Size = value.Size;
+const Box = value.Box;
+const Region = value.Region;
 
 /// Sorts by the before box when present, then assigns kinds, numbers and padding.
-pub fn finish(output: []Region, before: Size, after: Size, scale: values.Scale) void {
+pub fn finish(output: []Region, before: Size, after: Size, scale: value.Scale) void {
     // The collector caps output at max_regions. Stable insertion sort keeps
     // the ordering rule without linking a general-purpose sort into the CLI.
     std.sort.insertion(Region, output, {}, lessThan);
-    const space = scale.devicePixels(pending.padding);
+    const space = scale.devicePixels(candidate.padding);
     for (output, 1..) |*region, number| {
         region.number = number;
         region.kind = if (region.before == null) .inserted else if (region.after == null) .removed else .changed;

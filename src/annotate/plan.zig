@@ -1,11 +1,11 @@
 //! Allocates the complete layout for a styled comparison sheet.
 const std = @import("std");
 const copy = @import("copy.zig");
-const values = @import("../value.zig");
+const value = @import("../value.zig");
 const geometry = @import("geometry.zig");
 const palette = @import("palette.zig");
 const text = @import("text.zig");
-const focus_layout = @import("focus.zig");
+const focus = @import("focus.zig");
 const crops = @import("crops.zig");
 const badges = @import("badges.zig");
 const ribbons = @import("ribbons.zig");
@@ -19,11 +19,11 @@ const imageRect = geometry.imageRect;
 const kindBit = palette.kindBit;
 const Text = text.Text;
 const textWidth = text.textWidth;
-const Focus = focus_layout.Focus;
-const Detail = focus_layout.Detail;
-const detail_gap = focus_layout.detail_gap;
-const focusWindow = focus_layout.focusWindow;
-const layoutFocus = focus_layout.layoutFocus;
+const Focus = focus.Focus;
+const Detail = focus.Detail;
+const detail_gap = focus.detail_gap;
+const focusWindow = focus.focusWindow;
+const layoutFocus = focus.layoutFocus;
 const cropPair = crops.cropPair;
 const max_crop_w = crops.max_crop_w;
 const placeBadges = badges.placeBadges;
@@ -34,10 +34,10 @@ const previewMove = ribbons.previewMove;
 const earlierRibbonEnd = ribbons.earlierRibbonEnd;
 const wedgeTop = ribbons.wedgeTop;
 const Allocator = std.mem.Allocator;
-const Image = values.Image;
-const Size = values.Size;
-const Region = values.Region;
-const Move = values.Move;
+const Image = value.Image;
+const Size = value.Size;
+const Region = value.Region;
+const Move = value.Move;
 
 /// Invalid images or regions, a sheet past the pixel cap, or an allocation failure.
 pub const RenderError = Allocator.Error || Image.Invalid || error{ SheetTooLarge, InvalidRegionBox, InvalidRegionNumber };
@@ -56,7 +56,7 @@ const Label = struct {
 };
 
 const LegendEntry = struct {
-    kind: values.Kind,
+    kind: value.Kind,
     box: Rect,
     radius: usize,
     label: Label,
@@ -167,7 +167,7 @@ const min_slot_h = 68;
 const caption_gap = 16;
 const caption_offset = 48;
 
-const legend_kinds = [_]values.Kind{ .changed, .inserted, .removed };
+const legend_kinds = [_]value.Kind{ .changed, .inserted, .removed };
 const title_size = 34;
 const title_top = 34;
 const legend_top = 79;
@@ -233,7 +233,7 @@ fn planDetails(allocator: Allocator, before: Image, after: Image, regions: []con
             focuses[index] = .{ .windows = .{ focusWindow(old orelse new, before.size()), focusWindow(new orelse old, after.size()) } };
         } else {
             top = std.math.add(usize, top, height + pane_layout.px(detail_gap)) catch return error.SheetTooLarge;
-            if (top > values.max_extent) return error.SheetTooLarge;
+            if (top > value.max_extent) return error.SheetTooLarge;
         }
     }
     if (pane_layout.panoramic) top = try layoutFocus(details, focuses, .{ before.size(), after.size() }, top);
@@ -344,7 +344,7 @@ fn reserveBadgeLanes(panes: *[2]Rect, size: *Size, pane_layout: PaneLayout, befo
     var right = false;
     var middle = false;
     for (regions) |region| {
-        for ([_]Image{ before, after }, [_]?values.Box{ region.before, region.after }, panes.*, 0..) |image, box, pane, side| {
+        for ([_]Image{ before, after }, [_]?value.Box{ region.before, region.after }, panes.*, 0..) |image, box, pane, side| {
             const mark = offsetMark(imageRect(image, box), pane, image.size()) orelse continue;
             const near_left = mark.x - pane.x < diameter;
             const near_right = pane.right() - mark.right() < diameter;
@@ -393,11 +393,11 @@ test "thin tall previews have room for both pane captions" {
 test "a top change in a thin preview can use the beside lane" {
     const source: Size = .{ .width = 200, .height = 20_030 };
     const allocator = std.testing.allocator;
-    const pixels = try allocator.alloc(values.Pixel, source.width * source.height);
+    const pixels = try allocator.alloc(value.Pixel, source.width * source.height);
     defer allocator.free(pixels);
     @memset(pixels, .{ 240, 241, 242, 255 });
     const image: Image = .{ .width = source.width, .height = source.height, .pixels = pixels };
-    const mark = values.Box.fromPixels(20, 0, 160, 160);
+    const mark = value.Box.fromPixels(20, 0, 160, 160);
     const plan = try Plan.init(allocator, image, image, &.{.{ .number = 1, .before = mark, .after = mark }}, &.{});
     defer plan.deinit(allocator);
     const edit = plan.details[0].before_mark.?;
@@ -408,13 +408,13 @@ test "a top change in a thin preview can use the beside lane" {
 test "two stacked badges stay level with their own marks" {
     const size: Size = .{ .width = 320, .height = 520 };
     const allocator = std.testing.allocator;
-    const pixels = try allocator.alloc(values.Pixel, size.width * size.height);
+    const pixels = try allocator.alloc(value.Pixel, size.width * size.height);
     defer allocator.free(pixels);
     @memset(pixels, .{ 240, 242, 245, 255 });
     const image: Image = .{ .width = size.width, .height = size.height, .pixels = pixels };
     const regions = [_]Region{
-        .{ .number = 1, .after = values.Box.fromPixels(280, 80, 25, 30) },
-        .{ .number = 2, .after = values.Box.fromPixels(280, 190, 25, 30) },
+        .{ .number = 1, .after = value.Box.fromPixels(280, 80, 25, 30) },
+        .{ .number = 2, .after = value.Box.fromPixels(280, 190, 25, 30) },
     };
     const plan = try Plan.init(allocator, image, image, &regions, &.{});
     defer plan.deinit(allocator);
@@ -427,11 +427,11 @@ test "two stacked badges stay level with their own marks" {
 
 test {
     const page = palette.page;
-    const Pixel = values.Pixel;
+    const Pixel = value.Pixel;
     const allocator = std.testing.allocator;
     const pixels: [80 * 80]Pixel = @splat(page);
     const image: Image = .{ .width = 80, .height = 80, .pixels = &pixels };
-    const insert: Region = .{ .number = 1, .kind = .inserted, .after = values.Box.fromPixels(0, 0, 4, 4) };
+    const insert: Region = .{ .number = 1, .kind = .inserted, .after = value.Box.fromPixels(0, 0, 4, 4) };
     const plan = try Plan.init(allocator, image, image, &.{insert}, &.{});
     defer plan.deinit(allocator);
     const bounds = plan.details[0].after_badge.position().?;
@@ -441,32 +441,32 @@ test {
 
 test {
     const page = palette.page;
-    const Pixel = values.Pixel;
+    const Pixel = value.Pixel;
     const allocator = std.testing.allocator;
     const pixels: [900 * 12]Pixel = @splat(page);
     const image: Image = .{ .width = 900, .height = 12, .pixels = &pixels };
-    const region: Region = .{ .number = 1, .kind = .changed, .after = values.Box.fromPixels(400, 0, 12, 12) };
+    const region: Region = .{ .number = 1, .kind = .changed, .after = value.Box.fromPixels(400, 0, 12, 12) };
     const plan = try Plan.init(allocator, image, image, &.{region}, &.{});
     defer plan.deinit(allocator);
     const detail = plan.details[0];
     const overview = detail.after_badge.position().?;
-    const focus = detail.focus_badges[1].position().?;
+    const focus_badge = detail.focus_badges[1].position().?;
     const pane_layout = PaneLayout.init(image.size(), image.size());
     try std.testing.expectEqual(overviewDiameter(pane_layout), overview.w);
-    try std.testing.expectEqual(@as(usize, 59), focus.w);
+    try std.testing.expectEqual(@as(usize, 59), focus_badge.w);
     try std.testing.expectEqual(plan.panes[1].y, overview.bottom());
-    try std.testing.expectEqual(plan.focuses[0].crops[1].?.to.y, focus.bottom());
+    try std.testing.expectEqual(plan.focuses[0].crops[1].?.to.y, focus_badge.bottom());
 }
 
 test "edge badges stay near their numbered boxes and avoid all other marks" {
     const page = palette.page;
-    const Pixel = values.Pixel;
+    const Pixel = value.Pixel;
     const allocator = std.testing.allocator;
     const pixels = try allocator.alloc(Pixel, 400 * 300);
     defer allocator.free(pixels);
     @memset(pixels, page);
     const image: Image = .{ .width = 400, .height = 300, .pixels = pixels };
-    const boxes = [_]values.Box{
+    const boxes = [_]value.Box{
         .fromPixels(0, 0, 4, 4),   .fromPixels(396, 0, 4, 4),   .fromPixels(198, 0, 5, 3),
         .fromPixels(0, 296, 4, 4), .fromPixels(396, 296, 4, 4),
     };
@@ -486,11 +486,11 @@ test "edge badges stay near their numbered boxes and avoid all other marks" {
 
 test "whole-image wide changes have a badge in both overviews" {
     const page = palette.page;
-    const Pixel = values.Pixel;
+    const Pixel = value.Pixel;
     const allocator = std.testing.allocator;
     const pixels: [900 * 12]Pixel = @splat(page);
     const image: Image = .{ .width = 900, .height = 12, .pixels = &pixels };
-    const box = values.Box.fromPixels(0, 0, 900, 12);
+    const box = value.Box.fromPixels(0, 0, 900, 12);
     const plan = try Plan.init(allocator, image, image, &.{.{ .number = 1, .kind = .changed, .before = box, .after = box }}, &.{});
     defer plan.deinit(allocator);
     try std.testing.expect(plan.details[0].before_badge.position().?.bottom() <= plan.panes[0].y);
@@ -498,7 +498,7 @@ test "whole-image wide changes have a badge in both overviews" {
 }
 
 test "edge badges use the gutter margins and the space above the caption" {
-    const Pixel = values.Pixel;
+    const Pixel = value.Pixel;
     const allocator = std.testing.allocator;
     const pixels = try allocator.alloc(Pixel, 400 * 300);
     defer allocator.free(pixels);
@@ -532,17 +532,17 @@ test "edge badges use the gutter margins and the space above the caption" {
 
 test "panoramic sheets use bounded overviews and merge overlapping focus crops" {
     const overview_caption_gap = geometry.overview_caption_gap;
-    const Pixel = values.Pixel;
+    const Pixel = value.Pixel;
     const allocator = std.testing.allocator;
     const pixels = try allocator.alloc(Pixel, 3600 * 300);
     defer allocator.free(pixels);
-    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
+    const canvas = @import("uidiff_test_canvas").Painters(value.Image);
     @memset(pixels, canvas.white);
     const image: Image = .{ .width = 3600, .height = 300, .pixels = pixels };
     const regions = [_]Region{
-        .{ .number = 1, .kind = .changed, .before = values.Box.fromPixels(450, 30, 80, 20), .after = values.Box.fromPixels(450, 30, 80, 20) },
-        .{ .number = 2, .kind = .changed, .before = values.Box.fromPixels(900, 185, 80, 20), .after = values.Box.fromPixels(900, 185, 80, 20) },
-        .{ .number = 3, .kind = .inserted, .after = values.Box.fromPixels(1600, 40, 1950, 18) },
+        .{ .number = 1, .kind = .changed, .before = value.Box.fromPixels(450, 30, 80, 20), .after = value.Box.fromPixels(450, 30, 80, 20) },
+        .{ .number = 2, .kind = .changed, .before = value.Box.fromPixels(900, 185, 80, 20), .after = value.Box.fromPixels(900, 185, 80, 20) },
+        .{ .number = 3, .kind = .inserted, .after = value.Box.fromPixels(1600, 40, 1950, 18) },
     };
     const plan = try Plan.init(allocator, image, image, &regions, &.{});
     defer plan.deinit(allocator);
@@ -561,7 +561,7 @@ test "panoramic sheets use bounded overviews and merge overlapping focus crops" 
     try std.testing.expect(after.to.x > before.to.right());
     try std.testing.expectEqualStrings(copy.before ++ " | x 250-1180", first.captions[0].bytes());
     const shrunk = plan.focuses[2].crops[1].?;
-    try std.testing.expectEqual(@as(usize, focus_layout.focus_slot_width), shrunk.to.w);
+    try std.testing.expectEqual(@as(usize, focus.focus_slot_width), shrunk.to.w);
     try std.testing.expect(shrunk.to.h < shrunk.from.h);
     for (plan.details) |detail| {
         if (detail.after_badge.position()) |b| try std.testing.expect(!b.overlaps(detail.after_mark.?));
@@ -571,15 +571,15 @@ test "panoramic sheets use bounded overviews and merge overlapping focus crops" 
 
 test "wide removed strips get distinct focus badges and a scaled caption" {
     const page = palette.page;
-    const Pixel = values.Pixel;
+    const Pixel = value.Pixel;
     const allocator = std.testing.allocator;
     const pixels = try allocator.alloc(Pixel, 3800 * 120);
     defer allocator.free(pixels);
     @memset(pixels, page);
     const image: Image = .{ .width = 3800, .height = 120, .pixels = pixels };
     const regions = [_]Region{
-        .{ .number = 1, .kind = .removed, .before = values.Box.fromPixels(100, 4, 3100, 14) },
-        .{ .number = 2, .kind = .removed, .before = values.Box.fromPixels(100, 44, 3100, 14) },
+        .{ .number = 1, .kind = .removed, .before = value.Box.fromPixels(100, 4, 3100, 14) },
+        .{ .number = 2, .kind = .removed, .before = value.Box.fromPixels(100, 44, 3100, 14) },
     };
     const plan = try Plan.init(allocator, image, image, &regions, &.{});
     defer plan.deinit(allocator);
@@ -593,13 +593,13 @@ test "wide removed strips get distinct focus badges and a scaled caption" {
 
 test "focus badges use space outside a crop when available" {
     const page = palette.page;
-    const Pixel = values.Pixel;
+    const Pixel = value.Pixel;
     const allocator = std.testing.allocator;
     const pixels = try allocator.alloc(Pixel, 1600 * 530);
     defer allocator.free(pixels);
     @memset(pixels, page);
     const image: Image = .{ .width = 1600, .height = 530, .pixels = pixels };
-    const box = values.Box.fromPixels(1588, 460, 8, 6);
+    const box = value.Box.fromPixels(1588, 460, 8, 6);
     const plan = try Plan.init(allocator, image, image, &.{.{ .number = 1, .kind = .changed, .before = box, .after = box }}, &.{});
     defer plan.deinit(allocator);
     try std.testing.expect(!plan.details[0].focus_badges[0].position().?.overlaps(plan.focuses[0].crops[0].?.to));

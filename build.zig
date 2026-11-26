@@ -1,7 +1,7 @@
 //! Builds the CLI, codec bindings, tests, fixtures, benchmark and size check.
 const std = @import("std");
 const fixtures = @import("tests/fixtures.zig");
-const values = @import("src/value.zig");
+const value = @import("src/value.zig");
 const Optimize = std.builtin.Optimize;
 const Build = std.Build;
 
@@ -440,7 +440,7 @@ fn addStbDecoder(b: *Build, module: *Build.Module, target: Build.ResolvedTarget,
     module.addCSourceFile(.{
         .file = b.path("src/codec/png/stb.c"),
         .flags = std.mem.concat(b.allocator, []const u8, &.{
-            &.{b.fmt("-DSTBI_MAX_DIMENSIONS={d}", .{values.max_extent})}, &codec_section_flags, &fuzz_coverage_flags, legacy_flags,
+            &.{b.fmt("-DSTBI_MAX_DIMENSIONS={d}", .{value.max_extent})}, &codec_section_flags, &fuzz_coverage_flags, legacy_flags,
         }) catch @panic("OOM"),
     });
 }
@@ -631,7 +631,7 @@ fn addZlibNg(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, x86
 }
 
 fn webpFlags(b: *Build, extra: []const []const u8) []const []const u8 {
-    const base = [_][]const u8{b.fmt("-DWEBP_MAX_ALLOCABLE_MEMORY={d}ULL", .{values.max_decode_bytes})} ++ codec_section_flags ++ fuzz_coverage_flags;
+    const base = [_][]const u8{b.fmt("-DWEBP_MAX_ALLOCABLE_MEMORY={d}ULL", .{value.max_decode_bytes})} ++ codec_section_flags ++ fuzz_coverage_flags;
     return std.mem.concat(b.allocator, []const u8, &.{ &base, extra }) catch @panic("OOM");
 }
 
@@ -683,9 +683,9 @@ fn addSizeCheck(b: *Build, install_cli: *Build.Step.InstallArtifact) void {
 
 fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoders: Decoders, install_cli: *Build.Step.InstallArtifact, host_generator: *Build.Step.Compile, x86_simd: X86Simd, cli_config: *Build.Module, version: []const u8) void {
     const uidiff = addCheckedLibrary(b, target, optimize, decoders, x86_simd);
-    const cases = b.createModule(.{ .root_source_file = b.path("tests/fixtures.zig"), .target = target, .optimize = optimize });
+    const fixtures_module = b.createModule(.{ .root_source_file = b.path("tests/fixtures.zig"), .target = target, .optimize = optimize });
     const uidiff_testing = addTestingModule(b, uidiff);
-    _ = addE2e(b, target, optimize, uidiff, uidiff_testing, cases, install_cli, version);
+    _ = addE2e(b, target, optimize, uidiff, uidiff_testing, fixtures_module, install_cli, version);
     const filter = b.option([]const u8, "test-filter", "Run only the library's unit tests that match");
     const step = b.step("test", "Run unit, layer, order, fixture and fuzz-corpus tests");
     const filters = if (filter) |pattern| b.allocator.dupe([]const u8, &.{pattern}) catch @panic("OOM") else &.{};
@@ -726,7 +726,7 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
             .imports = &.{
                 .{ .name = "uidiff", .module = tested },
                 .{ .name = "uidiff_testing", .module = fuzz_helpers },
-                .{ .name = "fixtures", .module = cases },
+                .{ .name = "fixtures", .module = fixtures_module },
             },
         });
         if (index == fuzz_sources.len) test_module.addImport("png_format", decoders.png_format);
@@ -835,7 +835,7 @@ fn addRequiredTest(b: *Build, library: *Build.Module, name: []const u8, descript
     b.step(name, description).dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = library, .filters = filters })).step);
 }
 
-fn addE2e(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, uidiff: *Build.Module, uidiff_testing: *Build.Module, cases: *Build.Module, install_cli: *Build.Step.InstallArtifact, version: []const u8) *Build.Step {
+fn addE2e(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, uidiff: *Build.Module, uidiff_testing: *Build.Module, fixtures_module: *Build.Module, install_cli: *Build.Step.InstallArtifact, version: []const u8) *Build.Step {
     const options = b.addOptions();
     options.addOptionPathUntracked("executable", .{ .relative = .{ .base = .install_bin, .sub_path = install_cli.artifact.out_filename } });
     options.addOption([]const u8, "usage", @embedFile("src/cli/usage.txt"));
@@ -848,7 +848,7 @@ fn addE2e(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, uidiff: *
             .imports = &.{
                 .{ .name = "uidiff", .module = uidiff },
                 .{ .name = "uidiff_testing", .module = uidiff_testing },
-                .{ .name = "fixtures", .module = cases },
+                .{ .name = "fixtures", .module = fixtures_module },
                 .{ .name = "e2e_options", .module = options.createModule() },
                 .{ .name = "png_format", .module = uidiff.import_table.get("png_format").? },
             },
@@ -885,7 +885,7 @@ fn addBenchmark(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, uid
         if (before) |a| if (after) |z| {
             const run = b.addRunArtifact(bench);
             run.addArgs(&.{ "custom", a, z });
-            if (scale) |value| run.addArg(value);
+            if (scale) |scale_text| run.addArg(scale_text);
             step.dependOn(&run.step);
             return;
         };

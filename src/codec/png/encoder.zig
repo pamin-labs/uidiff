@@ -3,13 +3,13 @@
 const std = @import("std");
 const zlib = @import("zlib.zig");
 const decoder = @import("decoder.zig");
-const values = @import("../../value.zig");
+const value = @import("../../value.zig");
 const png_format = @import("png_format");
 const stb = @import("stb.zig");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const Writer = Io.Writer;
-const Image = values.Image;
+const Image = value.Image;
 
 const Filtered = struct { method: png_format.Filter, bytes: []const u8 };
 
@@ -22,7 +22,7 @@ const BorrowedRows = struct {
         return self.image.isOpaque();
     }
 
-    pub fn row(self: BorrowedRows, y: usize, _: []values.Pixel) []const values.Pixel {
+    pub fn row(self: BorrowedRows, y: usize, _: []value.Pixel) []const value.Pixel {
         return self.image.row(y);
     }
 };
@@ -48,7 +48,7 @@ pub fn write(allocator: Allocator, image: Image, output: *Writer) zlib.EncodeErr
 }
 
 /// Encodes a PNG from a row source. See writeRowsWithIo for the source contract.
-pub fn writeRows(allocator: Allocator, size: values.Size, source: anytype, output: *Writer) zlib.EncodeError!void {
+pub fn writeRows(allocator: Allocator, size: value.Size, source: anytype, output: *Writer) zlib.EncodeError!void {
     return writeRowsWithIo(null, allocator, size, source, output);
 }
 
@@ -58,7 +58,7 @@ pub fn writeRows(allocator: Allocator, size: values.Size, source: anytype, outpu
 /// selects serial buffering. A staged source can return scratch or a row
 /// to copy immediately. A borrowed source receives empty scratch in serial
 /// mode and keeps each row readable through the next source call.
-pub fn writeRowsWithIo(io: ?Io, allocator: Allocator, size: values.Size, source: anytype, output: *Writer) zlib.EncodeError!void {
+pub fn writeRowsWithIo(io: ?Io, allocator: Allocator, size: value.Size, source: anytype, output: *Writer) zlib.EncodeError!void {
     const Source = @TypeOf(source);
     if (!@hasDecl(Source, "row"))
         @compileError("a PNG row source must provide row(y, scratch) returning []const Pixel");
@@ -71,7 +71,7 @@ pub fn writeRowsWithIo(io: ?Io, allocator: Allocator, size: values.Size, source:
     // Valid images have at most max_extent pixels per axis, which fits u32.
     try png_format.writeHeader(zlib.chunk, output, @intCast(size.width), @intCast(size.height), if (rgb_only) .rgb else .rgba);
 
-    const encoded_row_bytes = 1 + size.width * @as(usize, if (rgb_only) 3 else @sizeOf(values.Pixel));
+    const encoded_row_bytes = 1 + size.width * @as(usize, if (rgb_only) 3 else @sizeOf(value.Pixel));
     const workers = if (io != null and encoded_row_bytes * size.height >= parallel_min_bytes)
         // std.Io exposes no CPU count; on one CPU, strips would only cost memory.
         @min(max_strip_workers, std.Thread.getCpuCount() catch 1)
@@ -85,13 +85,13 @@ pub fn writeRowsWithIo(io: ?Io, allocator: Allocator, size: values.Size, source:
     try zlib.chunk(output, png_format.iend_type, "");
 }
 
-fn writeSerial(allocator: Allocator, size: values.Size, source: anytype, output: *Writer, rgb_only: bool) zlib.EncodeError!void {
-    const row_bytes = size.width * @sizeOf(values.Pixel);
+fn writeSerial(allocator: Allocator, size: value.Size, source: anytype, output: *Writer, rgb_only: bool) zlib.EncodeError!void {
+    const row_bytes = size.width * @sizeOf(value.Pixel);
     const staged_rows: usize = if (@TypeOf(source).staged) strip_rows + 1 else 0;
     const buffer = try allocator.alignedAlloc(u8, .@"4", zlib.chunk_bytes + row_bytes + staged_rows * row_bytes);
     defer allocator.free(buffer);
     const filtered = buffer[zlib.chunk_bytes..][0..row_bytes];
-    const staging = std.mem.bytesAsSlice(values.Pixel, buffer[zlib.chunk_bytes + row_bytes ..]);
+    const staging = std.mem.bytesAsSlice(value.Pixel, buffer[zlib.chunk_bytes + row_bytes ..]);
     var above: []const u8 = &.{};
     var compress: zlib.Deflater = undefined;
     var backing = allocator;
@@ -119,15 +119,15 @@ fn writeSerial(allocator: Allocator, size: values.Size, source: anytype, output:
     try compress.finish();
 }
 
-fn writeStrips(io: Io, allocator: Allocator, size: values.Size, source: anytype, output: *Writer, rgb_only: bool, encoded_row_bytes: usize, workers: usize) zlib.EncodeError!void {
+fn writeStrips(io: Io, allocator: Allocator, size: value.Size, source: anytype, output: *Writer, rgb_only: bool, encoded_row_bytes: usize, workers: usize) zlib.EncodeError!void {
     const rows_per_strip = @max(1, target_strip_bytes / encoded_row_bytes);
     const strip_bytes = rows_per_strip * encoded_row_bytes;
     const compressed_bytes = zlib.Strip.outputBound(strip_bytes);
     const slot_bytes = zlib.history_bytes + strip_bytes + compressed_bytes;
-    const row_bytes = size.width * @sizeOf(values.Pixel);
+    const row_bytes = size.width * @sizeOf(value.Pixel);
     const buffer = try allocator.alignedAlloc(u8, .@"4", 3 * row_bytes + workers * slot_bytes);
     defer allocator.free(buffer);
-    const rows = std.mem.bytesAsSlice(values.Pixel, buffer[0 .. 2 * row_bytes]);
+    const rows = std.mem.bytesAsSlice(value.Pixel, buffer[0 .. 2 * row_bytes]);
     const filtered = buffer[2 * row_bytes ..][0..row_bytes];
     const slots = buffer[3 * row_bytes ..];
 
@@ -191,7 +191,7 @@ fn writeStrips(io: Io, allocator: Allocator, size: values.Size, source: anytype,
 }
 
 fn filterRow(row: []const u8, above: []const u8, filtered: []u8, rgb_only: bool) Filtered {
-    const pixel = @sizeOf(values.Pixel);
+    const pixel = @sizeOf(value.Pixel);
     if (above.len == 0) return .{
         .method = .up,
         .bytes = if (rgb_only) packRgb(false, filtered, row, &.{}) else row,
@@ -258,7 +258,7 @@ fn filter(out: []u8, current: []const u8, predictor: []const u8) void {
 fn preferredFilter(row: []const u8, above: []const u8) png_format.Filter {
     // Nonzero residuals interrupt runs. Sample the row and favor Up when
     // choosing another predictor saves only a few of them.
-    const pixel = @sizeOf(values.Pixel);
+    const pixel = @sizeOf(value.Pixel);
     var up: usize = 0;
     var sub: usize = 0;
     var paeth: usize = 0;
@@ -288,7 +288,7 @@ fn filterPaeth(out: []u8, current: []const u8, above: []const u8) void {
     const half = (std.simd.suggestVectorLength(u8) orelse 16) / 2;
     const Bytes = @Vector(half, u8);
     const Wide = @Vector(half, i16);
-    const pixel = @sizeOf(values.Pixel);
+    const pixel = @sizeOf(value.Pixel);
     for (out[0..pixel], current[0..pixel], above[0..pixel]) |*dst, a, b| dst.* = a -% b;
     var i: usize = pixel;
     while (i + half <= out.len) : (i += half) {
@@ -321,7 +321,7 @@ fn encodeOnce(allocator: Allocator, image: Image) !void {
 }
 
 test "an encoded image starts with the PNG signature and ends with IEND" {
-    const pixels = [_]values.Pixel{ .{ 1, 2, 3, 255 }, .{ 4, 5, 6, 128 } };
+    const pixels = [_]value.Pixel{ .{ 1, 2, 3, 255 }, .{ 4, 5, 6, 128 } };
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
     try write(std.testing.allocator, .{ .width = 2, .height = 1, .pixels = &pixels }, &out.writer);
@@ -331,7 +331,7 @@ test "an encoded image starts with the PNG signature and ends with IEND" {
 
 test "each emitted chunk carries the PNG checksum" {
     const allocator = std.testing.allocator;
-    const pixels = [_]values.Pixel{ .{ 32, 22, 8, 255 }, .{ 44, 27, 12, 70 } };
+    const pixels = [_]value.Pixel{ .{ 32, 22, 8, 255 }, .{ 44, 27, 12, 70 } };
     var out: Writer.Allocating = .init(allocator);
     defer out.deinit();
     try write(allocator, .{ .width = 2, .height = 1, .pixels = &pixels }, &out.writer);
@@ -343,7 +343,7 @@ test "each emitted chunk carries the PNG checksum" {
 }
 
 test "encoding releases each allocation on failure" {
-    const pixels: [4 * 4]values.Pixel = @splat(.{ 1, 2, 3, 255 });
+    const pixels: [4 * 4]value.Pixel = @splat(.{ 1, 2, 3, 255 });
     try std.testing.checkAllAllocationFailures(std.testing.allocator, encodeOnce, .{Image{ .width = 4, .height = 4, .pixels = &pixels }});
 }
 
@@ -357,7 +357,7 @@ test "staged PNG rows preserve the predictor across two strip boundaries and a t
             return self.image.isOpaque();
         }
 
-        pub fn row(self: @This(), y: usize, scratch: []values.Pixel) []const values.Pixel {
+        pub fn row(self: @This(), y: usize, scratch: []value.Pixel) []const value.Pixel {
             const pixels = self.image.row(y);
             if (y % 2 == 1) return pixels;
             @memcpy(scratch, pixels);
@@ -368,7 +368,7 @@ test "staged PNG rows preserve the predictor across two strip boundaries and a t
     const allocator = std.testing.allocator;
     const width = 17;
     const height = 2 * strip_rows + 3;
-    var pixels: [width * height]values.Pixel = undefined;
+    var pixels: [width * height]value.Pixel = undefined;
     const image: Image = .{ .width = width, .height = height, .pixels = &pixels };
     for ([_]u8{ 255, 101 }) |alpha| {
         for (&pixels, 0..) |*pixel, i| {
@@ -383,10 +383,10 @@ test "staged PNG rows preserve the predictor across two strip boundaries and a t
         try writeRows(allocator, image.size(), Source{ .image = image }, &streamed.writer);
         try write(allocator, image, &borrowed.writer);
         try std.testing.expectEqualSlices(u8, borrowed.written(), streamed.written());
-        const header = try stb.probe(allocator, streamed.written(), values.max_decode_bytes);
-        const decoded = try decoder.decode(allocator, streamed.written(), header, values.max_decode_bytes);
+        const header = try stb.probe(allocator, streamed.written(), value.max_decode_bytes);
+        const decoded = try decoder.decode(allocator, streamed.written(), header, value.max_decode_bytes);
         defer stb.release(allocator, decoded);
-        try std.testing.expectEqualSlices(values.Pixel, image.pixels, decoded);
+        try std.testing.expectEqualSlices(value.Pixel, image.pixels, decoded);
     }
 }
 
@@ -394,7 +394,7 @@ test "sheets below the parallel threshold use the serial encoder" {
     const allocator = std.testing.allocator;
     const width = 1025;
     const height = 1027;
-    const pixels = try allocator.alloc(values.Pixel, width * height);
+    const pixels = try allocator.alloc(value.Pixel, width * height);
     defer allocator.free(pixels);
     for (pixels, 0..) |*pixel, i| {
         pixel.* = .{ @intCast(i % 179), @intCast(i / width % 227), @intCast(i % 211), 255 };
@@ -409,7 +409,7 @@ test "sheets below the parallel threshold use the serial encoder" {
             return true;
         }
 
-        pub fn row(self: @This(), y: usize, _: []values.Pixel) []const values.Pixel {
+        pub fn row(self: @This(), y: usize, _: []value.Pixel) []const value.Pixel {
             return self.image.row(y);
         }
     };
@@ -426,7 +426,7 @@ test "a failing writer stops parallel strips and releases every buffer" {
     const allocator = std.testing.allocator;
     const width = 1291;
     const height = 1633;
-    const pixels = try allocator.alloc(values.Pixel, width * height);
+    const pixels = try allocator.alloc(value.Pixel, width * height);
     defer allocator.free(pixels);
     for (pixels, 0..) |*pixel, i| pixel.* = .{ @intCast(i % 251), @intCast(i / width % 199), @intCast(i % 149), 101 };
     const image: Image = .{ .width = width, .height = height, .pixels = pixels };
@@ -440,7 +440,7 @@ test "overlapped strip compression reconstructs RGBA and RGB rows across worker 
     const allocator = std.testing.allocator;
     const width = 1291;
     const height = 1633;
-    const pixels = try allocator.alloc(values.Pixel, width * height);
+    const pixels = try allocator.alloc(value.Pixel, width * height);
     defer allocator.free(pixels);
     const image: Image = .{ .width = width, .height = height, .pixels = pixels };
     var output: Writer.Allocating = .init(allocator);
@@ -451,10 +451,10 @@ test "overlapped strip compression reconstructs RGBA and RGB rows across worker 
         }
         output.clearRetainingCapacity();
         try writeRowsWithIo(std.testing.io, allocator, image.size(), BorrowedRows{ .image = image }, &output.writer);
-        const header = try stb.probe(allocator, output.written(), values.max_decode_bytes);
-        const decoded = try decoder.decode(allocator, output.written(), header, values.max_decode_bytes);
+        const header = try stb.probe(allocator, output.written(), value.max_decode_bytes);
+        const decoded = try decoder.decode(allocator, output.written(), header, value.max_decode_bytes);
         defer stb.release(allocator, decoded);
-        try std.testing.expectEqualSlices(values.Pixel, pixels, decoded);
+        try std.testing.expectEqualSlices(value.Pixel, pixels, decoded);
     }
 }
 

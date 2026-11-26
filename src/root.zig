@@ -1,6 +1,6 @@
 //! The byte-oriented comparison, report and annotation API.
 const std = @import("std");
-const values = @import("value.zig");
+const value = @import("value.zig");
 const diff = @import("diff.zig");
 const codec = @import("codec.zig");
 const annotate = @import("annotate.zig");
@@ -14,19 +14,19 @@ comptime {
 /// The versioned JSON report schema and its writer.
 pub const report = @import("report.zig");
 /// Borrowed packed pixels and their source dimensions.
-pub const Image = values.Image;
+pub const Image = value.Image;
 /// Four channels in RGBA byte order.
-pub const Pixel = values.Pixel;
+pub const Pixel = value.Pixel;
 /// Source dimensions in device pixels.
-pub const Size = values.Size;
+pub const Size = value.Size;
 /// Rectangle in device pixels.
-pub const Box = values.Box;
+pub const Box = value.Box;
 /// The sides affected by a change.
-pub const Kind = values.Kind;
+pub const Kind = value.Kind;
 /// A numbered change with boxes on the affected sides.
-pub const Region = values.Region;
+pub const Region = value.Region;
 /// Selects the source image for a region or annotation.
-pub const Side = values.Side;
+pub const Side = value.Side;
 /// Parameters for comparison and file decoding.
 pub const Options = files.Options;
 /// An owned set of numbered changes and the combined canvas dimensions.
@@ -34,7 +34,7 @@ pub const Comparison = diff.Comparison;
 /// Input and scratch-space failures from diff.
 pub const CompareError = diff.CompareError;
 /// Device pixels per CSS pixel.
-pub const Scale = values.Scale;
+pub const Scale = value.Scale;
 /// Space added around each reported box, in CSS pixels.
 pub const region_padding = diff.region_padding;
 /// The most regions a comparison reports; nearby ones merge to fit.
@@ -50,11 +50,11 @@ pub const EncodeError = codec.EncodeError;
 /// The largest encoded input file or byte stream accepted, in bytes.
 pub const max_encoded_bytes = codec.max_encoded_bytes;
 /// Maximum source dimension in device pixels.
-pub const max_extent = values.max_extent;
+pub const max_extent = value.max_extent;
 /// Maximum source area in device pixels.
-pub const max_pixels = values.max_pixels;
+pub const max_pixels = value.max_pixels;
 /// Default per-image decode memory budget.
-pub const max_decode_bytes = values.max_decode_bytes;
+pub const max_decode_bytes = value.max_decode_bytes;
 /// Decodes bounded PNG, JPEG, or WebP bytes. The caller owns the result.
 pub const decode = codec.decode;
 /// Reads and decodes a bounded image file. The caller owns the result.
@@ -68,9 +68,9 @@ pub const Sheet = annotate.Sheet;
 /// Invalid inputs, an oversized sheet, or an allocation failure from rendering.
 pub const RenderError = annotate.RenderError;
 /// A vertically moved row range and its source columns.
-pub const Move = values.Move;
+pub const Move = value.Move;
 /// One horizontal position or extent in source device pixels.
-pub const DevicePx = values.DevicePx;
+pub const DevicePx = value.DevicePx;
 /// Renders the same styled comparison sheet as file annotation.
 pub const renderComparisonSheet = annotate.renderSheet;
 /// Streams a styled comparison sheet as PNG without a full canvas allocation.
@@ -92,7 +92,7 @@ pub fn compare(allocator: std.mem.Allocator, before: Image, after: Image, option
 }
 
 test "module roots expose their API" {
-    inline for (.{ values, diff, codec, annotate, report, files }) |module| std.testing.refAllDecls(module);
+    inline for (.{ value, diff, codec, annotate, report, files }) |module| std.testing.refAllDecls(module);
 }
 
 test "required test selection" {

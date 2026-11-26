@@ -1,9 +1,9 @@
 //! Sheet and pane geometry and preview sampling.
 const std = @import("std");
-const values = @import("../value.zig");
-const Image = values.Image;
-const Size = values.Size;
-const Pixel = values.Pixel;
+const value = @import("../value.zig");
+const Image = value.Image;
+const Size = value.Size;
+const Pixel = value.Pixel;
 const Allocator = std.mem.Allocator;
 
 const Space = enum { source, sheet };
@@ -184,12 +184,12 @@ pub fn mapMark(region: SourceRect, source: SourceRect, pane: Rect) ?Rect {
 }
 
 /// Validates fractional device coordinates and rounds them outward.
-pub fn imageRect(image: Image, box: ?values.Box) ?SourceRect {
+pub fn imageRect(image: Image, box: ?value.Box) ?SourceRect {
     return rectAtSize(image.size(), box);
 }
 
 /// Validates and rounds a box against a known source image size.
-pub noinline fn rectAtSize(size: Size, box: ?values.Box) ?SourceRect {
+pub noinline fn rectAtSize(size: Size, box: ?value.Box) ?SourceRect {
     const b = box orelse return null;
     const w: f64 = @floatFromInt(size.width);
     const h: f64 = @floatFromInt(size.height);

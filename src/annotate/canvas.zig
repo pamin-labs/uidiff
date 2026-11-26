@@ -1,12 +1,12 @@
 //! Rasterizes paint and bitmap text one sheet row at a time.
 const std = @import("std");
-const values = @import("../value.zig");
+const value = @import("../value.zig");
 const geometry = @import("geometry.zig");
-const font = @import("text.zig");
+const text = @import("text.zig");
 const Rect = geometry.Rect;
-const Pixel = values.Pixel;
-const Face = font.Face;
-const glyph = font.glyph;
+const Pixel = value.Pixel;
+const Face = text.Face;
+const glyph = text.glyph;
 
 /// A row being drawn and its absolute sheet coordinate.
 pub const Line = struct {

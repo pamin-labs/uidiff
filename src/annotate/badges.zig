@@ -3,19 +3,19 @@
 const std = @import("std");
 const routing = @import("badges/routing.zig");
 const paint = @import("badges/paint.zig");
-const values = @import("../value.zig");
+const value = @import("../value.zig");
 const placement = @import("placement.zig");
 const geometry = @import("geometry.zig");
 const text = @import("text.zig");
-const focus_layout = @import("focus.zig");
+const focus = @import("focus.zig");
 const Rect = geometry.Rect;
 const PaneLayout = geometry.PaneLayout;
 const textWidth = text.textWidth;
-const Detail = focus_layout.Detail;
-const Focus = focus_layout.Focus;
-const focus_slot_width = focus_layout.focus_slot_width;
+const Detail = focus.Detail;
+const Focus = focus.Focus;
+const focus_slot_width = focus.focus_slot_width;
 const Allocator = std.mem.Allocator;
-const Image = values.Image;
+const Image = value.Image;
 const Crop = @import("crops.zig").Crop;
 
 /// Draws the outward halo and assigned badge on one sheet row.
@@ -44,19 +44,19 @@ pub fn overviewDiameter(pane_layout: PaneLayout) usize {
 }
 
 /// Assigns non-overlapping overview and focus badge positions.
-pub fn placeBadges(allocator: Allocator, details: []Detail, focuses: []const Focus, panes: [2]Rect, images: [2]Image, size: values.Size, pane_layout: PaneLayout, captions: [2]Rect, gutter: Gutter) Allocator.Error!void {
+pub fn placeBadges(allocator: Allocator, details: []Detail, focuses: []const Focus, panes: [2]Rect, images: [2]Image, size: value.Size, pane_layout: PaneLayout, captions: [2]Rect, gutter: Gutter) Allocator.Error!void {
     if (details.len == 0) return;
     const storage = try allocator.alloc(Rect, 4 * details.len + panes.len);
     defer allocator.free(storage);
     placeOverview(details, storage, panes, images, size, pane_layout, captions, gutter);
-    for (focuses, 0..) |focus, group| {
-        for (focus.crops, 0..) |patch, side| {
-            if (patch) |p| placeFocus(details, storage, images[side], p, side, group, textWidth(.regular, text.caption_size, focus.captions[side].bytes()) + text.caption_padding, focus.top + focus.height, pane_layout);
+    for (focuses, 0..) |window, group| {
+        for (window.crops, 0..) |patch, side| {
+            if (patch) |p| placeFocus(details, storage, images[side], p, side, group, textWidth(.regular, text.caption_size, window.captions[side].bytes()) + text.caption_padding, window.top + window.height, pane_layout);
         }
     }
 }
 
-fn placeOverview(details: []Detail, storage: []Rect, panes: [2]Rect, images: [2]Image, size: values.Size, pane_layout: PaneLayout, captions: [2]Rect, gutter: Gutter) void {
+fn placeOverview(details: []Detail, storage: []Rect, panes: [2]Rect, images: [2]Image, size: value.Size, pane_layout: PaneLayout, captions: [2]Rect, gutter: Gutter) void {
     const diameter = overviewDiameter(pane_layout);
     const clearance = if (@min(panes[0].w, panes[1].w) < diameter) pane_layout.px(thin_badge_gap) else 0;
     var len: usize = 0;
@@ -173,7 +173,7 @@ test {
 test "small panes enlarge by an integer and keep badges clear of their boxes" {
     const min_preview_side = geometry.min_preview_side;
     const offsetMark = geometry.offsetMark;
-    const Size = values.Size;
+    const Size = value.Size;
     const source: Size = .{ .width = 124, .height = 114 };
     const pane_layout = PaneLayout.init(source, source);
     const panes = pane_layout.panes(source, source);
@@ -194,7 +194,7 @@ test "small panes enlarge by an integer and keep badges clear of their boxes" {
 
 test "badge digits preserve native bold bitmap coverage" {
     const palette = @import("palette.zig");
-    const Pixel = values.Pixel;
+    const Pixel = value.Pixel;
     const page = palette.page;
     const pane_layout = PaneLayout.init(.{ .width = 900, .height = 12 }, .{ .width = 900, .height = 12 });
     const diameter = overviewDiameter(pane_layout);

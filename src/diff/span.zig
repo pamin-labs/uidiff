@@ -1,8 +1,8 @@
 //! Aligns changed columns and compares their paired and unpaired rows.
 const std = @import("std");
-const values = @import("../value.zig");
+const value = @import("../value.zig");
 const columns = @import("columns.zig");
-const change_mask = @import("mask.zig");
+const mask = @import("mask.zig");
 const motion = @import("motion.zig");
 const pixel = @import("pixel.zig");
 const regions = @import("regions.zig");
@@ -10,23 +10,23 @@ const rows = @import("rows.zig");
 const unpaired = @import("unpaired.zig");
 const yiq = @import("yiq.zig");
 const Allocator = std.mem.Allocator;
-const Box = values.Box;
+const Box = value.Box;
 const Collector = regions.Collector;
-const Image = values.Image;
-const Pixel = values.Pixel;
+const Image = value.Image;
+const Pixel = value.Pixel;
 const Raster = yiq.Raster;
 
-const Scratch = change_mask.Scratch;
+const Scratch = mask.Scratch;
 
 const CompareBuffers = struct {
-    mask: []change_mask.Cell = &.{},
+    mask: []mask.Cell = &.{},
     seeds: std.ArrayList(u32) = .empty,
     alignment: rows.Workspace = .{},
 
     fn deinit(self: *CompareBuffers, allocator: Allocator) void {
         self.alignment.deinit(allocator);
         self.seeds.deinit(allocator);
-        values.freeUnfilled(change_mask.Cell, allocator, self.mask);
+        value.freeUnfilled(mask.Cell, allocator, self.mask);
     }
 
     fn prepare(self: *CompareBuffers, allocator: Allocator, area: usize) Allocator.Error!Scratch {
@@ -35,9 +35,9 @@ const CompareBuffers = struct {
             // Remapping lets the allocator reuse the storage. If it cannot,
             // release the old mask first because yiq.mask overwrites every cell.
             self.mask = allocator.remap(self.mask, area) orelse grow: {
-                values.freeUnfilled(change_mask.Cell, allocator, self.mask);
+                value.freeUnfilled(mask.Cell, allocator, self.mask);
                 self.mask = &.{};
-                break :grow try values.allocUnfilled(change_mask.Cell, allocator, area);
+                break :grow try value.allocUnfilled(mask.Cell, allocator, area);
             };
         }
         try self.seeds.ensureTotalCapacityPrecise(allocator, seed_rows);
@@ -52,7 +52,7 @@ const short_shift_rows = 16;
 const replacement_context_rows = 4;
 
 /// Collects changed bands and moves across the changed columns.
-pub fn collect(allocator: Allocator, collector: *Collector, moves: *std.ArrayList(values.Move), scope: columns.Scope, scroll_limit_px: usize) Allocator.Error!void {
+pub fn collect(allocator: Allocator, collector: *Collector, moves: *std.ArrayList(value.Move), scope: columns.Scope, scroll_limit_px: usize) Allocator.Error!void {
     const before = scope.before;
     const after = scope.after;
     const row_count = before.height + after.height;
@@ -196,14 +196,14 @@ fn compareSpan(allocator: Allocator, collector: *Collector, scope: columns.Scope
     const left = scope.span.left;
     const width = scope.span.width;
     const overlap = @min(before.height, after.height);
-    const changes: []const rows.Band = if (aligned) |value| pruneMatched(scope, value) else &.{.{ .before = 0, .after = 0, .removed = overlap, .added = overlap }};
+    const changes: []const rows.Band = if (aligned) |bands| pruneMatched(scope, bands) else &.{.{ .before = 0, .after = 0, .removed = overlap, .added = overlap }};
 
     const extension = @max(before.height, after.height) - overlap;
     var max_rows: usize = if (scope.frame != null and aligned == null) extension else 0;
     for (changes) |band| max_rows = @max(max_rows, band.removed, band.added);
     // Each band lies within at least one validated image, so its area fits the pixel cap.
     const scratch = try buffers.prepare(allocator, width * max_rows);
-    const mask = scratch.cells;
+    const mask_cells = scratch.cells;
     const seeds = scratch.seeds;
 
     for (changes) |band| {
@@ -218,10 +218,10 @@ fn compareSpan(allocator: Allocator, collector: *Collector, scope: columns.Scope
             const raster_rows = paired + top + bottom;
             const a: Raster = .{ .image = before, .left = left, .top = band.before - top, .width = width, .height = raster_rows };
             const b: Raster = .{ .image = after, .left = left, .top = band.after - top, .width = width, .height = raster_rows };
-            if (yiq.mask(a, b, top, paired, mask)) {
-                const changed = mask[0 .. width * paired];
+            if (yiq.writeMask(a, b, top, paired, mask_cells)) {
+                const changed = mask_cells[0 .. width * paired];
                 if (moved) yiq.clearMovedCoverage(a, b, top, changed);
-                const cells: change_mask.Mask = .{ .cells = changed, .width = width };
+                const cells: mask.Mask = .{ .cells = changed, .width = width };
                 grouped = regions.group(collector, cells, seeds, .{ .left = left, .rows = .{ .paired = .{ .before = band.before, .after = band.after } } }) == .kept;
             }
             if (band.mode == .replacement) compareReplacement(collector, scope, band, if (grouped) .single_row else .unreported);
@@ -349,7 +349,7 @@ test "mask growth avoids having both sizes live on a remapping allocator" {
         try std.testing.expectEqual(large_area, large.cells.len);
         try std.testing.expectEqual(@as(usize, 0), counting.freed_bytes);
         // No frees occurred, so total allocated bytes is the peak live count.
-        const peak = large_area * (@sizeOf(u32) + @sizeOf(change_mask.Cell));
+        const peak = large_area * (@sizeOf(u32) + @sizeOf(mask.Cell));
         try std.testing.expectEqual(peak, counting.allocated_bytes);
     }
     try std.testing.expectEqual(counting.allocated_bytes, counting.freed_bytes);
@@ -368,14 +368,14 @@ test "mask growth releases the old mask if remapping and allocation fail" {
     _ = try buffers.prepare(allocator, small_area);
     try std.testing.expectError(error.OutOfMemory, buffers.prepare(allocator, large_area));
     try std.testing.expectEqual(@as(usize, 0), buffers.mask.len);
-    try std.testing.expectEqual(small_area * @sizeOf(change_mask.Cell), counting.freed_bytes);
+    try std.testing.expectEqual(small_area * @sizeOf(mask.Cell), counting.freed_bytes);
 }
 
 test "a taller button excludes unchanged card borders on unpaired rows" {
     const allocator = std.testing.allocator;
     const width = 360;
     const height = 280;
-    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
+    const canvas = @import("uidiff_test_canvas").Painters(value.Image);
     const before = try canvas.Canvas.init(width, height);
     defer before.deinit();
     const after = try canvas.Canvas.init(width, height);

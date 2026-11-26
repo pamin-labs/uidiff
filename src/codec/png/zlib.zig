@@ -2,13 +2,13 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const values = @import("../../value.zig");
+const value = @import("../../value.zig");
 const memory = @import("codec_memory");
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
 const zlib = @import("zlib_c");
 const format = @import("png_format");
-const Image = values.Image;
+const Image = value.Image;
 
 /// The uncompressed history carried into the next raw deflate strip.
 pub const history_bytes = std.compress.flate.history_len;

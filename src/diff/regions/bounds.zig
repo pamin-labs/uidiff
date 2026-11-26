@@ -2,8 +2,8 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const values = @import("../../value.zig");
-const Box = values.Box;
+const value = @import("../../value.zig");
+const Box = value.Box;
 
 /// Selects the horizontal or vertical coordinate order.
 pub const RailAxis = enum { horizontal, vertical };

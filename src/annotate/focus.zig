@@ -1,7 +1,7 @@
 //! Paired focus crops and their layout.
 const std = @import("std");
 const copy = @import("copy.zig");
-const values = @import("../value.zig");
+const value = @import("../value.zig");
 const geometry = @import("geometry.zig");
 const text = @import("text.zig");
 const crops = @import("crops.zig");
@@ -14,8 +14,8 @@ const mapMark = geometry.mapMark;
 const Text = text.Text;
 const Crop = crops.Crop;
 const Zoom = crops.Zoom;
-const Region = values.Region;
-const Size = values.Size;
+const Region = value.Region;
+const Size = value.Size;
 
 /// A grouped pair of source windows and their planned sheet crops.
 pub const Focus = struct {
@@ -113,7 +113,7 @@ pub fn layoutFocus(details: []Detail, focuses: []Focus, sizes: [2]Size, start: u
         var zoom: Zoom = .{ .numerator = 1 };
         for (focus.windows) |window| {
             const from = window orelse continue;
-            zoom = zoom.fit(from, .{ .width = focus_slot_width, .height = values.max_extent });
+            zoom = zoom.fit(from, .{ .width = focus_slot_width, .height = value.max_extent });
         }
         for (focus.windows, &focus.crops, &focus.captions, [2][]const u8{ copy.before, copy.after }, 0..) |window, *patch, *caption, name, side| {
             const from = window orelse {
@@ -130,11 +130,11 @@ pub fn layoutFocus(details: []Detail, focuses: []Focus, sizes: [2]Size, start: u
         }
         focus.height = focus_caption_height + height;
         top += focus.height + detail_gap;
-        if (top > values.max_extent) return error.SheetTooLarge;
+        if (top > value.max_extent) return error.SheetTooLarge;
     }
     for (details) |*detail| {
         const patches = focuses[detail.focus].crops;
-        for (patches, sizes, &detail.focus_marks, [2]values.Side{ .before, .after }) |maybe_patch, size, *mark, side| {
+        for (patches, sizes, &detail.focus_marks, [2]value.Side{ .before, .after }) |maybe_patch, size, *mark, side| {
             const patch = maybe_patch orelse continue;
             const source = rectAtSize(size, detail.region.boxOn(side)) orelse continue;
             mark.* = mapMark(source, patch.from, patch.to);

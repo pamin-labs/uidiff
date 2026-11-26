@@ -3,10 +3,10 @@ const std = @import("std");
 const c = @import("jpeg_c");
 const memory = @import("codec_memory");
 const types = @import("types.zig");
-const values = @import("../value.zig");
+const value = @import("../value.zig");
 const Allocator = std.mem.Allocator;
-const Pixel = values.Pixel;
-const Size = values.Size;
+const Pixel = value.Pixel;
+const Size = value.Size;
 const Header = types.Header;
 
 /// Malformed input or a refusal from the codec memory budget.
@@ -185,10 +185,10 @@ fn convertCmyk(row: []Pixel, inverted: bool) void {
 }
 
 fn checkGray(allocator: Allocator, encoded: []const u8) !void {
-    const header = try probe(allocator, encoded, values.max_decode_bytes);
-    const pixels = try decode(allocator, encoded, header, values.max_decode_bytes);
+    const header = try probe(allocator, encoded, value.max_decode_bytes);
+    const pixels = try decode(allocator, encoded, header, value.max_decode_bytes);
     defer release(allocator, pixels);
-    try std.testing.expectEqualSlices(values.Pixel, &.{.{ 128, 128, 128, 255 }}, pixels);
+    try std.testing.expectEqualSlices(value.Pixel, &.{.{ 128, 128, 128, 255 }}, pixels);
 }
 
 test "8-bit grayscale decodes to opaque RGBA and releases partial allocations" {
@@ -219,8 +219,8 @@ test "JPEG warnings reject truncated sequential and progressive streams" {
     const progressive = ProgressiveFixture.generate(&jpeg.frame(.progressive), &jpeg.eoi, 2);
     for ([_][]const u8{ &jpeg.gray, &progressive }) |complete| {
         const bytes = complete[0 .. complete.len - jpeg.eoi.len];
-        const header = try probe(allocator, bytes, values.max_decode_bytes);
-        try std.testing.expectError(error.InvalidImage, decode(allocator, bytes, header, values.max_decode_bytes));
+        const header = try probe(allocator, bytes, value.max_decode_bytes);
+        try std.testing.expectError(error.InvalidImage, decode(allocator, bytes, header, value.max_decode_bytes));
         try checkGray(allocator, &jpeg.gray);
     }
 }
@@ -229,13 +229,13 @@ test "JPEG progressive scan limit accepts the boundary and rejects the next scan
     const jpeg = @import("../testing/jpeg.zig");
     const allocator = std.testing.allocator;
     const at_limit = ProgressiveFixture.generate(&jpeg.frame(.progressive), &jpeg.eoi, max_scans);
-    const header = try probe(allocator, &at_limit, values.max_decode_bytes);
-    const pixels = try decode(allocator, &at_limit, header, values.max_decode_bytes);
+    const header = try probe(allocator, &at_limit, value.max_decode_bytes);
+    const pixels = try decode(allocator, &at_limit, header, value.max_decode_bytes);
     defer release(allocator, pixels);
     try std.testing.expectEqual(@as(usize, 1), pixels.len);
 
     const past_limit = ProgressiveFixture.generate(&jpeg.frame(.progressive), &jpeg.eoi, max_scans + 1);
-    try std.testing.expectError(error.InvalidImage, decode(allocator, &past_limit, header, values.max_decode_bytes));
+    try std.testing.expectError(error.InvalidImage, decode(allocator, &past_limit, header, value.max_decode_bytes));
 }
 
 test "JPEG rejects header mismatch before allocating output" {
@@ -243,7 +243,7 @@ test "JPEG rejects header mismatch before allocating output" {
     var scratch: [64 * 1024]u8 = undefined;
     var fixed: std.heap.FixedBufferAllocator = .init(&scratch);
     const header: Header = .{ .size = .{ .width = 512, .height = 512 } };
-    try std.testing.expectError(error.InvalidImage, decode(fixed.allocator(), &jpeg.gray, header, values.max_decode_bytes));
+    try std.testing.expectError(error.InvalidImage, decode(fixed.allocator(), &jpeg.gray, header, value.max_decode_bytes));
 }
 
 test {

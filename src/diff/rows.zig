@@ -2,22 +2,22 @@
 
 const std = @import("std");
 
-const band_model = @import("rows/band.zig");
+const band = @import("rows/band.zig");
 const search = @import("rows/search.zig");
-const foreground = @import("rows/anchors.zig");
+const anchors = @import("rows/anchors.zig");
 const assembly = @import("rows/assembly.zig");
 const chrome = @import("rows/chrome.zig");
 const insertion = @import("rows/insertion.zig");
 const recolour = @import("rows/recolour.zig");
 const refinement = @import("rows/refinement.zig");
-const values = @import("../value.zig");
-const Image = values.Image;
+const value = @import("../value.zig");
+const Image = value.Image;
 const Allocator = std.mem.Allocator;
 
 /// A pair of row ranges, with any surplus treated as one-sided.
-pub const Band = band_model.Band;
+pub const Band = band.Band;
 /// Device-pixel limits for identifying small scrolls and replacements.
-pub const Limits = band_model.Limits;
+pub const Limits = band.Limits;
 /// The most row insertions plus deletions the alignment searches for. Myers'
 /// search costs O((rows + max_edits) * max_edits) time, so this bounds a tall
 /// unrelated pair; past it, rows are compared by position.
@@ -27,12 +27,12 @@ pub const compactInsertion = insertion.compactInsertion;
 /// Places a one-sided element at the best boundary among equivalent row matches.
 pub const refineElements = refinement.refineElements;
 /// Hashes a column span in each image row.
-pub const keys = band_model.keys;
+pub const keys = band.keys;
 
 /// Reuses the frontier, row matches, and frequency map across column alignments.
 pub const Workspace = struct {
-    raw: std.ArrayList(band_model.Match) = .empty,
-    content: std.ArrayList(band_model.Match) = .empty,
+    raw: std.ArrayList(band.Match) = .empty,
+    content: std.ArrayList(band.Match) = .empty,
     frontier: std.ArrayList(search.Diagonal) = .empty,
     frequencies: std.AutoHashMapUnmanaged(u64, usize) = .empty,
 
@@ -47,7 +47,7 @@ pub const Workspace = struct {
 };
 
 /// Aligns rows into caller-owned bands, or returns null for positional comparison.
-pub fn matchBands(allocator: Allocator, before: band_model.Keys, after: band_model.Keys, limits: band_model.Limits, bands: []band_model.Band, filtered: []u64, scratch: *Workspace) Allocator.Error!?[]band_model.Band {
+pub fn matchBands(allocator: Allocator, before: band.Keys, after: band.Keys, limits: band.Limits, bands: []band.Band, filtered: []u64, scratch: *Workspace) Allocator.Error!?[]band.Band {
     const limit = limits.scroll;
     const main = search.Problem.init(before, after);
     if (@min(main.a.len, main.b.len) == 0) return null;
@@ -60,9 +60,9 @@ pub fn matchBands(allocator: Allocator, before: band_model.Keys, after: band_mod
         var reversed = limits;
         reversed.images = .{ limits.images.?[1], limits.images.?[0] };
         if (insertion.panelInsertion(after, before, main.prefix, reversed, bands)) |aligned| {
-            for (aligned) |*band| {
-                std.mem.swap(usize, &band.before, &band.after);
-                std.mem.swap(usize, &band.removed, &band.added);
+            for (aligned) |*row_band| {
+                std.mem.swap(usize, &row_band.before, &row_band.after);
+                std.mem.swap(usize, &row_band.removed, &row_band.added);
             }
             return aligned;
         }
@@ -83,7 +83,7 @@ pub fn matchBands(allocator: Allocator, before: band_model.Keys, after: band_mod
     const counts = &scratch.frequencies;
     counts.clearRetainingCapacity();
     try counts.ensureTotalCapacity(allocator, @intCast(@max(before.len, after.len)));
-    const old_background = foreground.background(counts, before);
+    const old_background = anchors.background(counts, before);
     var shared: usize = 0;
     for (after) |row| {
         const count = counts.getPtr(row) orelse continue;
@@ -93,7 +93,7 @@ pub fn matchBands(allocator: Allocator, before: band_model.Keys, after: band_mod
     }
     if (before.len + after.len - 2 * shared > budget) return null;
     counts.clearRetainingCapacity();
-    const new_background = foreground.background(counts, after);
+    const new_background = anchors.background(counts, after);
 
     const frontier_budget: usize = @min(search.max_edits, before.len + after.len);
     try scratch.frontier.ensureTotalCapacityPrecise(allocator, 2 * frontier_budget + 3);
@@ -106,7 +106,7 @@ pub fn matchBands(allocator: Allocator, before: band_model.Keys, after: band_mod
         // A local overwrite still has same-position ink below it. A change
         // reaching the end of the column can be an insertion and clipping.
         for (before[edit.end..], after[edit.end..], edit.end..) |old, new, y| {
-            if (old == new and foreground.isContent(old, old_background, new_background)) {
+            if (old == new and anchors.isContent(old, old_background, new_background)) {
                 if (limits.images) |images| {
                     if (y >= before.len - before.len / chrome.footer_zone_divisor and recolour.flatPaint(images[0], y, y + 1, 0, images[0].width)) break;
                 }
@@ -124,9 +124,9 @@ pub fn matchBands(allocator: Allocator, before: band_model.Keys, after: band_mod
     const interior = equal.len != 0 and (equal[equal.len - 1].before != equal.len - 1 or equal[equal.len - 1].after != equal.len - 1);
     var count: usize = 0;
     for (equal) |m| {
-        if (!foreground.isContent(before[m.before], old_background, new_background)) continue;
+        if (!anchors.isContent(before[m.before], old_background, new_background)) continue;
         content_rows += 1;
-        foreground.extend(content, &count, m);
+        anchors.extend(content, &count, m);
     }
 
     var first_offset = if (count > 0) content[0].offset() else 0;
@@ -138,7 +138,7 @@ pub fn matchBands(allocator: Allocator, before: band_model.Keys, after: band_mod
         var explained: usize = 0;
         var ambiguous = false;
         for (before[old_start..][0..rows], after[new_start..][0..rows]) |old, new| {
-            if (old != new or !foreground.isContent(old, old_background, new_background)) continue;
+            if (old != new or !anchors.isContent(old, old_background, new_background)) continue;
             explained += 1;
             if (!ambiguous) ambiguous = (counts.get(old) orelse 0) > 1;
         }
@@ -147,16 +147,16 @@ pub fn matchBands(allocator: Allocator, before: band_model.Keys, after: band_mod
         // background at the expense of content. Check the content-only path
         // before using the shortcut to compare everything at that offset.
         const alternative = if (ambiguous)
-            foreground.alignContent(before, after, old_background, new_background, @max(content_rows, explained), frontier, raw, filtered)
+            anchors.alignContent(before, after, old_background, new_background, @max(content_rows, explained), frontier, raw, filtered)
         else
             null;
         if (alternative) |matches| {
             count = 0;
-            for (matches) |m| foreground.extend(content, &count, m);
+            for (matches) |m| anchors.extend(content, &count, m);
             first_offset = content[0].offset();
         } else if (count == 1 and explained >= content_rows) {
             var len: usize = 0;
-            band_model.append(bands, &len, .{ .before = old_start, .after = new_start, .removed = rows, .added = rows });
+            band.append(bands, &len, .{ .before = old_start, .after = new_start, .removed = rows, .added = rows });
             if (first_offset < 0) assembly.reveal(bands, &len, after, before.len, rows, new_background);
             return bands[0..len];
         }
@@ -165,7 +165,7 @@ pub fn matchBands(allocator: Allocator, before: band_model.Keys, after: band_mod
         if (m.offset() != 0) break;
     } else if (viewport or !interior or equal.len != overlap) return null;
 
-    if (viewport and !foreground.hasDisplacedContent(content[0..count], before, after)) return null;
+    if (viewport and !anchors.hasDisplacedContent(content[0..count], before, after)) return null;
 
     var footer = count;
     if (viewport and count >= 2) {
@@ -178,7 +178,7 @@ pub fn matchBands(allocator: Allocator, before: band_model.Keys, after: band_mod
         }
 
         const after_end = if (footer == count) after.len else content[footer].after;
-        const kept = foreground.visibleAnchors(content[0..footer], before, after, after_end, limit);
+        const kept = anchors.visibleAnchors(content[0..footer], before, after, after_end, limit);
         if (kept < footer) {
             if (footer < count) {
                 content[kept] = content[footer];
@@ -201,7 +201,7 @@ test "a gap can replace every row without losing surrounding anchors" {
     const before = [_]u64{ 1, 2, 10, 3, 4, 5, 6, 7, 8 };
     const replacements = [_][]const u64{ &.{ 20, 21, 22, 11 }, &.{ 20, 21, 22 }, &.{11} };
     var after: [before.len + 3]u64 = undefined;
-    var bands: [2 * after.len + 1]band_model.Band = undefined;
+    var bands: [2 * after.len + 1]band.Band = undefined;
     var filtered: [2 * after.len]u64 = undefined;
     for (replacements) |new_rows| {
         const size = before.len + new_rows.len - 1;
@@ -216,12 +216,12 @@ test "a gap can replace every row without losing surrounding anchors" {
             continue;
         }
         const actual = result orelse return error.ExpectedAlignment;
-        const expected = [_]band_model.Band{
+        const expected = [_]band.Band{
             .{ .before = 0, .after = 0, .removed = 2, .added = 2 },
             .{ .before = 2, .after = 2, .removed = 1, .added = new_rows.len },
             .{ .before = 3, .after = 2 + new_rows.len, .removed = 6, .added = 6 },
         };
-        try std.testing.expectEqualDeep(@as([]const band_model.Band, &expected), @as([]const band_model.Band, actual));
+        try std.testing.expectEqualDeep(@as([]const band.Band, &expected), @as([]const band.Band, actual));
     }
 }
 
@@ -236,13 +236,13 @@ test "a two-row alias does not hide a thirty-row scroll through periodic content
     for ([_]usize{ 46, 67, 89, 98, 110 }, 2..) |y, marker| page[y] = marker;
     const before = page[0..height];
     const after = page[scroll..];
-    var storage: [2 * height + 1]band_model.Band = undefined;
+    var storage: [2 * height + 1]band.Band = undefined;
     var filtered: [2 * height]u64 = undefined;
     var scratch: Workspace = .{};
     defer scratch.deinit(std.testing.allocator);
     const bands = (try matchBands(std.testing.allocator, before, after, .{ .scroll = 2, .replacement = 48 }, &storage, &filtered, &scratch)) orelse return error.NoAlignment;
-    for (bands) |band| {
-        if (band.before == 46 and band.after == 16 and @min(band.removed, band.added) > 0) break;
+    for (bands) |row_band| {
+        if (row_band.before == 46 and row_band.after == 16 and @min(row_band.removed, row_band.added) > 0) break;
     } else return error.AnchorMisaligned;
     const revealed = bands[bands.len - 1];
     try std.testing.expectEqual(@as(usize, 0), revealed.removed);
@@ -251,36 +251,36 @@ test "a two-row alias does not hide a thirty-row scroll through periodic content
 }
 
 test "inserting and deleting above a divider preserves the deletion" {
-    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
+    const canvas = @import("uidiff_test_canvas").Painters(value.Image);
     const width = 96;
     const height = 120;
     const first = 24;
     const pitch = 16;
     const edge = 72;
     const white = canvas.white;
-    const rule: values.Pixel = .{ 130, 134, 140, 255 };
-    var old: [height][width]values.Pixel = @splat(@splat(white));
+    const rule: value.Pixel = .{ 130, 134, 140, 255 };
+    var old: [height][width]value.Pixel = @splat(@splat(white));
     var new = old;
     for (old[first..edge], first..) |*row, y| {
         @memset(row[24..72], .{ @intCast(y), 90, 40, 255 });
     }
     @memcpy(new[first + pitch .. edge], old[first .. edge - pitch]);
     for (new[first .. first + pitch]) |*row| @memset(row[24..72], .{ 224, 36, 80, 255 });
-    for ([_]*[height][width]values.Pixel{ &old, &new }) |pixels| {
+    for ([_]*[height][width]value.Pixel{ &old, &new }) |pixels| {
         @memset(pixels[edge][20..76], rule);
         for (edge - pitch / 2..edge - pitch / 2 + 2) |y| {
             pixels[y][12] = rule;
             pixels[y][83] = rule;
         }
     }
-    const a: values.Image = .{ .width = width, .height = height, .pixels = std.mem.bytesAsSlice(values.Pixel, std.mem.asBytes(&old)) };
-    const b: values.Image = .{ .width = width, .height = height, .pixels = std.mem.bytesAsSlice(values.Pixel, std.mem.asBytes(&new)) };
-    const limits: band_model.Limits = .{ .scroll = 2, .replacement = 24, .images = .{ a, b }, .left = 24, .width = 48 };
+    const a: value.Image = .{ .width = width, .height = height, .pixels = std.mem.bytesAsSlice(value.Pixel, std.mem.asBytes(&old)) };
+    const b: value.Image = .{ .width = width, .height = height, .pixels = std.mem.bytesAsSlice(value.Pixel, std.mem.asBytes(&new)) };
+    const limits: band.Limits = .{ .scroll = 2, .replacement = 24, .images = .{ a, b }, .left = 24, .width = 48 };
     var before: [height]u64 = undefined;
     var after: [height]u64 = undefined;
     keys(a, limits.left, limits.width, &before);
     keys(b, limits.left, limits.width, &after);
-    var bands: [2 * height + 1]band_model.Band = undefined;
+    var bands: [2 * height + 1]band.Band = undefined;
     try std.testing.expect(insertion.panelInsertion(&before, &after, first, limits, &bands) == null);
     var workspace: Workspace = .{};
     defer workspace.deinit(std.testing.allocator);
@@ -288,9 +288,9 @@ test "inserting and deleting above a divider preserves the deletion" {
     const aligned = (try matchBands(std.testing.allocator, &before, &after, limits, &bands, &filtered, &workspace)) orelse return error.TestUnexpectedResult;
     var removed: usize = 0;
     var added: usize = 0;
-    for (aligned) |band| {
-        removed += band.removed -| band.added;
-        added += band.added -| band.removed;
+    for (aligned) |row_band| {
+        removed += row_band.removed -| row_band.added;
+        added += row_band.added -| row_band.removed;
     }
     try std.testing.expectEqual(@as(usize, pitch), removed);
     try std.testing.expectEqual(@as(usize, pitch), added);

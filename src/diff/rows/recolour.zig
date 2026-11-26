@@ -1,11 +1,11 @@
 //! Recognizes positional paint edits among repeated rows.
 
 const std = @import("std");
-const band_model = @import("band.zig");
-const values = @import("../../value.zig");
-const pixel_ops = @import("../pixel.zig");
+const band = @import("band.zig");
+const value = @import("../../value.zig");
+const pixel = @import("../pixel.zig");
 const columns = @import("../columns.zig");
-const Image = values.Image;
+const Image = value.Image;
 
 // Narrow paint can extend beyond the length of a normal row replacement.
 const narrow_paint_rows = 128;
@@ -31,7 +31,7 @@ const repeated_badge_width_divisor = 4;
 const repeated_badge_height_divisor = 2;
 
 /// Keeps separate positional paint edits between stationary rows.
-pub fn positionalPaintBands(before: band_model.Keys, after: band_model.Keys, first: usize, limits: band_model.Limits, bands: []band_model.Band) ?[]band_model.Band {
+pub fn positionalPaintBands(before: band.Keys, after: band.Keys, first: usize, limits: band.Limits, bands: []band.Band) ?[]band.Band {
     const images = limits.images orelse return null;
     const max_rows = @max(paint_cluster_rows, limits.replacement);
     const bounds: columns.Span = .{ .left = limits.left, .width = limits.width };
@@ -58,17 +58,17 @@ pub fn positionalPaintBands(before: band_model.Keys, after: band_model.Keys, fir
             (span.width > @min(images[0].width, images[1].width) / repeated_badge_width_divisor or bottom - start > limits.replacement / repeated_badge_height_divisor or
                 !stationaryContour(images, span, start, bottom))) return null;
         interrupted_ink = interrupted_ink or !(old_flat and new_flat);
-        band_model.append(bands, &len, .{ .before = start, .after = start, .removed = bottom - start, .added = bottom - start });
+        band.append(bands, &len, .{ .before = start, .after = start, .removed = bottom - start, .added = bottom - start });
         start = end + (std.mem.indexOfDiff(u64, before[end..], after[end..]) orelse break);
     }
     return if (len > 1 and interrupted_ink) bands[0..len] else null;
 }
 
 /// Estimates the edit cost of a small positional replacement.
-pub fn localEditCost(before: band_model.Keys, after: band_model.Keys, first: usize, limits: band_model.Limits) ?struct { cost: usize, end: usize, limit: usize } {
+pub fn localEditCost(before: band.Keys, after: band.Keys, first: usize, limits: band.Limits) ?struct { cost: usize, end: usize, limit: usize } {
     if (first == 0) return null;
     const limit = if (limits.narrow_edit) @max(narrow_paint_rows, limits.replacement) else limits.replacement;
-    const end = band_model.changedEnd(before, after, first, before.len);
+    const end = band.changedEnd(before, after, first, before.len);
     if (end == before.len or end - first > limit) return null;
     var replaced: usize = 0;
     for (before[first..end], after[first..end]) |old, new| replaced += @intFromBool(old != new);
@@ -86,7 +86,7 @@ pub fn localEditCost(before: band_model.Keys, after: band_model.Keys, first: usi
 /// Reports whether the strip in every row is uniformly painted.
 pub fn flatPaint(image: Image, first: usize, end: usize, left: usize, width: usize) bool {
     const first_row = image.rowBytes(first, left, width);
-    const pixel_bytes = @sizeOf(values.Pixel);
+    const pixel_bytes = @sizeOf(value.Pixel);
     if (!std.mem.eql(u8, first_row[pixel_bytes..], first_row[0 .. first_row.len - pixel_bytes])) return false;
     for (first + 1..end) |y| {
         if (!std.mem.eql(u8, image.rowBytes(y, left, width), first_row)) return false;
@@ -101,17 +101,17 @@ fn stationaryContour(images: [2]Image, span: columns.Span, top: usize, bottom: u
         const old = images[0].row(y);
         const new = images[1].row(y);
         const backdrop = old[span.left - 1];
-        if (!pixel_ops.same(backdrop, old[right]) or !pixel_ops.same(backdrop, new[span.left - 1]) or
-            !pixel_ops.same(backdrop, new[right])) return false;
+        if (!pixel.same(backdrop, old[right]) or !pixel.same(backdrop, new[span.left - 1]) or
+            !pixel.same(backdrop, new[right])) return false;
         for (old[span.left..right], new[span.left..right]) |before, after| {
-            if (pixel_ops.same(before, backdrop) != pixel_ops.same(after, backdrop)) return false;
+            if (pixel.same(before, backdrop) != pixel.same(after, backdrop)) return false;
         }
     }
     return true;
 }
 
 fn flatChanges(images: [2]Image, span: columns.Span, top: usize, bottom: usize) bool {
-    var colors: ?[2]values.Pixel = null;
+    var colors: ?[2]value.Pixel = null;
     var old_flat = true;
     var new_flat = true;
     for (top..bottom) |y| {

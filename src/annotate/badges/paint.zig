@@ -2,20 +2,20 @@
 
 const std = @import("std");
 const routing = @import("routing.zig");
-const values = @import("../../value.zig");
+const value = @import("../../value.zig");
 const geometry = @import("../geometry.zig");
 const canvas = @import("../canvas.zig");
-const focus_layout = @import("../focus.zig");
+const focus = @import("../focus.zig");
 const palette = @import("../palette.zig");
 const Rect = geometry.Rect;
 const PaneLayout = geometry.PaneLayout;
 const Line = canvas.Line;
 const roundSpan = canvas.roundSpan;
-const Detail = focus_layout.Detail;
-const Badge = focus_layout.Badge;
+const Detail = focus.Detail;
+const Badge = focus.Badge;
 const white = palette.white;
 const tint = palette.tint;
-const Pixel = values.Pixel;
+const Pixel = value.Pixel;
 
 /// Width of the badge border at the base sheet scale.
 pub const badge_ring = 3;
@@ -36,7 +36,7 @@ pub noinline fn drawMark(line: Line, box: ?Rect, route: Badge, detail: Detail, p
 }
 
 /// Paints the visible row of a numbered badge.
-pub noinline fn badge(line: Line, bounds: Rect, kind: values.Kind, number: []const u8, pane_layout: PaneLayout) void {
+pub noinline fn badge(line: Line, bounds: Rect, kind: value.Kind, number: []const u8, pane_layout: PaneLayout) void {
     if (!bounds.containsRow(line.y)) return;
     const outer = bounds.w / 2;
     const ring = @min(pane_layout.px(badge_ring), outer / 3);

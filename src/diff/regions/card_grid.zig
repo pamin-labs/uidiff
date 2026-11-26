@@ -1,33 +1,33 @@
 //! Pairs cards that reflow horizontally in a grid.
 
 const std = @import("std");
-const pending = @import("candidate.zig");
+const candidate = @import("candidate.zig");
 const bounds = @import("bounds.zig");
-const values = @import("../../value.zig");
+const value = @import("../../value.zig");
 const pixel = @import("../pixel.zig");
-const Box = values.Box;
-const Image = values.Image;
+const Box = value.Box;
+const Image = value.Image;
 
 const min_grid_slots = 3;
 
 const max_grid_slots = 4;
 
-const min_grid_card_extent = values.CssPx.init(32);
+const min_grid_card_extent = value.CssPx.init(32);
 
-const max_grid_gutter = values.CssPx.init(48);
+const max_grid_gutter = value.CssPx.init(48);
 
 /// Pairs horizontally reflowed cards and leaves the unmatched card one-sided.
-pub fn pairCardGrid(boxes: []pending.Candidate, before: Image, after: Image, scale: values.Scale) void {
+pub fn pairCardGrid(boxes: []candidate.Candidate, before: Image, after: Image, scale: value.Scale) void {
     if (boxes.len < min_grid_slots or boxes.len > max_grid_slots) return;
-    var slots: [pending.max_regions]Box = undefined;
-    const row = pending.stationaryBoxes(boxes, &slots) orelse return;
+    var slots: [candidate.max_regions]Box = undefined;
+    const row = candidate.stationaryBoxes(boxes, &slots) orelse return;
     std.sort.insertion(Box, row, {}, boxLeftOf);
     const first = row[0];
     const pitch = row[1].x - first.x;
     const gutter = pitch - first.width;
     const min_extent = scale.devicePixels(min_grid_card_extent);
     if (gutter <= 0 or gutter > scale.devicePixels(max_grid_gutter) or first.width < min_extent) return;
-    const slack = scale.devicePixels(pending.padding);
+    const slack = scale.devicePixels(candidate.padding);
     var top = first.y;
     var bottom = first.bottom();
     for (row, 0..) |slot, index| {
@@ -41,8 +41,8 @@ pub fn pairCardGrid(boxes: []pending.Candidate, before: Image, after: Image, sca
     // Each translated slot has an exact counterpart. The only unpaired
     // slot is the card at the start of the row, in either direction.
     boxes[0].region = if (old_to_left) .{ .before = first } else .{ .after = first };
-    for (boxes[1..], row[1..], row[0 .. row.len - 1]) |*candidate, from, to| {
-        candidate.region = if (old_to_left) .{ .before = from, .after = to } else .{ .before = to, .after = from };
+    for (boxes[1..], row[1..], row[0 .. row.len - 1]) |*entry, from, to| {
+        entry.region = if (old_to_left) .{ .before = from, .after = to } else .{ .before = to, .after = from };
     }
 }
 

@@ -1,15 +1,15 @@
 //! Compares validated images and emits numbered regions of change.
 const std = @import("std");
-const values = @import("value.zig");
+const value = @import("value.zig");
 const columns = @import("diff/columns.zig");
 const rows = @import("diff/rows.zig");
 const regions = @import("diff/regions.zig");
 const span = @import("diff/span.zig");
 const Allocator = std.mem.Allocator;
-const Box = values.Box;
+const Box = value.Box;
 const Collector = regions.Collector;
-const Image = values.Image;
-const Scale = values.Scale;
+const Image = value.Image;
+const Scale = value.Scale;
 
 /// The most regions a comparison reports; nearby ones merge to fit.
 pub const max_regions = regions.max_regions;
@@ -33,8 +33,8 @@ pub const Options = struct {
 
 /// Owns the returned regions and moves.
 pub const Comparison = struct {
-    regions: []const values.Region,
-    moves: []const values.Move = &.{},
+    regions: []const value.Region,
+    moves: []const value.Move = &.{},
     /// The larger width of the two inputs, in device pixels.
     width: usize,
     /// The larger height of the two inputs, in device pixels.
@@ -47,13 +47,13 @@ pub const Comparison = struct {
     }
 
     /// Returns the combined canvas dimensions.
-    pub fn canvas(self: Comparison) values.Size {
+    pub fn canvas(self: Comparison) value.Size {
         return .{ .width = self.width, .height = self.height };
     }
 };
 
 /// Input and scratch-space failures reported by the comparison domain.
-pub const CompareError = Allocator.Error || ScaleError || values.Image.Invalid;
+pub const CompareError = Allocator.Error || ScaleError || value.Image.Invalid;
 
 /// Space added around each reported box, in CSS pixels.
 pub const region_padding = regions.padding.count();
@@ -81,7 +81,7 @@ pub fn compareChecked(allocator: Allocator, before: Image, after: Image, options
     const storage = try allocator.alloc(regions.Candidate, capacity);
     defer allocator.free(storage);
     var collector = Collector.init(storage, before.size(), after.size(), gap_px, max_gap_px);
-    var moves: std.ArrayList(values.Move) = .empty;
+    var moves: std.ArrayList(value.Move) = .empty;
     defer moves.deinit(allocator);
     if (changed.width != 0) {
         const scope: columns.Scope = .{ .before = before, .after = after, .span = changed, .bounds = .{ .left = 0, .width = overlap_width } };
@@ -110,11 +110,11 @@ test "comparison releases each allocation on failure" {
             const result = try compare(allocator, before, after, .{});
             defer result.deinit(allocator);
             try std.testing.expectEqual(@as(usize, 1), result.regions.len);
-            try std.testing.expectEqual(values.Kind.inserted, result.regions[0].kind);
+            try std.testing.expectEqual(value.Kind.inserted, result.regions[0].kind);
         }
     };
-    const old = [_]values.Pixel{ .{ 0, 0, 0, 255 }, .{ 10, 0, 0, 255 }, .{ 20, 0, 0, 255 }, .{ 30, 0, 0, 255 } };
-    const new = old[0..2].* ++ [_]values.Pixel{.{ 64, 0, 0, 255 }} ++ old[2..].*;
+    const old = [_]value.Pixel{ .{ 0, 0, 0, 255 }, .{ 10, 0, 0, 255 }, .{ 20, 0, 0, 255 }, .{ 30, 0, 0, 255 } };
+    const new = old[0..2].* ++ [_]value.Pixel{.{ 64, 0, 0, 255 }} ++ old[2..].*;
     const before = Image{ .width = 1, .height = old.len, .pixels = &old };
     const after = Image{ .width = 1, .height = new.len, .pixels = &new };
     try std.testing.checkAllAllocationFailures(std.testing.allocator, fixture.comparePair, .{ before, after });

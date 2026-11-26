@@ -1,9 +1,9 @@
 //! Finds the shared column span affected by a comparison.
 const std = @import("std");
-const values = @import("../value.zig");
+const value = @import("../value.zig");
 const pixel = @import("pixel.zig");
-const Image = values.Image;
-const Pixel = values.Pixel;
+const Image = value.Image;
+const Pixel = value.Pixel;
 const lanes = pixel.lanes;
 
 /// A run of columns in device pixels.

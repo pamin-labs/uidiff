@@ -1,8 +1,8 @@
 //! PNG format registration and encoding facade.
 
 const std = @import("std");
-const values = @import("../value.zig");
-const Pixel = values.Pixel;
+const value = @import("../value.zig");
+const Pixel = value.Pixel;
 const Io = std.Io;
 const zlib = @import("png/zlib.zig");
 const encoder = @import("png/encoder.zig");
@@ -48,8 +48,8 @@ test "streaming PNG matches procedural RGBA across dictionary wraps" {
     var output: Io.Writer.Allocating = .init(allocator);
     defer output.deinit();
     try write(allocator, .{ .width = width, .height = height, .pixels = pixels }, &output.writer);
-    const header = try probe(allocator, output.written(), values.max_decode_bytes);
-    const streamed = (try decoder.loadStreaming(allocator, output.written(), header, values.max_decode_bytes)) orelse return error.TestUnexpectedResult;
+    const header = try probe(allocator, output.written(), value.max_decode_bytes);
+    const streamed = (try decoder.loadStreaming(allocator, output.written(), header, value.max_decode_bytes)) orelse return error.TestUnexpectedResult;
     defer stb.release(allocator, streamed);
     try std.testing.expectEqualSlices(Pixel, pixels, streamed);
 }
@@ -65,9 +65,9 @@ test "RGB8 streaming preserves opaque partial rows" {
     var output: Io.Writer.Allocating = .init(allocator);
     defer output.deinit();
     try write(allocator, .{ .width = width, .height = height, .pixels = &pixels }, &output.writer);
-    const probed = try probe(allocator, output.written(), values.max_decode_bytes);
-    const streamed = (try decoder.loadStreaming(allocator, output.written(), probed, values.max_decode_bytes)) orelse return error.TestUnexpectedResult;
-    const legacy = try stb.loadLegacy(allocator, output.written(), probed, values.max_decode_bytes);
+    const probed = try probe(allocator, output.written(), value.max_decode_bytes);
+    const streamed = (try decoder.loadStreaming(allocator, output.written(), probed, value.max_decode_bytes)) orelse return error.TestUnexpectedResult;
+    const legacy = try stb.loadLegacy(allocator, output.written(), probed, value.max_decode_bytes);
     defer stb.release(allocator, legacy);
     defer stb.release(allocator, streamed);
     try std.testing.expectEqualSlices(Pixel, &pixels, legacy);

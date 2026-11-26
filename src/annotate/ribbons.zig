@@ -1,7 +1,7 @@
 //! Alignment ribbons between the ordinary sheet panes.
 const std = @import("std");
 const copy = @import("copy.zig");
-const values = @import("../value.zig");
+const value = @import("../value.zig");
 const geometry = @import("geometry.zig");
 const text = @import("text.zig");
 const canvas = @import("canvas.zig");
@@ -20,10 +20,10 @@ const moved_band = palette.moved_band;
 const insert_band = palette.insert_band;
 const remove_band = palette.remove_band;
 const blue = palette.blue;
-const Move = values.Move;
-const Pixel = values.Pixel;
+const Move = value.Move;
+const Pixel = value.Pixel;
 
-const PreviewMove = struct { before: values.SheetRowRange, after: values.SheetRowRange };
+const PreviewMove = struct { before: value.SheetRowRange, after: value.SheetRowRange };
 
 /// One projected move, its label, and the optional inserted or removed wedge.
 pub const Ribbon = struct { move: PreviewMove, label: Text, wedge_top: ?usize };
@@ -55,7 +55,7 @@ pub fn earlierRibbonEnd(_: void, a: Ribbon, b: Ribbon) bool {
 
 /// Finds the source row where the insert or removal meets the ribbon.
 pub fn wedgeTop(details: []const Detail, move: Move, down: bool) ?usize {
-    const kind: values.Kind = if (down) .inserted else .removed;
+    const kind: value.Kind = if (down) .inserted else .removed;
     const low = @min(move.before.y, move.after.y);
     const high = @max(move.before.y, move.after.y);
     const y0: f64 = @floatFromInt(low -| (high - low));
@@ -148,7 +148,7 @@ test {
 }
 
 test "a three-digit shift label leaves space at both gutter edges" {
-    const size = values.Size{ .width = 400, .height = 500 };
+    const size = value.Size{ .width = 400, .height = 500 };
     const pane_layout = PaneLayout.init(size, size);
     const panes = pane_layout.panes(size, size);
     const ribbons = [_]Ribbon{.{

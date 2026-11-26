@@ -1,6 +1,6 @@
 //! Records row and column moves supported by the alignment.
 const std = @import("std");
-const values = @import("../value.zig");
+const value = @import("../value.zig");
 const columns = @import("columns.zig");
 const rows = @import("rows.zig");
 const Allocator = std.mem.Allocator;
@@ -10,7 +10,7 @@ const min_column_motion_rows = 4;
 const column_motion_scroll_factor = 2;
 
 /// Keeps only column moves with enough displaced content.
-pub fn gatherColumnMoves(allocator: Allocator, moves: *std.ArrayList(values.Move), scope: Scope, bands: []const rows.Band, keys: []const u64, limit: usize) Allocator.Error!bool {
+pub fn gatherColumnMoves(allocator: Allocator, moves: *std.ArrayList(value.Move), scope: Scope, bands: []const rows.Band, keys: []const u64, limit: usize) Allocator.Error!bool {
     const first = moves.items.len;
     try gatherMoves(allocator, moves, scope, bands);
     var kept = first;
@@ -24,7 +24,7 @@ pub fn gatherColumnMoves(allocator: Allocator, moves: *std.ArrayList(values.Move
 }
 
 /// Records aligned rows and expands moves to supported card edges.
-pub fn gatherMoves(allocator: Allocator, moves: *std.ArrayList(values.Move), scope: Scope, bands: []const rows.Band) Allocator.Error!void {
+pub fn gatherMoves(allocator: Allocator, moves: *std.ArrayList(value.Move), scope: Scope, bands: []const rows.Band) Allocator.Error!void {
     const span = scope.span;
     const first = moves.items.len;
     var previous: ?usize = null;
@@ -70,7 +70,7 @@ pub fn gatherMoves(allocator: Allocator, moves: *std.ArrayList(values.Move), sco
     moves.items.len = kept;
 }
 
-fn columnMotion(scope: Scope, keys: []const u64, move: values.Move, scroll_limit_px: usize) bool {
+fn columnMotion(scope: Scope, keys: []const u64, move: value.Move, scroll_limit_px: usize) bool {
     // A matching edge that remains at its old position gives no evidence
     // that the column moved. Require several content rows at the new offset.
     const before = keys[0..scope.before.height];
@@ -88,7 +88,7 @@ fn columnMotion(scope: Scope, keys: []const u64, move: values.Move, scroll_limit
 }
 
 test "an aligned blank tail contributes no phantom move" {
-    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
+    const canvas = @import("uidiff_test_canvas").Painters(value.Image);
     const before = try canvas.Canvas.init(64, 32);
     defer before.deinit();
     const after = try canvas.Canvas.init(64, 64);
@@ -96,7 +96,7 @@ test "an aligned blank tail contributes no phantom move" {
     const span: columns.Span = .{ .left = 0, .width = 64 };
     const scope: columns.Scope = .{ .before = before.view, .after = after.view, .span = span, .bounds = span };
     const band: rows.Band = .{ .before = 26, .after = 58, .removed = 6, .added = 6 };
-    var moves: std.ArrayList(values.Move) = .empty;
+    var moves: std.ArrayList(value.Move) = .empty;
     defer moves.deinit(std.testing.allocator);
     try gatherMoves(std.testing.allocator, &moves, scope, &.{band});
     try std.testing.expectEqual(@as(usize, 0), moves.items.len);
