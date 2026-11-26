@@ -4,7 +4,6 @@ const uidiff = @import("uidiff");
 const sample = uidiff.testing;
 const expect = sample.expect;
 const canvases = sample.canvas;
-const rules = sample.region_rules;
 
 test "a compact outline joins edits to its label and value without spanning cards" {
     const before = try canvases.Canvas.init(480, 164);
@@ -30,20 +29,4 @@ test "a compact outline joins edits to its label and value without spanning card
         try std.testing.expect(expect.hasRegion(result.regions, .after, left, 46, .changed));
         try std.testing.expect(expect.hasRegion(result.regions, .after, left, 90, .changed));
     }
-    const label = uidiff.Box.fromPixels(52, 44, 56, 12);
-    const value = uidiff.Box.fromPixels(52, 70, 82, 22);
-    var candidates = [_]rules.Candidate{
-        .{ .region = .{ .before = label, .after = label }, .pixels = 4 },
-        .{ .region = .{ .before = value, .after = value }, .pixels = 4 },
-    };
-    var moves = [_]uidiff.Move{.{
-        .before = .{ .y = 56, .height = 32 },
-        .after = .{ .y = 74, .height = 32 },
-        .x = .init(160),
-        .width = .init(24),
-    }};
-    const len = rules.mergeLogical(&candidates, before.view, after.view, .one, &moves);
-    var edits: [candidates.len]uidiff.Region = undefined;
-    for (edits[0..len], candidates[0..len]) |*edit, candidate| edit.* = candidate.region;
-    try std.testing.expectEqual(@as(usize, 1), rules.keepMoves(&moves, edits[0..len], .one, uidiff.Scale.one.devicePixels(rules.scroll_shift)));
 }

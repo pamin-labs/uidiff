@@ -52,5 +52,21 @@ fn containsMove(box: Box, rows: values.RowRange, move: values.Move, slack: f64, 
 }
 
 test {
+    const box = Box.fromPixels(6, 16, 58, 42);
+    const edits = [_]Region{.{ .number = 1, .kind = .changed, .before = box, .after = box }};
+    var moves = [_]values.Move{
+        .{ .before = .{ .y = 27, .height = 10 }, .after = .{ .y = 34, .height = 10 }, .x = .init(10), .width = .init(50) },
+        .{ .before = .{ .y = 61, .height = 3 }, .after = .{ .y = 70, .height = 3 }, .x = .init(10), .width = .init(50) },
+        .{ .before = .{ .y = 62, .height = 10 }, .after = .{ .y = 73, .height = 10 }, .x = .init(10), .width = .init(50) },
+        .{ .before = .{ .y = 27, .height = 10 }, .after = .{ .y = 34, .height = 10 }, .x = .init(80), .width = .init(40) },
+        .{ .before = .{ .y = 49, .height = 12 }, .after = .{ .y = 50, .height = 12 }, .x = .init(10), .width = .init(50) },
+        .{ .before = .{ .y = 4, .height = 125 }, .after = .{ .y = 6, .height = 125 }, .x = .init(10), .width = .init(50) },
+    };
+    try std.testing.expectEqual(@as(usize, 3), keepMoves(&moves, &edits, .one, Scale.one.devicePixels(scroll_shift)));
+    try std.testing.expectEqual(@as(usize, 62), moves[0].before.y);
+    try std.testing.expectEqual(@as(usize, 80), moves[1].x.count());
+}
+
+test {
     std.testing.refAllDecls(@This());
 }

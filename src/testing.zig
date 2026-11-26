@@ -8,9 +8,6 @@ pub const canvas = @import("testing/canvas.zig");
 /// Assertions over results from the comparison API.
 pub const expect = @import("testing/expect.zig");
 
-/// Region operations examined by comparison scenarios.
-pub const region_rules = @import("testing/regions.zig");
-
 /// Render-plan operations examined by sheet scenarios.
 pub const sheet = @import("testing/sheet.zig");
 
