@@ -192,8 +192,9 @@ pub fn addDecoders(b: *Build, target: Build.ResolvedTarget) Decoders {
     };
 }
 
-/// Compiles the fixture codecs and exposes the encoder bindings to the generator.
-pub fn fixtureModule(b: *Build, target: Build.ResolvedTarget, library: *Build.Module, decoders: Decoders, source: Build.LazyPath, stb_source: Build.LazyPath) *Build.Module {
+/// Configures the generator's C encoders and returns the fixture codec archive
+/// for the caller to link into its uidiff library.
+pub fn addFixtureCodecs(b: *Build, target: Build.ResolvedTarget, generator: *Build.Module) *Build.Step.Compile {
     const webp = b.dependency("libwebp", .{});
     const stb = b.dependency("stb", .{});
     const stb_write = b.addTranslateC(.{ .root_source_file = stb.path("stb_image_write.h"), .target = target, .optimize = fixture_mode });
@@ -201,23 +202,12 @@ pub fn fixtureModule(b: *Build, target: Build.ResolvedTarget, library: *Build.Mo
     const webp_encode = b.addTranslateC(.{ .root_source_file = webp.path("src/webp/encode.h"), .target = target, .optimize = fixture_mode });
     const codecs = b.createModule(.{ .target = target, .optimize = codec_mode, .link_libc = true });
     addDecoderSources(b, codecs, target, .fixture, .shipped);
-    library.linkLibrary(b.addLibrary(.{ .name = "uidiff-fixture-codecs", .root_module = codecs }));
-    const module = b.createModule(.{
-        .root_source_file = source,
-        .target = target,
-        .optimize = fixture_mode,
-        .link_libc = true,
-        .imports = &.{
-            .{ .name = "uidiff", .module = library },
-            .{ .name = "png_format", .module = decoders.png_format },
-            .{ .name = "stb_write_c", .module = stb_write.createModule() },
-            .{ .name = "webp_encode_c", .module = webp_encode.createModule() },
-            .{ .name = "codec_memory", .module = decoders.memory },
-        },
-    });
-    module.addIncludePath(stb.path(""));
-    module.addCSourceFile(.{ .file = stb_source, .flags = &.{"-ffp-contract=off"} });
-    return module;
+    const archive = b.addLibrary(.{ .name = "uidiff-fixture-codecs", .root_module = codecs });
+    generator.addImport("stb_write_c", stb_write.createModule());
+    generator.addImport("webp_encode_c", webp_encode.createModule());
+    generator.addIncludePath(stb.path(""));
+    generator.addCSourceFile(.{ .file = b.path("tools/fixtures/stb_write.c"), .flags = &.{"-ffp-contract=off"} });
+    return archive;
 }
 
 /// Compiles the pinned scalar JPEG encoder for the host fixture generator.
