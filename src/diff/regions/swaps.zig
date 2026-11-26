@@ -5,7 +5,6 @@ const pending = @import("candidate.zig");
 const bounds = @import("bounds.zig");
 const values = @import("../../value.zig");
 const pixel = @import("../pixel.zig");
-const sample = @import("../test_support.zig");
 const Box = values.Box;
 const Image = values.Image;
 
@@ -81,6 +80,7 @@ fn exchangedRows(before: Image, after: Image, bands: Box, pitch: usize, rows: us
 }
 
 test "reciprocal row moves are grouped only when both rows exchange intact" {
+    const sample = @import("../test_support.zig");
     const pair = try sample.RowExchange.init();
     defer pair.deinit();
     const before, const after = .{ pair.before, pair.after };
@@ -110,6 +110,7 @@ test "reciprocal row moves are grouped only when both rows exchange intact" {
 }
 
 test "audit: a count edit between the exchanged rows remains a separate change" {
+    const sample = @import("../test_support.zig");
     const before = try sample.Canvas.init(256, 160);
     defer before.deinit();
     const after = try sample.Canvas.init(256, 160);

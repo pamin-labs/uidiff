@@ -3,7 +3,6 @@
 const std = @import("std");
 const pending = @import("candidate.zig");
 const values = @import("../../value.zig");
-const sample = @import("../test_support.zig");
 const Scale = values.Scale;
 const Box = values.Box;
 const Region = values.Region;
@@ -51,6 +50,7 @@ fn containsMove(box: Box, rows: values.RowRange, move: values.Move, slack: f64, 
 }
 
 test "replacement regions suppress enclosed and sub-line displacement" {
+    const sample = @import("../test_support.zig");
     const rows = @import("../rows.zig");
     const before = try sample.Canvas.init(120, 140);
     defer before.deinit();

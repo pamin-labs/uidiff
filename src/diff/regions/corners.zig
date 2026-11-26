@@ -7,7 +7,6 @@ const scrim = @import("scrim.zig");
 const text_lines = @import("text_lines.zig");
 const values = @import("../../value.zig");
 const pixel = @import("../pixel.zig");
-const sample = @import("../test_support.zig");
 const Scale = values.Scale;
 const Box = values.Box;
 const Region = values.Region;
@@ -178,6 +177,7 @@ fn hasInk(row: []const values.Pixel, ink: values.Pixel) bool {
 }
 
 test "four corners follow a continuous outline even when its straight edges differ in color" {
+    const sample = @import("../test_support.zig");
     const before = try sample.Canvas.init(250, 150);
     defer before.deinit();
     const after = try sample.Canvas.init(250, 150);
@@ -215,6 +215,7 @@ test "four corners follow a continuous outline even when its straight edges diff
 }
 
 test "viewport clipped corners join only across a continuous straight edge" {
+    const sample = @import("../test_support.zig");
     const before = try sample.Canvas.init(250, 64);
     defer before.deinit();
     const after = try sample.Canvas.init(250, 64);
@@ -241,6 +242,7 @@ test "viewport clipped corners join only across a continuous straight edge" {
 }
 
 test "audit: unrelated bottom-clipped labels on one footer stay separate" {
+    const sample = @import("../test_support.zig");
     const before = try sample.Canvas.init(280, 90);
     defer before.deinit();
     const after = try sample.Canvas.init(280, 90);
@@ -262,6 +264,7 @@ test "audit: unrelated bottom-clipped labels on one footer stay separate" {
 }
 
 test "round 25 audit: glyph stems below a divider do not close the corners" {
+    const sample = @import("../test_support.zig");
     const before = try sample.Canvas.init(280, 90);
     defer before.deinit();
     const after = try sample.Canvas.init(280, 90);
@@ -284,6 +287,7 @@ test "round 25 audit: glyph stems below a divider do not close the corners" {
 }
 
 test "corner rail reach follows logical scale at double density" {
+    const sample = @import("../test_support.zig");
     const image = try sample.Canvas.init(2700, 54);
     defer image.deinit();
     const ink = sample.inkShade(63, 4);
