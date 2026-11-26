@@ -164,7 +164,7 @@ test "fixed-header scroll reveals content and skips flat paint" {
     const header = 10;
     const body = 20;
     const scroll = 6;
-    const backdrop = sample.white;
+    const backdrop = sample.canvas.white;
     var old: [height][width]values.Pixel = @splat(@splat(backdrop));
     var new = old;
     for (old[0..header], new[0..header]) |*a, *b| {

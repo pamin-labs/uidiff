@@ -12,7 +12,7 @@ fn decodeSamples(allocator: std.mem.Allocator) !void {
         var decoded = try uidiff.decode(allocator, bytes);
         defer decoded.deinit();
         try testing.expectEqual(uidiff.Size{ .width = fixtures.blank.width * fixtures.scale, .height = fixtures.blank.height * fixtures.scale }, decoded.image.size());
-        for (decoded.image.pixels) |pixel| try testing.expectEqual(uidiff.testing.white, pixel);
+        for (decoded.image.pixels) |pixel| try testing.expectEqual(uidiff.testing.canvas.white, pixel);
     }
 }
 

@@ -94,7 +94,7 @@ test "inserting and deleting above a divider preserves the deletion" {
     const first = 24;
     const pitch = 16;
     const edge = 72;
-    const white = sample.white;
+    const white = sample.canvas.white;
     const rule: values.Pixel = .{ 130, 134, 140, 255 };
     var old: [height][width]values.Pixel = @splat(@splat(white));
     var new = old;
