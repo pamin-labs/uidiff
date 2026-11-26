@@ -65,7 +65,8 @@ jobs:
           if-no-files-found: error
 
   homebrew:
-    needs: github
+    # The formula downloads from the R2 mirror, so it waits for the upload.
+    needs: [github, r2]
     if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     concurrency:

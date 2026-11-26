@@ -15,7 +15,6 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[2]
 PROGRAM = "uidiff"
 REPOSITORY = "https://github.com/pamin-labs/uidiff"
-RELEASES = f"{REPOSITORY}/releases"
 # The R2 bucket `uidiff` mirrors the release layout for hosts that cannot reach GitHub.
 DOWNLOADS = "https://uidiff.paminlabs.com"
 INSTALLERS = ("install.sh", "install.ps1")
@@ -108,7 +107,7 @@ def pack(target, release_version, bin_dir, output):
 
 
 def formula_platforms(release_version, output):
-    url = f"{RELEASES}/download/v{release_version}"
+    url = f"{DOWNLOADS}/download/v{release_version}"
     lines = []
     for os in ("macos", "linux"):
         lines.append(f"  on_{os} do")

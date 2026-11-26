@@ -11,7 +11,7 @@ from tempfile import TemporaryDirectory
 import zipfile
 
 from package import (
-    CHECKSUMS, DOWNLOADS, FORMULA_ASSET, INSTALLERS, NOTICES, NPM_PACKAGE, PROGRAM, RELEASES, ROOT,
+    CHECKSUMS, DOWNLOADS, FORMULA_ASSET, INSTALLERS, NOTICES, NPM_PACKAGE, PROGRAM, ROOT,
     TARGETS, VERSION_PATTERN, digest, finalize, mirror, npm_packages, pack, version,
 )
 
@@ -77,7 +77,7 @@ def check_assets(release, release_version):
     for target in TARGETS:
         archive = release / target.archive(release_version)
         if target.os != "windows":
-            assert f'url "{RELEASES}/download/v{release_version}/{archive.name}"' in content
+            assert f'url "{DOWNLOADS}/download/v{release_version}/{archive.name}"' in content
             assert f'sha256 "{digest(archive)}"' in content
         if target.os == "windows":
             with zipfile.ZipFile(archive) as bundle:
