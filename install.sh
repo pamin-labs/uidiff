@@ -76,3 +76,7 @@ cp "$tmp/$asset" "$staged"
 chmod 755 "$staged"
 mv -f "$staged" "$installed"
 printf "%s\n" "$installed"
+case ":$PATH:" in
+    *":$destination:"*) ;;
+    *) printf "%s: add %s to PATH to run %s\n" "$program" "$destination" "$program" >&2 ;;
+esac

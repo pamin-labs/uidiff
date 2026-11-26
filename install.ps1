@@ -60,6 +60,9 @@ try {
     Copy-Item -LiteralPath $download -Destination $staged
     Move-Item -LiteralPath $staged -Destination $installed -Force
     Write-Output $installed
+    if (($env:PATH -split ';') -notcontains $destination) {
+        Write-Warning "${program}: add $destination to PATH to run $program"
+    }
 } finally {
     if ($staged -and (Test-Path -LiteralPath $staged)) {
         Remove-Item -LiteralPath $staged -Force
