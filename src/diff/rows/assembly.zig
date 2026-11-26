@@ -4,7 +4,7 @@ const std = @import("std");
 const band_model = @import("band.zig");
 const search = @import("search.zig");
 const chrome = @import("chrome.zig");
-const paint = @import("paint.zig");
+const recolour = @import("recolour.zig");
 const refinement = @import("refinement.zig");
 
 const Anchors = struct {
@@ -95,7 +95,7 @@ pub fn assembleBands(before: band_model.Keys, after: band_model.Keys, limits: ba
                 // A new solid band still counts if its paint differs from the backdrop.
                 const flat_tail = clipped_scroll != 0 and old_y -| new_y == clipped_scroll and
                     (after[start] == new_background or after[start] == after[start -| 1]) and
-                    if (limits.images) |images| paint.flatPaint(images[1], start, m.after, limits.left, limits.width) else false;
+                    if (limits.images) |images| recolour.flatPaint(images[1], start, m.after, limits.left, limits.width) else false;
                 if (!flat_tail) reveal(bands, &len, after[0..m.after], old_y + paired, start, new_background);
             }
         } else {
@@ -156,7 +156,7 @@ fn replacementEnd(anchors: []const band_model.Match, old_y: usize, new_y: usize,
     return null;
 }
 
-test "fixed-header scroll reveals content and skips flat paint" {
+test "fixed-header scroll reveals content and skips flat recolour" {
     const values = @import("../../value.zig");
     const canvas = @import("uidiff_test_canvas").Painters(values.Image);
     const width = 40;

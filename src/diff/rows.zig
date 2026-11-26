@@ -8,7 +8,7 @@ const foreground = @import("rows/anchors.zig");
 const assembly = @import("rows/assembly.zig");
 const chrome = @import("rows/chrome.zig");
 const insertion = @import("rows/insertion.zig");
-const paint = @import("rows/paint.zig");
+const recolour = @import("rows/recolour.zig");
 const refinement = @import("rows/refinement.zig");
 const values = @import("../value.zig");
 const Image = values.Image;
@@ -53,7 +53,7 @@ pub fn matchBands(allocator: Allocator, before: band_model.Keys, after: band_mod
     if (@min(main.a.len, main.b.len) == 0) return null;
     const viewport = before.len == after.len;
     if (viewport and main.prefix != 0) {
-        if (paint.positionalPaintBands(before, after, main.prefix, limits, bands)) |aligned| return aligned;
+        if (recolour.positionalPaintBands(before, after, main.prefix, limits, bands)) |aligned| return aligned;
     }
     if (viewport and main.prefix != 0 and limits.images != null) {
         if (insertion.panelInsertion(before, after, main.prefix, limits, bands)) |aligned| return aligned;
@@ -68,7 +68,7 @@ pub fn matchBands(allocator: Allocator, before: band_model.Keys, after: band_mod
         }
     }
     const positional = if (viewport)
-        paint.localEditCost(before, after, main.prefix, limits)
+        recolour.localEditCost(before, after, main.prefix, limits)
     else
         null;
     if (viewport and positional == null and main.prefix != 0) {
@@ -108,7 +108,7 @@ pub fn matchBands(allocator: Allocator, before: band_model.Keys, after: band_mod
         for (before[edit.end..], after[edit.end..], edit.end..) |old, new, y| {
             if (old == new and foreground.isContent(old, old_background, new_background)) {
                 if (limits.images) |images| {
-                    if (y >= before.len - before.len / chrome.footer_zone_divisor and paint.flatPaint(images[0], y, y + 1, 0, images[0].width)) break;
+                    if (y >= before.len - before.len / chrome.footer_zone_divisor and recolour.flatPaint(images[0], y, y + 1, 0, images[0].width)) break;
                 }
                 if (edit.cost <= distance + 2 * edit.limit) return null;
                 break;

@@ -3,7 +3,7 @@
 const std = @import("std");
 const band_model = @import("band.zig");
 const insertion = @import("insertion.zig");
-const paint = @import("paint.zig");
+const recolour = @import("recolour.zig");
 const values = @import("../../value.zig");
 const pixel_ops = @import("../pixel.zig");
 const Image = values.Image;
@@ -89,7 +89,7 @@ fn prefersGrowthOffset(images: [2]Image, limits: band_model.Limits, band: band_m
         .shift = growth,
     }, &.{});
     return totals.positional >= min_sample_support and
-        paint.paint_density_denominator * totals.shifted <= paint.paint_density_numerator * totals.positional;
+        recolour.paint_density_denominator * totals.shifted <= recolour.paint_density_numerator * totals.positional;
 }
 
 // Equivalent repeated rows can match at several boundaries. Prefer the
@@ -105,10 +105,10 @@ fn compactElement(image: Image, first: usize, last: usize, count: usize, limits:
     for (first..last + 1) |y| {
         const bottom = y + count;
         while (end < bottom) : (end += 1) {
-            if (!paint.flatPaint(image, end, end + 1, limits.left, limits.width)) bottom_ink = end + 1;
+            if (!recolour.flatPaint(image, end, end + 1, limits.left, limits.width)) bottom_ink = end + 1;
         }
         top = @max(y, top);
-        while (top < bottom_ink and paint.flatPaint(image, top, top + 1, limits.left, limits.width)) : (top += 1) {}
+        while (top < bottom_ink and recolour.flatPaint(image, top, top + 1, limits.left, limits.width)) : (top += 1) {}
         if (bottom_ink <= top) continue;
         const height = bottom_ink - top;
         if (height < best_height or (height == best_height and top <= best_top)) {
