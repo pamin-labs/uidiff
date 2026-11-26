@@ -141,7 +141,7 @@ fn addCheckedLibrary(b: *Build, target: Build.ResolvedTarget, optimize: Optimize
 
 fn addSizeCheck(b: *Build, install_cli: *Build.Step.InstallArtifact) void {
     const checker = b.addExecutable(.{ .name = "uidiff-size", .root_module = b.createModule(.{
-        .root_source_file = b.path("tests/size.zig"),
+        .root_source_file = b.path("tools/size.zig"),
         .target = b.graph.host,
         .optimize = .debug,
     }) });
@@ -225,7 +225,7 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
         .imports = &.{.{ .name = "uidiff", .module = uidiff }},
     }) })).step);
     step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = b.createModule(.{
-        .root_source_file = b.path("tests/size.zig"),
+        .root_source_file = b.path("tools/size.zig"),
         .target = target,
         .optimize = optimize,
     }) })).step);
@@ -382,7 +382,8 @@ fn addBenchmark(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, uid
 
 fn fixtureGenerator(b: *Build, target: Build.ResolvedTarget, decoders: Decoders) *Build.Step.Compile {
     const library = b.createModule(libraryOptions(b, target, .safe, decoders));
-    const module = codecs.fixtureModule(b, target, library, decoders, b.path("tests/fixtures/generate.zig"), b.path("tests/fixtures/stb_write.c"));
+    const module = codecs.fixtureModule(b, target, library, decoders, b.path("tools/fixtures/generate.zig"), b.path("tools/fixtures/stb_write.c"));
+    module.addImport("fixture_cases", b.createModule(.{ .root_source_file = b.path("tests/fixtures/cases.zig") }));
     return b.addExecutable(.{ .name = "uidiff-fixtures", .root_module = module });
 }
 
@@ -413,7 +414,8 @@ fn addFixtures(b: *Build, test_step: *Build.Step, generator: *Build.Step.Compile
 }
 
 fn addJpegFixtures(b: *Build) Build.LazyPath {
-    const module = codecs.jpegFixtureModule(b, b.path("tests/fixtures/jpeg_generate.zig"));
+    const module = codecs.jpegFixtureModule(b, b.path("tools/fixtures/jpeg_generate.zig"));
+    module.addImport("fixture_jpeg", b.createModule(.{ .root_source_file = b.path("tests/fixtures/jpeg.zig") }));
     const run = b.addRunArtifact(b.addExecutable(.{ .name = "uidiff-jpeg-fixtures", .root_module = module }));
     const output = run.addOutputDirectoryArg("jpeg-fixtures");
     const update = b.addUpdateSourceFiles();

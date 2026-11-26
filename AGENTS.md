@@ -32,12 +32,12 @@ Zig source files use snake_case identifiers as basenames. `tests/order.zig` chec
 - `src/annotate/badges/` owns badge placement, routing and painting behind `src/annotate/badges.zig`.
 - `src/pipeline.zig` is the file pipeline: it checks the options once, decodes both files, compares them and writes the sheet atomically. The CLI calls it and only translates.
 - `src/cli.zig` is the CLI entry and `src/cli/` its argument syntax and usage text.
-- `bench/` measures the public API.
+- `bench/` measures the public API. `tools/fixtures/` generates the committed fixtures and `tools/size.zig` checks the CLI binary size.
 - `npm/` contains the JavaScript launcher. The release tooling stages its manifest and the scoped launcher and its native platform packages from the build version and target list.
 - `skills/uidiff/` documents screenshot capture, comparison and report interpretation for agents.
 - `scripts/` contains developer tooling. `scripts/release/` packages the CLI, renders the Homebrew formula and tests the launcher and installers. The installers are `install.sh` and `install.ps1` at the repository root.
 - `.github/` contains the release target list and workflows. Dispatch `release.yml` from `main` with a `version` input. The workflow commits that version to `build.zig.zon`, builds the ReleaseSafe matrix shared with CI, creates the tagged GitHub release, mirrors assets to R2 and publishes npm packages through OIDC with provenance. Stable releases also update the Homebrew tap from the published formula asset.
-- `tests/compare.zig` registers the comparison scenarios in `tests/compare/`, and `tests/sheet.zig` registers the annotated sheet scenarios in `tests/sheet/`. Both use the public `uidiff` module and the private `uidiff_testing` module. `tests/` runs the installed CLI (`tests/e2e.zig`), decodes the fixtures through the public API (`tests/decode.zig`), checks the binary size budget, and checks source layout, layering and declaration order. `tests/fuzz/` holds one fuzz target per top-level file, each its own test binary. `tests/fixtures.zig` is the fixture set's root; `tests/fixtures/` holds the synthetic fixture generator, its encoders, the freshness check and the generated images with expected reports. A unit test sits at the end of the file whose code it exercises. A comparison or sheet scenario lives in its area under `tests/compare/` or `tests/sheet/`. Shared test helpers live in `src/testing/`, with committed fixture metadata and sample reads owned by `tests/fixtures.zig`. Private fuzz targets sit beside the code they exercise, including the CLI arguments target, and public API fuzz targets live in `tests/fuzz/`.
+- `tests/compare.zig` registers the comparison scenarios in `tests/compare/`, and `tests/sheet.zig` registers the annotated sheet scenarios in `tests/sheet/`. Both use the public `uidiff` module and the private `uidiff_testing` module. `tests/` runs the installed CLI (`tests/e2e.zig`), decodes the fixtures through the public API (`tests/decode.zig`), and checks source layout, layering and declaration order. It also runs the generator and size checker unit tests. `tests/fuzz/` holds one fuzz target per top-level file, each its own test binary. `tests/fixtures.zig` is the fixture set's root; `tests/fixtures/` holds fixture metadata, the freshness check and the generated images with expected reports. A unit test sits at the end of the file whose code it exercises. A comparison or sheet scenario lives in its area under `tests/compare/` or `tests/sheet/`. Shared test helpers live in `src/testing/`, with committed fixture metadata and sample reads owned by `tests/fixtures.zig`. Private fuzz targets sit beside the code they exercise, including the CLI arguments target, and public API fuzz targets live in `tests/fuzz/`.
 
 ## Layers
 
@@ -55,7 +55,8 @@ Zig source files use snake_case identifiers as basenames. `tests/order.zig` chec
 | api | `src/root.zig` | value, codec, diff, annotate, report, pipeline |
 | cli | `src/cli.zig` `src/cli/` | `uidiff` |
 | build | `build/` | value |
-| tool | `bench/` `tests/` | `uidiff` |
+| test | `tests/` | `uidiff` |
+| tool | `bench/` `tools/` | `uidiff` |
 
 `src/testing/jpeg.zig` belongs to `uidiff` and is path-imported by test declarations in `src/codec/jpeg.zig` and `src/pipeline.zig`, `src/testing/canvas.zig` is `uidiff_test_canvas`, and the remaining files in `src/testing/` belong to `uidiff_testing`. Scenario runners and fuzz targets use procedural images and fuzz inputs from `uidiff_testing`. The named `fixtures` module describes the committed fixture set. Source unit tests and the private testing module share the named `uidiff_test_canvas` leaf because Zig assigns each source file to one module per compilation.
 
@@ -63,20 +64,22 @@ Named build modules, and the only files that may import them. The `export` row n
 
 | Module | Importers |
 | --- | --- |
-| `png_format` | `src/codec/png.zig` `src/codec/png/` `tests/e2e.zig` `tests/decode.zig` `tests/fixtures/generate.zig` |
+| `png_format` | `src/codec/png.zig` `src/codec/png/` `tests/e2e.zig` `tests/decode.zig` `tools/fixtures/generate.zig` |
 | `stb_c` | `src/codec/png/stb.zig` |
-| `jpeg_encode_c` | `tests/fixtures/jpeg_generate.zig` |
+| `jpeg_encode_c` | `tools/fixtures/jpeg_generate.zig` |
 | `jpeg_c` | `src/codec/jpeg.zig` |
 | `webp_c` | `src/codec/webp.zig` |
 | `zlib_c` | `src/codec/png/zlib.zig` |
-| `stb_write_c` | `tests/fixtures/encode.zig` |
-| `webp_encode_c` | `tests/fixtures/encode.zig` |
-| `codec_memory` | `src/codec.zig` `src/codec/png/zlib.zig` `src/codec/png/scanlines.zig` `src/codec/png/stb.zig` `src/codec/jpeg.zig` `src/codec/webp.zig` `tests/fixtures/encode.zig` |
+| `stb_write_c` | `tools/fixtures/encode.zig` |
+| `webp_encode_c` | `tools/fixtures/encode.zig` |
+| `codec_memory` | `src/codec.zig` `src/codec/png/zlib.zig` `src/codec/png/scanlines.zig` `src/codec/png/stb.zig` `src/codec/jpeg.zig` `src/codec/webp.zig` `tools/fixtures/encode.zig` |
 | `uidiff_test_canvas` | `src/testing.zig` `src/testing/expect.zig` `src/diff.zig` `src/diff/` `src/annotate/sheet/plan.zig` |
 | `uidiff_testing` | `tests/compare/` `tests/sheet/` `tests/decode.zig` `tests/e2e.zig` `tests/fuzz/` |
 | `fixtures` | `tests/e2e.zig` `tests/decode.zig` `tests/fuzz/` |
 | `e2e_options` | `tests/e2e.zig` |
 | `cli_options` | `src/cli.zig` |
+| `fixture_cases` | `tools/fixtures/generate.zig` `tools/fixtures/encode.zig` |
+| `fixture_jpeg` | `tools/fixtures/jpeg_generate.zig` |
 | `fixture_options` | `tests/fixtures/fresh.zig` |
 | `required_test_options` | `src/root.zig` |
 | `export` | `src/codec/memory.zig` |

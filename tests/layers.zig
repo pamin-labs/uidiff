@@ -81,7 +81,8 @@ const sample_agents =
     \\| testing | `src/testing.zig` `src/testing/` | uidiff |
     \\| api | `src/root.zig` | value, diff, codec, annotate |
     \\| cli | `src/cli.zig` `src/cli/` | `uidiff` |
-    \\| tool | `bench/` `tests/` | `uidiff` |
+    \\| test | `tests/` | `uidiff` |
+    \\| tool | `bench/` `tools/` | `uidiff` |
     \\
     \\| Module | Importers |
     \\| --- | --- |
