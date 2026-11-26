@@ -296,6 +296,5 @@ fn save(io: Io, allocator: Allocator, out: Io.Dir, path: []const u8, format: cas
 
 test {
     std.testing.refAllDecls(@This());
-    std.testing.refAllDecls(cases);
     std.testing.refAllDecls(encode);
 }
