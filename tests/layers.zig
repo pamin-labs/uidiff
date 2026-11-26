@@ -23,16 +23,16 @@ const Grant = struct { module: []const u8, importers: []const []const u8 };
 /// The facade and private implementation directory of a nested module.
 const Submodule = struct { facade: []const u8, directory: []const u8 };
 
-/// One row of the diff tier table: a unit of the diff layer and its tier.
+/// One row of the tier table: a unit of a layer and its tier.
 /// A unit imports only units of a lower tier.
-const DiffUnit = struct { tier: u8, paths: []const []const u8 };
+const Unit = struct { tier: u8, paths: []const []const u8 };
 
 /// The rules AGENTS.md states. Slices borrow its text; free with deinit.
 const Rules = struct {
     layers: []Layer,
     grants: []Grant,
     submodules: []Submodule,
-    diff_units: []DiffUnit,
+    units: []Unit,
     arena: std.heap.ArenaAllocator,
 
     fn deinit(self: *Rules) void {
@@ -49,11 +49,11 @@ const Rules = struct {
         return false;
     }
 
-    /// The diff unit holding path, or null outside the tiered diff internals.
-    fn diffUnitOf(self: Rules, path: []const u8) !?*const DiffUnit {
-        if (!sources.inDirectory(path, diff_directory)) return null;
-        for (self.diff_units) |*unit| if (covered(unit.paths, path)) return unit;
-        return error.UntieredDiffSource;
+    /// The unit holding a path, or null outside the tiered directories.
+    fn unitOf(self: Rules, path: []const u8) !?*const Unit {
+        if (!sources.inDirectory(path, diff_directory) and !sources.inDirectory(path, annotate_directory)) return null;
+        for (self.units) |*unit| if (covered(unit.paths, path)) return unit;
+        return error.UntieredSource;
     }
 };
 
@@ -66,6 +66,7 @@ const export_row = "export";
 const testing_root = "src/testing.zig";
 const jpeg_fixture = "src/testing/jpeg.zig";
 const diff_directory = "src/diff/";
+const annotate_directory = "src/annotate/";
 
 const sample_agents =
     \\## Layout
@@ -94,9 +95,11 @@ const sample_agents =
     \\| --- | --- |
     \\| `src/diff/regions.zig` | `src/diff/regions/` |
     \\| `src/diff/rows.zig` | `src/diff/rows/` |
+    \\| `src/annotate/sheet.zig` | `src/annotate/sheet/` |
+    \\| `src/annotate/drawing.zig` | `src/annotate/drawing/` |
     \\| `src/codec/png.zig` | `src/codec/png/` |
     \\
-    \\| Diff tier | Paths | Holds |
+    \\| Tier | Paths | Holds |
     \\| --- | --- | --- |
     \\| 4 | `src/diff/span.zig` | |
     \\| 3 | `src/diff/motion.zig` | |
@@ -107,6 +110,11 @@ const sample_agents =
     \\| 1 | `src/diff/yiq.zig` | |
     \\| 0 | `src/diff/mask.zig` | |
     \\| 0 | `src/diff/pixel.zig` | |
+    \\| 3 | `src/annotate/sheet.zig` `src/annotate/sheet/` | |
+    \\| 2 | `src/annotate/badges.zig` | |
+    \\| 2 | `src/annotate/ribbons.zig` | |
+    \\| 1 | `src/annotate/drawing.zig` `src/annotate/drawing/` | |
+    \\| 0 | `src/annotate/geometry.zig` | |
     \\## Gates
 ;
 
@@ -136,8 +144,8 @@ fn parseRules(allocator: Allocator, text: []const u8) !Rules {
     var layers: std.ArrayList(Layer) = .empty;
     var grants: std.ArrayList(Grant) = .empty;
     var submodules: std.ArrayList(Submodule) = .empty;
-    var diff_units: std.ArrayList(DiffUnit) = .empty;
-    var table: enum { none, layers, modules, submodules, diff_units } = .none;
+    var units: std.ArrayList(Unit) = .empty;
+    var table: enum { none, layers, modules, submodules, units } = .none;
     var lines = std.mem.splitScalar(u8, try section(text, layers_heading), '\n');
     while (lines.next()) |raw| {
         const line = std.mem.trim(u8, raw, " \r");
@@ -155,8 +163,8 @@ fn parseRules(allocator: Allocator, text: []const u8) !Rules {
                 .modules
             else if (std.mem.eql(u8, first, "Submodule root"))
                 .submodules
-            else if (std.mem.eql(u8, first, "Diff tier"))
-                .diff_units
+            else if (std.mem.eql(u8, first, "Tier"))
+                .units
             else
                 return error.UnknownTable,
             .layers => try layers.append(a, .{
@@ -168,7 +176,7 @@ fn parseRules(allocator: Allocator, text: []const u8) !Rules {
                 .facade = std.mem.trim(u8, first, "` "),
                 .directory = std.mem.trim(u8, cells.next() orelse return error.ShortRow, "` "),
             }),
-            .diff_units => try diff_units.append(a, .{
+            .units => try units.append(a, .{
                 .tier = try std.fmt.parseInt(u8, first, 10),
                 .paths = try ticks(a, cells.next() orelse return error.ShortRow),
             }),
@@ -178,8 +186,8 @@ fn parseRules(allocator: Allocator, text: []const u8) !Rules {
             }),
         }
     }
-    if (layers.items.len == 0 or grants.items.len == 0 or diff_units.items.len == 0) return error.MissingTable;
-    return .{ .layers = layers.items, .grants = grants.items, .submodules = submodules.items, .diff_units = diff_units.items, .arena = arena };
+    if (layers.items.len == 0 or grants.items.len == 0 or units.items.len == 0) return error.MissingTable;
+    return .{ .layers = layers.items, .grants = grants.items, .submodules = submodules.items, .units = units.items, .arena = arena };
 }
 
 /// The backticked items of a cell.
@@ -251,11 +259,11 @@ fn allowedImport(allocator: Allocator, rules: Rules, source: *const Source, node
         const decl = enclosingDeclaration(tree, node) orelse return false;
         return tree.nodeTag(decl) == .test_decl;
     }
-    if (try rules.diffUnitOf(from_path)) |from_unit| {
-        if (try rules.diffUnitOf(resolved)) |to_unit| {
+    if (from == to) if (try rules.unitOf(from_path)) |from_unit| {
+        if (try rules.unitOf(resolved)) |to_unit| {
             if (from_unit != to_unit and to_unit.tier >= from_unit.tier) return false;
         }
-    }
+    };
     for (rules.submodules) |submodule| {
         const inside = sources.inDirectory(from_path, submodule.directory);
         const facade = std.mem.eql(u8, from_path, submodule.facade);
@@ -268,6 +276,7 @@ fn allowedImport(allocator: Allocator, rules: Rules, source: *const Source, node
 }
 
 fn checkSource(allocator: Allocator, rules: Rules, source: *const Source) !void {
+    _ = try rules.unitOf(source.path);
     const tree = &source.tree;
     for (0..tree.nodes.len) |i| {
         const node: Ast.Node.Index = @fromBackingInt(@intCast(i));
@@ -382,10 +391,19 @@ test "the guard rejects reverse imports, submodule imports and foreign bindings"
         .{ .path = "tests/e2e.zig", .text = "const cases = @import(\"cases\");" },
     };
     for (cases) |case| try testing.expectError(error.ForbiddenImport, checkWithText(case.path, case.text));
-    try testing.expectError(error.ForeignDeclaration, checkWithText("src/annotate/labels.zig", "extern \"c\" fn encode() void;"));
+    try testing.expectError(error.ForeignDeclaration, checkWithText("src/annotate/geometry.zig", "extern \"c\" fn encode() void;"));
     try testing.expectError(error.ForeignDeclaration, checkWithText("src/codec/webp.zig", "extern \"c\" fn decode() void;"));
     try testing.expectError(error.ForeignDeclaration, checkWithText("src/codec.zig", "const c = @cImport(@cInclude(\"image.h\"));"));
     try testing.expectError(error.ForeignDeclaration, checkWithText("src/diff.zig", "export fn hook() void {}"));
+    try testing.expectError(error.ForbiddenImport, checkWithText("src/annotate/drawing/canvas.zig", "const ribbons = @import(\"../ribbons.zig\");"));
+    try testing.expectError(error.ForbiddenImport, checkWithText("src/annotate/geometry.zig", "const drawing = @import(\"drawing.zig\");"));
+    try testing.expectError(error.ForbiddenImport, checkWithText("src/annotate/ribbons.zig", "const badges = @import(\"badges.zig\");"));
+    try testing.expectError(error.ForbiddenImport, checkWithText("src/annotate/sheet/plan.zig", "const canvas = @import(\"../drawing/canvas.zig\");"));
+    try testing.expectError(error.ForbiddenImport, checkWithText("src/annotate/sheet/plan.zig", "const sheet = @import(\"../sheet.zig\");"));
+    try testing.expectError(error.UntieredSource, checkWithText("src/annotate/unlisted.zig", ""));
+    try checkWithText("src/annotate/ribbons.zig", "const drawing = @import(\"drawing.zig\");");
+    try checkWithText("src/annotate/sheet/plan.zig", "const drawing = @import(\"../drawing.zig\");");
+    try checkWithText("src/annotate/sheet.zig", "const plan = @import(\"sheet/plan.zig\");");
     try checkWithText("src/codec/png/stb.zig", "const c = @import(\"stb_c\");\nexport fn hook() void {}");
     try checkWithText("src/root.zig", "const codec = @import(\"codec.zig\");");
     try checkWithText("src/codec.zig", "const png = @import(\"codec/png.zig\");");
@@ -422,7 +440,7 @@ test "diff units only import lower tiers and fixtures stay in test scope" {
     try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/rows.zig", "const regions = @import(\"regions.zig\");"));
     try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/regions/logical.zig", "test { _ = @import(\"../rows.zig\"); }"));
     try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/mask.zig", "const pixel = @import(\"pixel.zig\");"));
-    try testing.expectError(error.UntieredDiffSource, checkWithText("src/diff/extra.zig", "const pixel = @import(\"pixel.zig\");"));
+    try testing.expectError(error.UntieredSource, checkWithText("src/diff/extra.zig", "const pixel = @import(\"pixel.zig\");"));
     try checkWithText("src/diff/yiq.zig", "const mask = @import(\"mask.zig\");");
     try checkWithText("src/diff/rows/band.zig", "const search = @import(\"search.zig\");");
 }

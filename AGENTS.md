@@ -93,9 +93,9 @@ Only a submodule's facade and implementation files may import its implementation
 | `tests/compare.zig` | `tests/compare/` |
 | `tests/sheet.zig` | `tests/sheet/` |
 
-Each unit of the diff internals, with its tier. A unit imports another only if that unit's tier is lower; files inside one unit import each other under the rules above. `src/diff.zig` sits above every tier. A file under `src/diff/` that this table does not name fails the test.
+The diff and annotate internals use tiers. Within a layer, a unit imports another only if that unit's tier is lower. Files inside one unit import each other under the rules above. `src/diff.zig` and `src/annotate.zig` sit above their layers' tiers. Every Zig file under `src/diff/` and `src/annotate/` belongs to a unit in the table.
 
-| Diff tier | Paths | Holds |
+| Tier | Paths | Holds |
 | --- | --- | --- |
 | 4 | `src/diff/span.zig` | Aligns the changed span, walks its bands and owns their scratch buffers |
 | 3 | `src/diff/motion.zig` | Gathers moves supported by alignment |
@@ -106,6 +106,13 @@ Each unit of the diff internals, with its tier. A unit imports another only if t
 | 1 | `src/diff/yiq.zig` | YIQ colour distance, antialiasing and writing the change mask |
 | 0 | `src/diff/mask.zig` | Change mask cells, band scratch and byte search |
 | 0 | `src/diff/pixel.zig` | Pixel and block equality kernels |
+| 5 | `src/annotate/sheet.zig` `src/annotate/sheet/` | Sheet planning and row composition |
+| 4 | `src/annotate/badges.zig` `src/annotate/badges/` | Badge placement, routing and painting |
+| 4 | `src/annotate/ribbons.zig` | Gutter ribbons for aligned rows |
+| 3 | `src/annotate/focus.zig` | Groups nearby panoramic details into focus windows |
+| 2 | `src/annotate/crops.zig` | Source windows and sampling |
+| 1 | `src/annotate/drawing.zig` `src/annotate/drawing/` | Row painting, text, copy and palette |
+| 0 | `src/annotate/geometry.zig` | Source and sheet rectangles, pane arrangement and previews |
 
 ## Decoders
 
