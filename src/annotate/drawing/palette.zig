@@ -1,6 +1,6 @@
 //! Colors and labels for the sheet.
 const std = @import("std");
-const value = @import("../value.zig");
+const value = @import("../../value.zig");
 const Pixel = value.Pixel;
 
 /// Sheet background color.

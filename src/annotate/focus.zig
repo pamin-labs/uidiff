@@ -1,9 +1,10 @@
 //! Paired focus crops and their layout.
 const std = @import("std");
-const copy = @import("copy.zig");
+const drawing = @import("drawing.zig");
+const copy = drawing.copy;
 const value = @import("../value.zig");
 const geometry = @import("geometry.zig");
-const text = @import("text.zig");
+const text = drawing.text;
 const crops = @import("crops.zig");
 const Rect = geometry.Rect;
 const SourceRect = geometry.SourceRect;

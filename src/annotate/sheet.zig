@@ -1,12 +1,13 @@
 //! Row compositor for the styled comparison sheet.
 const std = @import("std");
-const plan = @import("plan.zig");
-const copy = @import("copy.zig");
+const drawing = @import("drawing.zig");
+const plan = @import("sheet/plan.zig");
+const copy = drawing.copy;
 const value = @import("../value.zig");
 const geometry = @import("geometry.zig");
-const palette = @import("palette.zig");
-const text = @import("text.zig");
-const canvas = @import("canvas.zig");
+const palette = drawing.palette;
+const text = drawing.text;
+const canvas = drawing.canvas;
 const focus = @import("focus.zig");
 const crops = @import("crops.zig");
 const badges = @import("badges.zig");
@@ -45,6 +46,9 @@ const Size = value.Size;
 const Pixel = value.Pixel;
 const Region = value.Region;
 const Move = value.Move;
+
+/// Checks the minimum sheet dimensions before detail planning.
+pub const minimumSize = plan.minimumSize;
 
 /// Failures laying out a styled comparison or allocating its pixels.
 pub const RenderError = plan.RenderError;

@@ -1,7 +1,7 @@
 //! Rasterizes paint and bitmap text one sheet row at a time.
 const std = @import("std");
-const value = @import("../value.zig");
-const geometry = @import("geometry.zig");
+const value = @import("../../value.zig");
+const geometry = @import("../geometry.zig");
 const text = @import("text.zig");
 const Rect = geometry.Rect;
 const Pixel = value.Pixel;

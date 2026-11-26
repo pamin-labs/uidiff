@@ -19,7 +19,7 @@ FONT_URL = (
     "IBMPlexSans%5Bwdth,wght%5D.ttf"
 )
 FONT_SHA256 = "3b031aa4216174205bd8471f88a49b91f093169e9e87bd5262242bc5967fe2e3"
-OUTPUT = Path(__file__).resolve().parents[1] / "src/annotate/font-ascii.bin"
+OUTPUT = Path(__file__).resolve().parents[1] / "src/annotate/drawing/font-ascii.bin"
 ATLAS_SHA256 = "89db506d98b89a4033006923a2aa0293ec3714bc75373e732a88d44a4e0f5cf1"
 
 

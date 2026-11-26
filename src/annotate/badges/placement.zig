@@ -1,6 +1,6 @@
 //! Finds room for annotation badges around overview and detail marks.
 const std = @import("std");
-const Rect = @import("geometry.zig").Rect;
+const Rect = @import("../geometry.zig").Rect;
 
 const Search = struct { result: ?Rect = null, distance: usize };
 const gap = 6;

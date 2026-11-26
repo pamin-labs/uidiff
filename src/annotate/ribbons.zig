@@ -1,12 +1,13 @@
 //! Alignment ribbons between the ordinary sheet panes.
 const std = @import("std");
-const copy = @import("copy.zig");
+const drawing = @import("drawing.zig");
+const copy = drawing.copy;
 const value = @import("../value.zig");
 const geometry = @import("geometry.zig");
-const text = @import("text.zig");
-const canvas = @import("canvas.zig");
+const text = drawing.text;
+const canvas = drawing.canvas;
 const focus = @import("focus.zig");
-const palette = @import("palette.zig");
+const palette = drawing.palette;
 const PaneLayout = geometry.PaneLayout;
 const Rect = geometry.Rect;
 const pane_top = geometry.pane_top;

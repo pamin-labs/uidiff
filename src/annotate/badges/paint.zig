@@ -1,12 +1,13 @@
 //! Paints badge faces, outlines and leaders onto one sheet row.
 
 const std = @import("std");
+const drawing = @import("../drawing.zig");
 const routing = @import("routing.zig");
 const value = @import("../../value.zig");
 const geometry = @import("../geometry.zig");
-const canvas = @import("../canvas.zig");
+const canvas = drawing.canvas;
 const focus = @import("../focus.zig");
-const palette = @import("../palette.zig");
+const palette = drawing.palette;
 const Rect = geometry.Rect;
 const PaneLayout = geometry.PaneLayout;
 const Line = canvas.Line;

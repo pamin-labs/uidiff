@@ -9,7 +9,7 @@ pub const RenderError = sheet.RenderError;
 /// Row source for the annotated comparison sheet.
 pub const SheetRows = sheet.Rows;
 /// Minimum dimensions of a styled sheet before laying out its details.
-pub const minimumSheetSize = @import("annotate/plan.zig").minimumSize;
+pub const minimumSheetSize = sheet.minimumSize;
 /// Renders a styled sheet from regions and aligned row ranges.
 pub const renderSheet = sheet.render;
 

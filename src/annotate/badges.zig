@@ -1,12 +1,13 @@
 //! Plans badge placement and exposes the corresponding sheet painting.
 
 const std = @import("std");
+const drawing = @import("drawing.zig");
 const routing = @import("badges/routing.zig");
 const paint = @import("badges/paint.zig");
 const value = @import("../value.zig");
-const placement = @import("placement.zig");
+const placement = @import("badges/placement.zig");
 const geometry = @import("geometry.zig");
-const text = @import("text.zig");
+const text = drawing.text;
 const focus = @import("focus.zig");
 const Rect = geometry.Rect;
 const PaneLayout = geometry.PaneLayout;
@@ -193,7 +194,7 @@ test "small panes enlarge by an integer and keep badges clear of their boxes" {
 }
 
 test "badge digits preserve native bold bitmap coverage" {
-    const palette = @import("palette.zig");
+    const palette = drawing.palette;
     const Pixel = value.Pixel;
     const page = palette.page;
     const pane_layout = PaneLayout.init(.{ .width = 900, .height = 12 }, .{ .width = 900, .height = 12 });

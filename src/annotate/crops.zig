@@ -1,11 +1,12 @@
 //! Crop context, scaling, and pane painting.
 const std = @import("std");
-const copy = @import("copy.zig");
+const drawing = @import("drawing.zig");
+const copy = drawing.copy;
 const value = @import("../value.zig");
 const geometry = @import("geometry.zig");
-const text = @import("text.zig");
-const canvas = @import("canvas.zig");
-const palette = @import("palette.zig");
+const text = drawing.text;
+const canvas = drawing.canvas;
+const palette = drawing.palette;
 const Rect = geometry.Rect;
 const SourceRect = geometry.SourceRect;
 const PaneLayout = geometry.PaneLayout;
