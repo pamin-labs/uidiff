@@ -23,6 +23,7 @@ pub const Layout = struct {
     /// Chooses the preview scale and pane arrangement from source dimensions.
     pub fn init(before: Size, after: Size) Layout {
         const source_width = @max(before.width, after.width);
+        // A panoramic capture gets a full-width slot even beside a portrait.
         const wide = before.width > 2 * before.height or after.width > 2 * after.height;
         const shortest = @min(before.width, before.height, after.width, after.height);
         const source_height = @max(before.height, after.height);
@@ -55,10 +56,16 @@ pub const Layout = struct {
 
     /// Returns the scaled dimensions of a source pane.
     pub fn preview(self: Layout, size: Size) Size {
-        if (self.wide) return .{
-            .width = overview_width,
-            .height = std.math.clamp(size.height * overview_width / size.width, 1, overview_max_height),
-        };
+        if (self.wide) {
+            if (size.width * overview_max_height >= size.height * overview_width) return .{
+                .width = overview_width,
+                .height = @max(1, size.height * overview_width / size.width),
+            };
+            return .{
+                .width = @max(1, size.width * overview_max_height / size.height),
+                .height = overview_max_height,
+            };
+        }
         return .{ .width = self.extent(size.width), .height = self.extent(size.height) };
     }
 
@@ -132,7 +139,7 @@ pub const gutter = 160;
 /// Largest supported styled sheet width in pixels.
 pub const max_sheet_width = 3200;
 
-/// Width of each panoramic overview, in sheet pixels.
+/// Maximum width of a panoramic overview, in sheet pixels.
 pub const overview_width = 2400;
 
 const overview_max_height = 240;
@@ -240,4 +247,28 @@ fn RectFor(comptime _: Space) type {
             return dx *| dx +| dy *| dy;
         }
     };
+}
+
+test "stacked overviews fit both axes at a single scale" {
+    const cases = [_]struct { sources: [2]Size, previews: [2]Size }{
+        .{
+            .sources = .{ .{ .width = 3440, .height = 1440 }, .{ .width = 1000, .height = 400 } },
+            .previews = .{ .{ .width = 573, .height = 240 }, .{ .width = 600, .height = 240 } },
+        },
+        .{
+            .sources = .{ .{ .width = 1000, .height = 400 }, .{ .width = 800, .height = 1000 } },
+            .previews = .{ .{ .width = 600, .height = 240 }, .{ .width = 192, .height = 240 } },
+        },
+        .{
+            .sources = .{ .{ .width = 1, .height = 20_000 }, .{ .width = 20_000, .height = 1 } },
+            .previews = .{ .{ .width = 1, .height = 240 }, .{ .width = 2400, .height = 1 } },
+        },
+    };
+    for (cases) |case| {
+        const layout = Layout.init(case.sources[0], case.sources[1]);
+        try std.testing.expect(layout.wide);
+        for (case.sources, case.previews) |source, expected| {
+            try std.testing.expectEqual(expected, layout.preview(source));
+        }
+    }
 }
