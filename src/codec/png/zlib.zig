@@ -133,6 +133,10 @@ pub const StripStream = struct {
 /// Compressed bytes per IDAT chunk.
 pub const chunk_bytes = 64 * 1024;
 
+// Keep initialization and the inflate call in separate functions on ARM64
+// Linux to save 168 executable bytes with Zig 0.17.1. Re-measure on a Zig upgrade.
+const inflate_call: std.builtin.CallModifier = if (builtin.cpu.arch == .aarch64 and builtin.os.tag == .linux) .never_inline else .auto;
+
 const window_bits = 15;
 
 const memory_level = 8;
@@ -163,7 +167,7 @@ pub fn inflateRows(bytes: []const u8, comptime output_bytes: usize, output: *[ou
     var stream: zlib.zng_stream = std.mem.zeroes(zlib.zng_stream);
     stream.zalloc = zalloc;
     stream.zfree = zfree;
-    switch (zlib.zng_inflateInit2(&stream, -(@as(c_int, cmf >> 4) + 8))) {
+    switch (@call(inflate_call, initInflate, .{ &stream, cmf })) {
         zlib.Z_OK => {},
         zlib.Z_MEM_ERROR => return memory.failure(),
         else => return false,
@@ -186,7 +190,7 @@ fn consumeIdats(chunks: *format.Chunks, first: []const u8, comptime output_bytes
         while (true) {
             stream.next_out = output;
             stream.avail_out = output_bytes;
-            const status = zlib.zng_inflate(stream, zlib.Z_NO_FLUSH);
+            const status = @call(inflate_call, inflateBlock, .{stream});
             switch (status) {
                 zlib.Z_OK, zlib.Z_STREAM_END, zlib.Z_BUF_ERROR => {},
                 zlib.Z_MEM_ERROR => return memory.failure(),
@@ -201,6 +205,14 @@ fn consumeIdats(chunks: *format.Chunks, first: []const u8, comptime output_bytes
         src = next.data;
         head = 0;
     }
+}
+
+fn initInflate(stream: *zlib.zng_stream, cmf: u8) c_int {
+    return zlib.zng_inflateInit2(stream, -(@as(c_int, cmf >> 4) + 8));
+}
+
+fn inflateBlock(stream: *zlib.zng_stream) c_int {
+    return zlib.zng_inflate(stream, zlib.Z_NO_FLUSH);
 }
 
 fn initStream(stream: *zlib.zng_stream, allocator: *Allocator, window: c_int) EncodeError!void {
