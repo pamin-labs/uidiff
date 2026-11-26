@@ -6,9 +6,6 @@ const testing = std.testing;
 const Format = fixtures.Format;
 
 const formats = std.meta.tags(Format);
-const blank = fixtures.find(.identical);
-/// The blank fixture's files are small; seeds and inputs fit this buffer.
-const max_sample_bytes = 4096;
 /// The seed index past the last format means raw bytes.
 const raw = seed_count;
 const max_mutations = 8;
@@ -32,7 +29,7 @@ const extra_seeds = [_][]const u8{ gray8, indexed8 };
 const seed_count = formats.len + extra_seeds.len;
 
 fn fuzzDecode(seeds: [seed_count][]const u8, smith: *testing.Smith) !void {
-    var encoded: [max_sample_bytes]u8 = undefined;
+    var encoded: [fixtures.max_sample_bytes]u8 = undefined;
     const pick = smith.valueRangeAtMost(u8, 0, raw);
     const length = if (pick == raw) smith.slice(&encoded) else mutate(smith, &encoded, seeds[pick]);
     var image = uidiff.decode(testing.allocator, encoded[0..length]) catch |err| switch (err) {
@@ -57,7 +54,7 @@ test "fuzz encoded screenshots" {
     var loaded: usize = 0;
     defer for (seeds[0..loaded]) |bytes| testing.allocator.free(bytes);
     inline for (formats, 0..) |format, i| {
-        seeds[i] = try std.Io.Dir.cwd().readFileAlloc(testing.io, blank.path(.before, format), testing.allocator, .limited(max_sample_bytes));
+        seeds[i] = try fixtures.readSample(format);
         loaded += 1;
     }
     @memcpy(seeds[loaded..], &extra_seeds);

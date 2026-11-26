@@ -1,6 +1,7 @@
 //! Sheet render-plan and drawing details inspected by scenario assertions.
 const std = @import("std");
 const annotate = @import("../annotate.zig");
+const canvas = @import("canvas.zig");
 const badges = @import("../annotate/badges.zig");
 const copy = @import("../annotate/copy.zig");
 const focus = @import("../annotate/focus.zig");
@@ -30,7 +31,7 @@ pub const before_caption = copy.before;
 /// Background of an annotation sheet.
 pub const page = palette.page;
 /// Opaque white shared with the canvas fixtures.
-pub const white = palette.white;
+pub const white = canvas.white;
 /// Colour used for a region kind.
 pub const tint = palette.tint;
 /// Maps a change into a pane.
