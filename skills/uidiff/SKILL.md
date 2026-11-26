@@ -1,62 +1,105 @@
 ---
 name: uidiff
-description: Compare two UI screenshots after a change, verify an agent's visual edit, or run a CI visual check. Use uidiff to get numbered change regions, vertical moves, and an annotated PNG.
+description: Find out exactly what changed between two screenshots of a UI, with numbered boxes for changed, inserted and removed content and the offset of anything that only moved. Use it whenever you change anything visible (a web page, component, CSS, iOS or Android screen, desktop app, game or canvas) and need to verify the result, when the user asks what changed, whether an edit broke the layout or did more than intended, when reviewing a PR's before and after screenshots, or when setting up a visual regression check in CI, even if they never say "uidiff" or "diff".
 ---
 
 # Compare UI captures with uidiff
 
-Use this when there is a baseline capture and a new capture of the same UI.
-For an edit, capture the baseline before changing the UI. In CI, keep the
-baseline and candidate in the same capture environment.
+uidiff reads two images of the same screen and reports what really changed.
+Content that only moved (because something above it was inserted or removed)
+is aligned and reported as a shift, so only real edits get a box. That is why
+it beats eyeballing two screenshots or a pixel diff: you learn which edits
+happened, including ones nobody mentioned.
 
-## Capture a comparable pair
+## 1. Make sure uidiff runs
 
-- Use the same viewport width, device scale, zoom, locale, fonts and theme.
-  Different heights are fine when the height change is part of the comparison.
-- Start at the same scroll position and reproduce the same route, input state
-  and test data. Wait for fonts, images and layout to settle.
-- Freeze animations, carets, timers and dynamic data. Capture the relevant
-  area on both sides. Prefer lossless PNG to avoid compression noise.
+Check with `uidiff --help`. If it is missing:
 
-## Run the comparison
+- In a project with a `package.json`, add it pinned so CI uses the same
+  version: `npm install --save-dev @pamin-labs/uidiff`, then run `npx uidiff`.
+- Otherwise install the binary: `curl -fsSL https://uidiff.paminlabs.com/install.sh | sh`
+  on macOS and Linux (installs to `~/.local/bin`),
+  `irm https://uidiff.paminlabs.com/install.ps1 | iex` on Windows, or
+  `brew install pamin-labs/tap/uidiff`.
+
+## 2. Capture the baseline before you edit
+
+The baseline must show the UI as it was. If you are about to change UI code,
+capture first. If the edit is already made, rebuild the old state instead of
+guessing: `git stash` (or check out the base commit in a worktree), capture,
+then restore your changes and capture again.
+
+Keep the two captures comparable, or the report fills with noise that is not
+your change:
+
+- Same viewport width, device scale, zoom, theme, locale, fonts and test data.
+- Same route, scroll position and UI state. Wait for fonts, images and
+  network to settle.
+- Freeze what moves on its own: animations, carets, clocks, relative times,
+  random avatars. Prefer PNG; JPEG artefacts show up as tiny changes.
+
+| Platform | Capture |
+| --- | --- |
+| Web (Playwright) | `await page.screenshot({ path: "before.png", fullPage: true, animations: "disabled", caret: "hide" })` |
+| iOS Simulator | `xcrun simctl io booted screenshot before.png` |
+| Android | `adb exec-out screencap -p > before.png` |
+| Anything else | The platform's own screenshot tool, at a fixed window size |
+
+## 3. Run it
 
 ```sh
 uidiff before.png after.png --scale 2 --json --annotate sheet.png > report.json
 ```
 
-Inputs can be PNG, JPEG or WebP. Set `--scale` to the capture's device pixels
-per logical pixel, such as `2` for a 2× capture. It defaults to `1` and sets
-padding and merge distances. The reported coordinates stay in device pixels.
-Omit `--json` for a region count or `--annotate` when only the report is needed.
+`--scale` is device pixels per logical pixel: Playwright's `deviceScaleFactor`,
+`2` or `3` for iOS Retina screenshots, the screen density for Android (for
+example `2.625`). If unsure, divide the image width by the viewport's CSS or
+point width. It only tunes padding and merge distances, so a close guess is
+fine; coordinates are always in device pixels.
 
 | Exit | Meaning |
 | --- | --- |
-| `0` | No change regions were detected. Read `moves` if placement matters. |
-| `1` | Change regions were detected. Read the report and inspect the sheet. |
-| `2` | An error occurred. Check stderr and treat the comparison as failed. |
+| `0` | No change regions. `moves` may still list shifted content. |
+| `1` | Change regions found: read the report and look at the sheet. |
+| `2` | Error (unreadable file, bad arguments): read stderr; nothing was compared. |
 
-Handle all three statuses in CI. If the shell exits on errors, capture the
-status explicitly, for example with `status=0; uidiff ... || status=$?`.
+Exit 1 is a result, not a failure. In scripts that stop on errors, capture
+it with `status=0; uidiff ... || status=$?`, then fail on `2`, and on `1`
+only when the check requires no change.
 
-## Read the report and sheet
+## 4. Read the result
 
-- Check `version` before consuming a schema. Version 1 gives the maximum
-  input width and height and two arrays, `regions` and `moves`.
-- A region has a `number` matching its sheet label and a `kind` of
-  `changed`, `inserted` or `removed`. Its `before` and `after` boxes have
-  `x`, `y`, `width` and `height`, measured from the top left of their
-  respective images. The absent side of an insertion or removal is `null`.
-- Each move has `before` and `after` row ranges (`y`, `height`) and an
-  `x` and `width` for the affected columns. Compute the signed vertical
-  offset as `after.y - before.y`. Positive offsets move down.
-- The sheet shows before and after panes, amber changed boxes, green
-  inserted boxes and red removed boxes. The gutter shows stationary and
-  shifted rows. Match the numbered close-ups to the report.
+Look at `sheet.png` first; it is the fastest way to understand the change.
+Before and after panes sit side by side with numbered boxes: amber for
+changed, green for inserted, red for removed. The gutter between them shows
+which rows stayed and which shifted, with the offset. Below, each numbered
+change has a close-up of both sides.
 
-Compare the regions with the intended edit and inspect unexpected regions
-in both captures. Boxes locate visual evidence and can include padding or
-group nearby edits. Row alignment can explain a displacement while leaving
-the shifted content without a change box. Identical-looking results can
-still differ in behavior, accessibility or DOM structure. A capture covers
-only its visible state, and subtle differences can fall below pixel and
-region thresholds.
+`report.json` (version 1) carries the same numbers:
+
+```json
+{ "version": 1, "width": 2560, "height": 1600,
+  "regions": [
+    { "number": 1, "kind": "removed", "before": { "x": 1531, "y": 787, "width": 857, "height": 165 }, "after": null },
+    { "number": 2, "kind": "changed", "before": { "x": 1746, "y": 1114, "width": 642, "height": 204 },
+      "after": { "x": 1746, "y": 924, "width": 642, "height": 204 } } ],
+  "moves": [ { "x": 860, "width": 1520, "before": { "y": 968, "height": 366 }, "after": { "y": 778, "height": 366 } } ] }
+```
+
+A region's absent side is `null`. A move's signed offset is
+`after.y - before.y` (positive moves down). Check `version` before relying
+on the shape.
+
+## 5. Report back
+
+Match every region to the intended change and say plainly which were
+expected and which were not. Unexpected regions are the point of the
+exercise: look at both captures for each one and either explain it or treat
+it as a regression to fix. Mention large shifts too, since content jumping
+by 200 px can matter even without a box.
+
+A screenshot cannot show everything: boxes are padded and may group nearby
+edits, very faint differences can fall under the threshold, and identical
+pixels say nothing about behaviour, accessibility or hidden state. When you
+share the result with a person (a PR, a chat), attach `sheet.png`; it
+explains itself.
