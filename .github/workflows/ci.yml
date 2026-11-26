@@ -1,12 +1,13 @@
 name: CI
 
-# A pull request runs every check. A push to main has already passed them on
-# its pull request, so it only builds the release targets the merge produced.
+# A pull request runs every check. A push to main runs only the quick Linux
+# checks, and none for documentation; the release workflow builds every target.
 'on':
   pull_request:
     branches: [main]
   push:
     branches: [main]
+    paths-ignore: ['**.md', 'docs/**', 'skills/**', 'bench/README.md']
 
 permissions:
   contents: read
@@ -85,7 +86,19 @@ jobs:
           ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/uidiff-clean-zig-cache
 
   release-build:
+    if: github.event_name == 'pull_request'
     uses: ./.github/workflows/build-release-targets.yml
+
+  quick:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+      - run: zig fmt --check .
+      - run: zig build test
 
   font:
     if: github.event_name == 'pull_request'
