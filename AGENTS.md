@@ -127,6 +127,11 @@ The noninterlaced 8-bit RGB, RGBA, grayscale and indexed PNG path uses zlib-ng t
 
 PNG chunk checksums use zlib-ng's CRC-32. On x86_64, zlib-ng detects PCLMULQDQ at runtime and uses its braid kernel as a fallback. Chorba is disabled. On Arm64, zlib-ng uses ARMv8 CRC instructions when the target or runtime CPU supports them. The zlib stream uses Adler-32.
 
+## Interval glossary
+
+- A column interval starts at x (called left in a column span) and has a width. A row interval starts at y and has a height. The intervals are half-open, so right is x + width and bottom is y + height. The column card search keeps a left bound and exclusive right bound in `Edge` to use directly as loop endpoints.
+- An aligned band stores a row start and row count for each side. The flood fill's `InclusiveSpan` uses inclusive first and last indices on either axis.
+
 ## Annotation glossary
 
 - Focus is a source window in a panoramic sheet. It may cover several nearby changes.

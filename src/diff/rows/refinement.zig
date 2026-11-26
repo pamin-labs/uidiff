@@ -15,7 +15,7 @@ const PixelSamples = struct {
     shifted: usize = 0,
 };
 
-const PixelBand = struct { before: usize, after: usize, count: usize, shift: usize };
+const PixelBand = struct { before_y: usize, after_y: usize, height: usize, shift: usize };
 
 const colour_sample_columns = 96;
 
@@ -83,9 +83,9 @@ fn recoverGrowingEdits(sample: band.Sample, scroll: usize, bands: []band.Band) v
 
 fn prefersGrowthOffset(sample: band.Sample, row_band: band.Band, growth: usize) bool {
     const totals = sampleBand(.colour, sample.pair, sample.columns, .{
-        .before = row_band.before,
-        .after = row_band.after,
-        .count = row_band.removed,
+        .before_y = row_band.before,
+        .after_y = row_band.after,
+        .height = row_band.removed,
         .shift = growth,
     }, &.{});
     return totals.positional >= min_sample_support and
@@ -170,9 +170,9 @@ fn shapeKeepsOffset(sample: band.Sample, scroll: usize, gap: band.Band) bool {
     if (!pixel.sameRun(backdrop, opposite)) return false;
 
     const totals = sampleBand(.silhouette, .{ .before = short, .after = long }, sample.columns, .{
-        .before = short_y,
-        .after = long_y,
-        .count = count,
+        .before_y = short_y,
+        .after_y = long_y,
+        .height = count,
         .shift = shift,
     }, backdrop);
     return totals.appearance >= min_sample_support and totals.positional >= min_sample_support and totals.shifted == 0;
@@ -181,13 +181,13 @@ fn shapeKeepsOffset(sample: band.Sample, scroll: usize, gap: band.Band) bool {
 fn sampleBand(comptime mode: enum { colour, silhouette }, pair: value.Pair, span: columns.Span, row_band: PixelBand, backdrop: []const value.Pixel) PixelSamples {
     const columns_target = if (mode == .colour) colour_sample_columns else silhouette_sample_columns;
     const x_step = @max(1, span.width / columns_target);
-    const y_step = @max(1, row_band.count / sample_rows);
+    const y_step = @max(1, row_band.height / sample_rows);
     var totals: PixelSamples = .{};
     var y: usize = 0;
-    while (y < row_band.count) : (y += y_step) {
-        const old = pair.before.rowSegment(row_band.before + y, span.left, span.width);
-        const same = pair.after.rowSegment(row_band.after + y, span.left, span.width);
-        const moved = pair.after.rowSegment(row_band.after + row_band.shift + y, span.left, span.width);
+    while (y < row_band.height) : (y += y_step) {
+        const old = pair.before.rowSegment(row_band.before_y + y, span.left, span.width);
+        const same = pair.after.rowSegment(row_band.after_y + y, span.left, span.width);
+        const moved = pair.after.rowSegment(row_band.after_y + row_band.shift + y, span.left, span.width);
         var x: usize = 0;
         while (x < span.width) : (x += x_step) {
             if (mode == .colour) {
