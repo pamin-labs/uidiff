@@ -202,8 +202,9 @@ jobs:
           if [[ "$PRERELEASE" == true ]]; then dist_tag=next; fi
           while IFS= read -r package; do
             # A rerun skips versions an earlier attempt already published.
-            spec=$(node -p 'const p = require(require("path").resolve(process.argv[1])); p.name + "@" + p.version' "./$package/package.json")
-            if npm view "$spec" version >/dev/null 2>&1; then continue; fi
+            # The registry answers 200 for a published version; npm view needs auth setup-node leaves empty.
+            path=$(node -p 'const p = require(require("path").resolve(process.argv[1])); p.name.replace("/", "%2f") + "/" + p.version' "./$package/package.json")
+            if curl -sf -o /dev/null "https://registry.npmjs.org/$path"; then continue; fi
             npm publish "./$package" --access public --provenance --tag "$dist_tag"
           done <stage/npm-order.txt
         env:
