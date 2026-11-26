@@ -85,24 +85,23 @@ const CompareBuffers = struct {
     fn deinit(self: *CompareBuffers, allocator: Allocator) void {
         self.alignment.deinit(allocator);
         self.seeds.deinit(allocator);
-        self.freeMask(allocator);
+        values.freeUnfilled(regions.Cell, allocator, self.mask);
     }
 
     fn prepare(self: *CompareBuffers, allocator: Allocator, area: usize) Allocator.Error!Scratch {
         const seed_rows = @max(1, @min(regions.max_fill_seeds, area));
         if (area > self.mask.len) {
-            // yiq.mask writes every cell it hands to the grouping pass.
-            const fresh = try values.allocUnfilled(regions.Cell, allocator, area);
-            self.freeMask(allocator);
-            self.mask = fresh;
+            // Remapping lets the allocator reuse the storage. If it cannot,
+            // release the old mask first because yiq.mask overwrites every cell.
+            self.mask = allocator.remap(self.mask, area) orelse grow: {
+                values.freeUnfilled(regions.Cell, allocator, self.mask);
+                self.mask = &.{};
+                break :grow try values.allocUnfilled(regions.Cell, allocator, area);
+            };
         }
         try self.seeds.ensureTotalCapacityPrecise(allocator, seed_rows);
         self.seeds.items.len = seed_rows;
         return .{ .mask = self.mask[0..area], .seeds = self.seeds.items };
-    }
-
-    fn freeMask(self: *CompareBuffers, allocator: Allocator) void {
-        values.freeUnfilled(regions.Cell, allocator, self.mask);
     }
 };
 
@@ -663,6 +662,46 @@ fn comparePair(allocator: Allocator, before: Image, after: Image) !void {
     defer result.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 1), result.regions.len);
     try std.testing.expectEqual(values.Kind.inserted, result.regions[0].kind);
+}
+
+test "mask growth avoids having both sizes live on a remapping allocator" {
+    const small_area = 11;
+    const large_area = 31;
+    var storage: [512]u8 align(@alignOf(u32)) = undefined;
+    var fixed: std.heap.FixedBufferAllocator = .init(&storage);
+    var counting: std.testing.FailingAllocator = .init(fixed.allocator(), .{});
+    const allocator = counting.allocator();
+    var buffers: CompareBuffers = .{};
+    {
+        defer buffers.deinit(allocator);
+        // Reserve the seeds first so the mask is eligible for in-place growth.
+        try buffers.seeds.ensureTotalCapacityPrecise(allocator, large_area);
+        const small = try buffers.prepare(allocator, small_area);
+        @memset(small.mask, .clear);
+        const large = try buffers.prepare(allocator, large_area);
+        try std.testing.expectEqual(large_area, large.mask.len);
+        try std.testing.expectEqual(@as(usize, 0), counting.freed_bytes);
+        // No frees occurred, so total allocated bytes is the peak live count.
+        const peak = large_area * (@sizeOf(u32) + @sizeOf(regions.Cell));
+        try std.testing.expectEqual(peak, counting.allocated_bytes);
+    }
+    try std.testing.expectEqual(counting.allocated_bytes, counting.freed_bytes);
+}
+
+test "mask growth releases the old mask if remapping and allocation fail" {
+    const small_area = 11;
+    const large_area = 31;
+    var counting: std.testing.FailingAllocator = .init(std.testing.allocator, .{
+        .fail_index = 2,
+        .resize_fail_index = 0,
+    });
+    const allocator = counting.allocator();
+    var buffers: CompareBuffers = .{};
+    defer buffers.deinit(allocator);
+    _ = try buffers.prepare(allocator, small_area);
+    try std.testing.expectError(error.OutOfMemory, buffers.prepare(allocator, large_area));
+    try std.testing.expectEqual(@as(usize, 0), buffers.mask.len);
+    try std.testing.expectEqual(small_area * @sizeOf(regions.Cell), counting.freed_bytes);
 }
 
 test "an interior blank run is ignored only if the layout retains its length" {
