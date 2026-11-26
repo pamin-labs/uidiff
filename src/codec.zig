@@ -1,6 +1,5 @@
 //! Detects, reads and decodes bounded PNG, JPEG, or WebP inputs, and encodes PNG.
 const std = @import("std");
-const builtin = @import("builtin");
 const values = @import("value.zig");
 const stb = @import("codec/stb.zig");
 
@@ -95,9 +94,6 @@ pub const FileInput = struct {
 const formats = .{ .png = png, .jpeg = jpeg, .webp = webp };
 
 const probe_prefix_bytes = 4096;
-
-/// Procedural JPEG inputs shared by the decoder and pair tests.
-pub const jpeg_test_images = if (builtin.is_test) @import("codec/jpeg_test_images.zig") else void;
 
 /// Checks the encoded size, image dimensions and decode budget before
 /// allocating pixels. The caller owns the result.

@@ -2,7 +2,7 @@
 //! PNG round trip of the sheet.
 const std = @import("std");
 const uidiff = @import("uidiff");
-const rgba = @import("fixtures/rgba.zig");
+const rgba = uidiff.testing.fuzz;
 const testing = std.testing;
 const Region = uidiff.Region;
 

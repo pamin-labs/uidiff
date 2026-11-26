@@ -1,7 +1,7 @@
 //! Shared RGBA inputs for comparison and sheet fuzzing.
 const std = @import("std");
-const uidiff = @import("uidiff");
-const Pixel = uidiff.Pixel;
+const values = @import("../value.zig");
+const Pixel = values.Pixel;
 
 /// Storage for one arbitrary small image.
 pub const Storage = [extent * extent]Pixel;
@@ -10,7 +10,7 @@ pub const Storage = [extent * extent]Pixel;
 pub const extent = 16;
 
 /// Draws dimensions and pixel bytes from the input stream in order.
-pub fn image(smith: *std.testing.Smith, storage: *Storage) uidiff.Image {
+pub fn image(smith: *std.testing.Smith, storage: *Storage) values.Image {
     const width = smith.valueRangeAtMost(u8, 1, extent);
     const height = smith.valueRangeAtMost(u8, 1, extent);
     const data = storage[0 .. @as(usize, width) * height];

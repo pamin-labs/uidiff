@@ -1,7 +1,7 @@
 //! Fuzzes the comparison with small RGBA pairs, half of them sharing shifted rows.
 const std = @import("std");
 const uidiff = @import("uidiff");
-const rgba = @import("fixtures/rgba.zig");
+const rgba = uidiff.testing.fuzz;
 const testing = std.testing;
 
 /// Scales are drawn as quarters from 1/4 to 4.

@@ -1,5 +1,6 @@
 //! The byte-oriented comparison, report and annotation API.
 const std = @import("std");
+const builtin = @import("builtin");
 const values = @import("value.zig");
 const diff = @import("diff.zig");
 const codec = @import("codec.zig");
@@ -86,6 +87,9 @@ pub const CompareFilesError = files.CompareError;
 /// Decodes two files, compares them and writes the sheet if asked. The caller owns the result.
 pub const compareFiles = files.compareFiles;
 
+/// Fixtures and assertions used in test builds.
+pub const testing = if (builtin.is_test) @import("testing.zig") else void;
+
 /// Compares a pair of borrowed RGBA8 values. The caller owns the result.
 pub fn compare(allocator: std.mem.Allocator, before: Image, after: Image, options: Options) CompareError!Comparison {
     return diff.compare(allocator, before, after, options.comparison());
@@ -96,13 +100,7 @@ test "module roots expose their API" {
 }
 
 test "required test selection" {
-    const filter = @import("required_test_options").filter;
-    if (filter.len == 0) return;
-    for (@import("builtin").test_functions) |entry| {
-        if (std.mem.endsWith(u8, entry.name, ".test.required test selection")) continue;
-        if (std.mem.indexOf(u8, entry.name, filter) != null) return;
-    }
-    return error.NoSelectedTests;
+    try @import("testing/required.zig").check();
 }
 
 test {

@@ -1,7 +1,6 @@
 //! Probes JPEG frames and runs the bounded 8-bit libjpeg-turbo decoder.
 const std = @import("std");
 const c = @import("jpeg_c");
-const test_images = @import("jpeg_test_images.zig");
 const memory = @import("codec_memory");
 const decoded_size = @import("dimensions.zig");
 const values = @import("../value.zig");
@@ -159,15 +158,9 @@ fn convertCmyk(row: []Pixel, inverted: bool) void {
     }
 }
 
-fn decodeGray(allocator: Allocator) !void {
-    const header = try probe(allocator, &test_images.gray, values.max_decode_bytes);
-    const pixels = try decode(allocator, &test_images.gray, header, values.max_decode_bytes);
-    defer release(allocator, pixels);
-    try std.testing.expectEqualSlices(Pixel, &.{.{ 128, 128, 128, 255 }}, pixels);
-}
-
 test "8-bit grayscale decodes to opaque RGBA and releases partial allocations" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, decodeGray, .{});
+    const test_images = @import("../testing/jpeg.zig");
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, test_images.checkGray, .{});
 }
 
 test "only complete 8-bit Huffman frame headers are accepted" {
@@ -188,17 +181,19 @@ test "only complete 8-bit Huffman frame headers are accepted" {
 }
 
 test "JPEG warnings reject truncated sequential and progressive streams" {
+    const test_images = @import("../testing/jpeg.zig");
     const allocator = std.testing.allocator;
     const progressive = test_images.progressive(2);
     for ([_][]const u8{ &test_images.gray, &progressive }) |complete| {
         const bytes = complete[0 .. complete.len - test_images.eoi.len];
         const header = try probe(allocator, bytes, values.max_decode_bytes);
         try std.testing.expectError(error.InvalidImage, decode(allocator, bytes, header, values.max_decode_bytes));
-        try decodeGray(allocator);
+        try test_images.checkGray(allocator);
     }
 }
 
 test "JPEG progressive scan limit accepts the boundary and rejects the next scan" {
+    const test_images = @import("../testing/jpeg.zig");
     const allocator = std.testing.allocator;
     const at_limit = test_images.progressive(max_scans);
     const header = try probe(allocator, &at_limit, values.max_decode_bytes);
@@ -211,6 +206,7 @@ test "JPEG progressive scan limit accepts the boundary and rejects the next scan
 }
 
 test "JPEG rejects header mismatch before allocating output" {
+    const test_images = @import("../testing/jpeg.zig");
     var scratch: [64 * 1024]u8 = undefined;
     var fixed: std.heap.FixedBufferAllocator = .init(&scratch);
     const header: Header = .{ .size = .{ .width = 512, .height = 512 } };

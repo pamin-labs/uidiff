@@ -1,5 +1,7 @@
 //! Procedural one-pixel JPEGs for the bridge's warning and scan-limit tests.
 const std = @import("std");
+const decoder = @import("../codec/jpeg.zig");
+const values = @import("../value.zig");
 
 const Frame = enum(u8) { baseline = 0xc0, progressive = 0xc2 };
 
@@ -29,6 +31,14 @@ pub fn progressive(comptime scans: usize) [header_bytes + scans * scan_bytes + e
     }
     bytes[bytes.len - eoi.len ..].* = eoi;
     return bytes;
+}
+
+/// Checks the baseline grayscale fixture with the supplied allocator.
+pub fn checkGray(allocator: std.mem.Allocator) !void {
+    const header = try decoder.probe(allocator, &gray, values.max_decode_bytes);
+    const pixels = try decoder.decode(allocator, &gray, header, values.max_decode_bytes);
+    defer decoder.release(allocator, pixels);
+    try std.testing.expectEqualSlices(values.Pixel, &.{.{ 128, 128, 128, 255 }}, pixels);
 }
 
 fn frame(kind: Frame) [124]u8 {

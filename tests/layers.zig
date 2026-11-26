@@ -63,6 +63,9 @@ const layers_heading = "## Layers";
 const max_agents_bytes = 64 * 1024;
 /// The module-table row naming files whose exported functions C code calls back.
 const export_row = "export";
+const testing_root = "src/testing.zig";
+const api_root = "src/root.zig";
+const tests_directory = "tests/";
 const diff_root = "src/diff.zig";
 const diff_directory = "src/diff/";
 const diff_test_support = "src/diff/test_support.zig";
@@ -77,6 +80,7 @@ const sample_agents =
     \\| diff | `src/diff.zig` `src/diff/` | value |
     \\| codec | `src/codec.zig` `src/codec/` | value |
     \\| annotate | `src/annotate.zig` `src/annotate/` | value |
+    \\| testing | `src/testing.zig` `src/testing/` | value, src/codec/jpeg.zig |
     \\| api | `src/root.zig` | value, diff, codec, annotate |
     \\| cli | `src/cli.zig` `src/cli/` | `uidiff` |
     \\| tool | `bench/` `tests/` | `uidiff` |
@@ -225,7 +229,7 @@ fn testOnlyImport(tree: *const Ast, node: Ast.Node.Index, allow_gated_export: bo
         if (tree.nodeTag(decl) == .test_decl) return true;
         if (!allow_gated_export) return false;
 
-        // The standalone scenario module still needs the diff root's test export.
+        // The facade export must import helpers only in the test branch.
         const variable = tree.fullVarDecl(decl) orelse return false;
         const gated = tree.fullIf(variable.ast.init_node.unwrap() orelse return false) orelse return false;
         const condition = tree.firstToken(gated.ast.cond_expr);
@@ -246,6 +250,12 @@ fn allowedImport(allocator: Allocator, rules: Rules, source: *const Source, node
     const resolved = try std.fs.path.resolvePosix(allocator, &.{ std.fs.path.dirnamePosix(from_path) orelse ".", target });
     defer allocator.free(resolved);
     const to = rules.layerOf(resolved) orelse return false;
+    if (std.mem.eql(u8, to.paths[0], testing_root) and from != to) {
+        if (sources.inDirectory(from_path, tests_directory)) return true;
+        const export_testing = std.mem.eql(u8, from_path, api_root) and std.mem.eql(u8, resolved, testing_root);
+        return testOnlyImport(&source.tree, node, export_testing);
+    }
+    if (std.mem.eql(u8, from.paths[0], testing_root) and contains(from.imports, resolved)) return true;
     if (std.mem.eql(u8, resolved, diff_test_support))
         return from == to and testOnlyImport(&source.tree, node, std.mem.eql(u8, from_path, diff_root));
     if (std.mem.eql(u8, from_path, diff_test_support) and std.mem.eql(u8, resolved, diff_root))
@@ -397,6 +407,11 @@ test "diff units only import lower tiers and fixtures stay in test scope" {
     try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/regions/moves.zig", "test { _ = @import(\"../span.zig\"); }"));
     try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/span.zig", "fn sample() void { _ = @import(\"test_support.zig\"); }"));
     try testing.expectError(error.ForbiddenImport, checkWithText(diff_root, "const sample = @import(\"diff/test_support.zig\");"));
+    try testing.expectError(error.ForbiddenImport, checkWithText("src/codec.zig", "const sample = @import(\"testing/jpeg.zig\");"));
+    try testing.expectError(error.ForbiddenImport, checkWithText(api_root, "const sample = @import(\"testing.zig\");"));
+    try testing.expectError(error.ForbiddenImport, checkWithText(api_root, "const sample = if (builtin.is_test) void else @import(\"testing.zig\");"));
+    try checkWithText(api_root, "pub const testing = if (builtin.is_test) @import(\"testing.zig\") else void;");
+    try checkWithText("src/codec.zig", "test { _ = @import(\"testing/jpeg.zig\"); }");
     try testing.expectError(error.ForbiddenImport, checkWithText(diff_root, "const sample = if (builtin.is_test) void else @import(\"diff/test_support.zig\");"));
     try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/rows.zig", "const regions = @import(\"regions.zig\");"));
     try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/regions/logical.zig", "test { _ = @import(\"../rows.zig\"); }"));
