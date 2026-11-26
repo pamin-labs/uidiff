@@ -1,4 +1,4 @@
-//! Streams zlib compression into checksummed PNG chunks.
+//! Inflates PNG image data and deflates rows into checksummed chunks.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -7,6 +7,7 @@ const memory = @import("codec_memory");
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
 const zlib = @import("zlib_c");
+const format = @import("png_format");
 const Image = values.Image;
 
 /// The uncompressed history carried into the next raw deflate strip.
@@ -58,7 +59,7 @@ pub const Deflater = struct {
     }
 
     fn emit(self: *Deflater) Writer.Error!void {
-        try chunk(self.output, "IDAT", self.out[0 .. self.out.len - self.stream.avail_out]);
+        try chunk(self.output, format.idat_type, self.out[0 .. self.out.len - self.stream.avail_out]);
         self.stream.next_out = self.out.ptr;
         self.stream.avail_out = @intCast(self.out.len);
     }
@@ -114,23 +115,27 @@ pub const StripStream = struct {
     adler: u32 = 1,
 
     pub fn start(self: StripStream) Writer.Error!void {
-        try chunk(self.output, "IDAT", std.compress.flate.Container.zlib.header());
+        try chunk(self.output, format.idat_type, std.compress.flate.Container.zlib.header());
     }
 
     pub fn write(self: *StripStream, strip: Strip.Result) Writer.Error!void {
         self.adler = zlib.zng_adler32_combine(self.adler, strip.adler, @intCast(strip.input_len));
-        try chunk(self.output, "IDAT", strip.bytes);
+        try chunk(self.output, format.idat_type, strip.bytes);
     }
 
     pub fn finish(self: StripStream) Writer.Error!void {
         var footer: [4]u8 = undefined;
         std.mem.writeInt(u32, &footer, self.adler, .big);
-        try chunk(self.output, "IDAT", &footer);
+        try chunk(self.output, format.idat_type, &footer);
     }
 };
 
 /// Compressed bytes per IDAT chunk.
 pub const chunk_bytes = 64 * 1024;
+
+// Keep initialization and the inflate call in separate functions on ARM64
+// Linux to save 168 executable bytes with Zig 0.17.1. Re-measure on a Zig upgrade.
+const inflate_call: std.builtin.CallModifier = if (builtin.cpu.arch == .aarch64 and builtin.os.tag == .linux) .never_inline else .auto;
 
 const window_bits = 15;
 
@@ -144,6 +149,70 @@ pub fn chunk(output: *Writer, comptime kind: *const [4]u8, data: []const u8) Wri
     const tag_crc = zlib.zng_crc32_z(0, kind, kind.len);
     const checksum = zlib.zng_crc32_z(tag_crc, data.ptr, data.len);
     try output.writeInt(u32, checksum, .big);
+}
+
+/// Inflates contiguous IDAT chunks into a row sink with consume(bytes) and
+/// complete() methods. The caller has entered a decode allocation scope.
+pub fn inflateRows(bytes: []const u8, comptime output_bytes: usize, output: *[output_bytes]u8, rows: anytype) memory.Error!bool {
+    // Match the legacy checksum policy, leaving unusual header/trailer splits
+    // to that decoder. The zlib header bounds the raw dictionary to 32 KiB.
+    const Sink = @TypeOf(rows.*);
+    if (!@hasDecl(Sink, "consume") or !@hasDecl(Sink, "complete"))
+        @compileError("a PNG row sink must provide consume(bytes) and complete()");
+    var chunks: format.Chunks = .{ .remaining = bytes };
+    const first = chunks.next() orelse return false;
+    if (first.data.len < 2) return false;
+    const cmf, const flg = first.data[0..2].*;
+    if (cmf & 15 != zlib.Z_DEFLATED or cmf >> 4 > 7 or flg & 32 != 0 or (@as(u16, cmf) * 256 + flg) % 31 != 0) return false;
+    var stream: zlib.zng_stream = std.mem.zeroes(zlib.zng_stream);
+    stream.zalloc = zalloc;
+    stream.zfree = zfree;
+    switch (@call(inflate_call, initInflate, .{ &stream, cmf })) {
+        zlib.Z_OK => {},
+        zlib.Z_MEM_ERROR => return memory.failure(),
+        else => return false,
+    }
+    const success = consumeIdats(&chunks, first.data, output_bytes, output, rows, &stream);
+    const closed = zlib.zng_inflateEnd(&stream) == zlib.Z_OK;
+    return (try success) and closed;
+}
+
+fn consumeIdats(chunks: *format.Chunks, first: []const u8, comptime output_bytes: usize, output: *[output_bytes]u8, rows: anytype, stream: *zlib.zng_stream) memory.Error!bool {
+    var src = first;
+    var head: usize = 2;
+    while (true) {
+        const available = src.len;
+        const tail: usize = if (chunks.remaining.len == 0) 4 else 0;
+        if (available < head + tail) return false;
+        stream.next_in = src[head..].ptr;
+        // The chunk length originates in a validated u32 PNG length.
+        stream.avail_in = @intCast(available - head - tail);
+        while (true) {
+            stream.next_out = output;
+            stream.avail_out = output_bytes;
+            const status = @call(inflate_call, inflateBlock, .{stream});
+            switch (status) {
+                zlib.Z_OK, zlib.Z_STREAM_END, zlib.Z_BUF_ERROR => {},
+                zlib.Z_MEM_ERROR => return memory.failure(),
+                else => return false,
+            }
+            if (!rows.consume(output[0 .. output_bytes - stream.avail_out])) return false;
+            if (status == zlib.Z_STREAM_END) return rows.complete();
+            if (stream.avail_out != 0 and stream.avail_in == 0) break;
+            if (status == zlib.Z_BUF_ERROR) return false;
+        }
+        const next = chunks.next() orelse return false;
+        src = next.data;
+        head = 0;
+    }
+}
+
+fn initInflate(stream: *zlib.zng_stream, cmf: u8) c_int {
+    return zlib.zng_inflateInit2(stream, -(@as(c_int, cmf >> 4) + 8));
+}
+
+fn inflateBlock(stream: *zlib.zng_stream) c_int {
+    return zlib.zng_inflate(stream, zlib.Z_NO_FLUSH);
 }
 
 fn initStream(stream: *zlib.zng_stream, allocator: *Allocator, window: c_int) EncodeError!void {
@@ -165,19 +234,22 @@ fn endStream(stream: *zlib.zng_stream) void {
 }
 
 fn zalloc(context: ?*anyopaque, items: c_uint, size: c_uint) callconv(.c) ?*anyopaque {
-    // initStream supplies a pointer to an allocator that outlives the stream.
-    const allocator: *const Allocator = @ptrCast(@alignCast(context));
     const bytes = std.math.mul(usize, items, size) catch return null;
+    // Inflate has no context and charges the active decoder budget. Deflate
+    // supplies an allocator pointer that stays valid until deflateEnd.
+    const owner = context orelse return memory.uidiff_codec_malloc(bytes);
+    const allocator: *const Allocator = @ptrCast(@alignCast(owner));
     const block = memory.allocBlock(allocator.*, bytes) orelse return null;
     if (builtin.mode == .debug) @memset(block, undefined);
     return block.ptr;
 }
 
-fn zfree(
-    _: ?*anyopaque,
-    address: ?*anyopaque,
-) callconv(.c) void {
-    memory.freeBlock(address);
+fn zfree(context: ?*anyopaque, address: ?*anyopaque) callconv(.c) void {
+    if (context == null) {
+        memory.uidiff_codec_free(address);
+    } else {
+        memory.freeBlock(address);
+    }
 }
 
 test "strip checksums describe the uncompressed bytes in stream order" {

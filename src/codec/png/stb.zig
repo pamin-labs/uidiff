@@ -2,10 +2,10 @@
 //! caller's allocator and are charged against a budget sized from the header.
 const std = @import("std");
 const c = @import("stb_c");
-const values = @import("../value.zig");
-const png_format = @import("png_format.zig");
+const values = @import("../../value.zig");
+const png_format = @import("png_format");
 const memory = @import("codec_memory");
-const decoded_size = @import("dimensions.zig");
+const types = @import("../types.zig");
 const Allocator = std.mem.Allocator;
 const Pixel = values.Pixel;
 const Size = values.Size;
@@ -41,7 +41,7 @@ pub fn probe(allocator: Allocator, bytes: []const u8, cap: usize) DecodeError!He
         return memory.failure();
     }
     const sixteen = c.stbi_is_16_bit_from_memory(bytes.ptr, len) != 0;
-    return .{ .size = try decoded_size.fromC(width, height), .sample_bytes = if (sixteen) 2 else 1 };
+    return .{ .size = try types.fromC(width, height), .sample_bytes = if (sixteen) 2 else 1 };
 }
 
 /// Decodes a fallback PNG under the caller's budget.
@@ -69,9 +69,10 @@ pub fn loadStb(bytes: []const u8, expected: Size) DecodeError![]Pixel {
     var channels: c_int = 0;
     const data = c.stbi_load_from_memory(bytes.ptr, len, &width, &height, &channels, @sizeOf(Pixel)) orelse return memory.failure();
     errdefer c.stbi_image_free(data);
-    const actual = try decoded_size.fromC(width, height);
+    const actual = try types.fromC(width, height);
     if (actual.width != expected.width or actual.height != expected.height) return error.InvalidImage;
-    const count = actual.pixelCount() orelse return error.ImageTooLarge;
+    // The matching probe dimensions have already passed the image limits.
+    const count = expected.width * expected.height;
     // stb allocates the returned block through our memory hooks.
     const allocation = memory.allocatedBytes(data);
     const used = count * @sizeOf(Pixel);
@@ -80,21 +81,20 @@ pub fn loadStb(bytes: []const u8, expected: Size) DecodeError![]Pixel {
 }
 
 noinline fn beginDecode(allocator: Allocator, header: Header, len: usize, cap: usize) DecodeError!void {
-    const limit = budget(header, len) orelse return error.ImageTooLarge;
-    if (limit > cap) return error.ImageTooLarge;
+    const limit = budget(header, len, cap) orelse return error.ImageTooLarge;
     memory.begin(allocator, limit);
 }
 
 /// Returns the most bytes stb may hold while decoding an image with this
-/// header from encoded_len bytes, or null past max_decode_bytes.
-fn budget(header: Header, encoded_len: usize) ?usize {
+/// header from encoded_len bytes, or null past the validated cap.
+fn budget(header: Header, encoded_len: usize, cap: usize) ?usize {
     const width = std.math.add(usize, header.size.width, block_pixels - 1) catch return null;
     const height = std.math.add(usize, header.size.height, block_pixels - 1) catch return null;
     const blocks = std.math.mul(usize, width / block_pixels, height / block_pixels) catch return null;
     const image = std.math.mul(usize, blocks, block_pixels * block_pixels * @sizeOf(Pixel) * png_image_buffers) catch return null;
     const scaled = std.math.mul(usize, image, header.sample_bytes) catch return null;
     const total = std.math.add(usize, scaled, encoded_len +| fixed_bytes) catch return null;
-    return if (total <= values.max_decode_bytes) total else null;
+    return if (total <= cap) total else null;
 }
 
 // stb replaces a failed format probe's reason with "unknown image type".
@@ -102,8 +102,8 @@ fn budget(header: Header, encoded_len: usize) ?usize {
 fn oversizedPng(bytes: []const u8) bool {
     if (bytes.len < png_format.header_bytes or !std.mem.startsWith(u8, bytes, png_format.header_prefix)) return false;
     const offset = png_format.dimensions_offset;
-    const width: u32 = std.mem.readInt(u32, bytes[offset..][0..4], .big);
-    const height: u32 = std.mem.readInt(u32, bytes[offset + 4 ..][0..4], .big);
+    const width: u32 = png_format.readU32(bytes, offset);
+    const height: u32 = png_format.readU32(bytes, offset + @sizeOf(u32));
     if (width == 0 or height == 0) return false;
     const size: Size = .{
         .width = std.math.cast(usize, width) orelse return true,
@@ -126,9 +126,8 @@ test "PNG headers outside the image limits report ImageTooLarge" {
     for (cases) |case| {
         const dimensions: [8]u8 = @splat(0);
         var header = (png_format.header_prefix ++ dimensions ++
-            [_]u8{ png_format.sample_depth, png_format.rgba_color, 0, 0, 0 }).*;
-        std.mem.writeInt(u32, header[png_format.dimensions_offset..][0..4], case.width, .big);
-        std.mem.writeInt(u32, header[png_format.dimensions_offset + 4 ..][0..4], case.height, .big);
+            [_]u8{ png_format.sample_depth, @backingInt(png_format.Colour.rgba), 0, 0, 0 }).*;
+        png_format.writeDimensions(header[png_format.dimensions_offset..][0..png_format.dimensions_bytes], case.width, case.height);
         try std.testing.expectError(case.expected, probe(std.testing.allocator, &header, values.max_decode_bytes));
     }
 }
@@ -139,8 +138,8 @@ test "the largest 8-bit images fit the decode budget and a 16-bit one does not" 
     const padded: Size = .{ .width = 4097, .height = values.max_pixels / 4097 };
     for ([_]Size{ tall, padded }) |largest| {
         try std.testing.expect(largest.pixelCount() != null);
-        try std.testing.expect(budget(.{ .size = largest, .sample_bytes = 1 }, values.max_encoded_bytes) != null);
-        try std.testing.expectEqual(@as(?usize, null), budget(.{ .size = largest, .sample_bytes = 2 }, 0));
+        try std.testing.expect(budget(.{ .size = largest, .sample_bytes = 1 }, values.max_encoded_bytes, values.max_decode_bytes) != null);
+        try std.testing.expectEqual(@as(?usize, null), budget(.{ .size = largest, .sample_bytes = 2 }, 0, values.max_decode_bytes));
     }
 }
 

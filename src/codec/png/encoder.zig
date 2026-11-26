@@ -1,20 +1,22 @@
-//! Encodes borrowed pixel rows and composed sheet strips as PNG.
+//! Encodes borrowed or staged pixel rows as PNG.
 
 const std = @import("std");
-const deflate = @import("deflate.zig");
+const zlib = @import("zlib.zig");
 const decoder = @import("decoder.zig");
 const values = @import("../../value.zig");
-const png_format = @import("../png_format.zig");
-const stb = @import("../stb.zig");
+const png_format = @import("png_format");
+const stb = @import("stb.zig");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const Writer = Io.Writer;
 const Image = values.Image;
 
-const Filtered = struct { method: u8, bytes: []const u8 };
+const Filtered = struct { method: png_format.Filter, bytes: []const u8 };
 
 const BorrowedRows = struct {
     image: Image,
+
+    pub const staged = false;
 
     pub fn isOpaque(self: BorrowedRows) bool {
         return self.image.isOpaque();
@@ -25,7 +27,7 @@ const BorrowedRows = struct {
     }
 };
 
-const sheet_strip_rows = 8;
+const strip_rows = 8;
 
 const parallel_min_bytes = 6 * 1024 * 1024;
 
@@ -40,33 +42,34 @@ const filter_sample_pixels = 6;
 const filter_switch_margin = 4;
 
 /// Encodes a valid image. Allocates the compressor's window and one filtered row.
-pub fn write(allocator: Allocator, image: Image, output: *Writer) deflate.EncodeError!void {
+pub fn write(allocator: Allocator, image: Image, output: *Writer) zlib.EncodeError!void {
     if (!image.valid()) return error.InvalidImage;
     return writeRows(allocator, image.size(), BorrowedRows{ .image = image }, output);
 }
 
-/// Encodes a source that supplies one row at a time. BorrowedRows can return
-/// existing pixels. Other sources are consumed in strips and can fill the
-/// provided row buffer or lend a row to copy into the strip.
-/// Sources may supply isOpaque for RGB output.
-pub fn writeRows(allocator: Allocator, size: values.Size, source: anytype, output: *Writer) deflate.EncodeError!void {
+/// Encodes a PNG from a row source. See writeRowsWithIo for the source contract.
+pub fn writeRows(allocator: Allocator, size: values.Size, source: anytype, output: *Writer) zlib.EncodeError!void {
     return writeRowsWithIo(null, allocator, size, source, output);
 }
 
-/// Encodes large sheets with parallel deflate strips when given an I/O backend.
-/// A borrowed row must remain readable through the next source call.
-pub fn writeRowsWithIo(io: ?Io, allocator: Allocator, size: values.Size, source: anytype, output: *Writer) deflate.EncodeError!void {
-    if (!@hasDecl(@TypeOf(source), "row"))
-        @compileError("a PNG row source must provide row(y, scratch)");
+/// Encodes PNG rows, optionally using parallel compression. A row source
+/// supplies row(y, scratch) returning size.width pixels and isOpaque()
+/// reporting whether all pixels have alpha 255. Its comptime staged bool
+/// selects serial buffering. A staged source can return scratch or a row
+/// to copy immediately. A borrowed source receives empty scratch in serial
+/// mode and keeps each row readable through the next source call.
+pub fn writeRowsWithIo(io: ?Io, allocator: Allocator, size: values.Size, source: anytype, output: *Writer) zlib.EncodeError!void {
+    const Source = @TypeOf(source);
+    if (!@hasDecl(Source, "row"))
+        @compileError("a PNG row source must provide row(y, scratch) returning []const Pixel");
+    if (!@hasDecl(Source, "isOpaque"))
+        @compileError("a PNG row source must provide isOpaque() returning bool");
+    if (!@hasDecl(Source, "staged") or @TypeOf(Source.staged) != bool)
+        @compileError("a PNG row source must declare staged as a comptime bool");
     if (size.pixelCount() == null) return error.InvalidImage;
-    try output.writeAll(png_format.signature);
-    const rgb_only = if (@hasDecl(@TypeOf(source), "isOpaque")) source.isOpaque() else false;
-    var header: [png_format.header_data_bytes]u8 = undefined;
+    const rgb_only = source.isOpaque();
     // Valid images have at most max_extent pixels per axis, which fits u32.
-    std.mem.writeInt(u32, header[0..4], @intCast(size.width), .big);
-    std.mem.writeInt(u32, header[4..8], @intCast(size.height), .big);
-    header[8..13].* = .{ png_format.sample_depth, if (rgb_only) png_format.rgb_color else png_format.rgba_color, 0, 0, 0 };
-    try deflate.chunk(output, png_format.header_type, &header);
+    try png_format.writeHeader(zlib.chunk, output, @intCast(size.width), @intCast(size.height), if (rgb_only) .rgb else .rgba);
 
     const encoded_row_bytes = 1 + size.width * @as(usize, if (rgb_only) 3 else @sizeOf(values.Pixel));
     const workers = if (io != null and encoded_row_bytes * size.height >= parallel_min_bytes)
@@ -79,27 +82,27 @@ pub fn writeRowsWithIo(io: ?Io, allocator: Allocator, size: values.Size, source:
     } else {
         try writeSerial(allocator, size, source, output, rgb_only);
     }
-    try deflate.chunk(output, "IEND", "");
+    try zlib.chunk(output, png_format.iend_type, "");
 }
 
-fn writeSerial(allocator: Allocator, size: values.Size, source: anytype, output: *Writer, rgb_only: bool) deflate.EncodeError!void {
+fn writeSerial(allocator: Allocator, size: values.Size, source: anytype, output: *Writer, rgb_only: bool) zlib.EncodeError!void {
     const row_bytes = size.width * @sizeOf(values.Pixel);
-    const staged_rows: usize = if (@TypeOf(source) == BorrowedRows) 0 else sheet_strip_rows + 1;
-    const buffer = try allocator.alignedAlloc(u8, .@"4", deflate.chunk_bytes + row_bytes + staged_rows * row_bytes);
+    const staged_rows: usize = if (@TypeOf(source).staged) strip_rows + 1 else 0;
+    const buffer = try allocator.alignedAlloc(u8, .@"4", zlib.chunk_bytes + row_bytes + staged_rows * row_bytes);
     defer allocator.free(buffer);
-    const filtered = buffer[deflate.chunk_bytes..][0..row_bytes];
-    const staging = std.mem.bytesAsSlice(values.Pixel, buffer[deflate.chunk_bytes + row_bytes ..]);
+    const filtered = buffer[zlib.chunk_bytes..][0..row_bytes];
+    const staging = std.mem.bytesAsSlice(values.Pixel, buffer[zlib.chunk_bytes + row_bytes ..]);
     var above: []const u8 = &.{};
-    var compress: deflate.Deflater = undefined;
+    var compress: zlib.Deflater = undefined;
     var backing = allocator;
-    try compress.init(&backing, output, buffer[0..deflate.chunk_bytes]);
+    try compress.init(&backing, output, buffer[0..zlib.chunk_bytes]);
     defer compress.deinit();
     for (0..size.height) |y| {
         const pixels = if (staged_rows == 0) source.row(y, &.{}) else staged: {
-            if (y % sheet_strip_rows == 0) {
+            if (y % strip_rows == 0) {
                 // One extra slot preserves the previous filtered row while
-                // the next strip is composed.
-                for (y..@min(size.height, y + sheet_strip_rows)) |index| {
+                // the source supplies the next strip.
+                for (y..@min(size.height, y + strip_rows)) |index| {
                     const buffer_row = staging[(index % staged_rows) * size.width ..][0..size.width];
                     const produced = source.row(index, buffer_row);
                     if (produced.ptr != buffer_row.ptr) @memcpy(buffer_row, produced);
@@ -109,18 +112,18 @@ fn writeSerial(allocator: Allocator, size: values.Size, source: anytype, output:
         };
         const row = std.mem.sliceAsBytes(pixels);
         const encoded = filterRow(row, above, filtered, rgb_only);
-        try compress.write(&.{encoded.method});
+        try compress.write(&.{@backingInt(encoded.method)});
         try compress.write(encoded.bytes);
         above = row;
     }
     try compress.finish();
 }
 
-fn writeStrips(io: Io, allocator: Allocator, size: values.Size, source: anytype, output: *Writer, rgb_only: bool, encoded_row_bytes: usize, workers: usize) deflate.EncodeError!void {
-    const strip_rows = @max(1, target_strip_bytes / encoded_row_bytes);
-    const strip_bytes = strip_rows * encoded_row_bytes;
-    const compressed_bytes = deflate.Strip.outputBound(strip_bytes);
-    const slot_bytes = deflate.history_bytes + strip_bytes + compressed_bytes;
+fn writeStrips(io: Io, allocator: Allocator, size: values.Size, source: anytype, output: *Writer, rgb_only: bool, encoded_row_bytes: usize, workers: usize) zlib.EncodeError!void {
+    const rows_per_strip = @max(1, target_strip_bytes / encoded_row_bytes);
+    const strip_bytes = rows_per_strip * encoded_row_bytes;
+    const compressed_bytes = zlib.Strip.outputBound(strip_bytes);
+    const slot_bytes = zlib.history_bytes + strip_bytes + compressed_bytes;
     const row_bytes = size.width * @sizeOf(values.Pixel);
     const buffer = try allocator.alignedAlloc(u8, .@"4", 3 * row_bytes + workers * slot_bytes);
     defer allocator.free(buffer);
@@ -129,14 +132,14 @@ fn writeStrips(io: Io, allocator: Allocator, size: values.Size, source: anytype,
     const slots = buffer[3 * row_bytes ..];
 
     var backing = allocator;
-    var streams: [max_strip_workers]deflate.Strip = undefined;
+    var streams: [max_strip_workers]zlib.Strip = undefined;
     var initialized: usize = 0;
     defer for (streams[0..initialized]) |*stream| stream.deinit();
     for (streams[0..workers]) |*stream| {
         try stream.init(&backing);
         initialized += 1;
     }
-    var pending: [max_strip_workers]?Io.Future(deflate.EncodeError!deflate.Strip.Result) = @splat(null);
+    var pending: [max_strip_workers]?Io.Future(zlib.EncodeError!zlib.Strip.Result) = @splat(null);
     defer for (pending[0..workers]) |*slot| {
         if (slot.*) |*task| {
             // The primary operation already returned its error. Wait before
@@ -145,7 +148,7 @@ fn writeStrips(io: Io, allocator: Allocator, size: values.Size, source: anytype,
         }
     };
 
-    var stream: deflate.StripStream = .{ .output = output };
+    var stream: zlib.StripStream = .{ .output = output };
     try stream.start();
     var previous: []const u8 = &.{};
     var above: []const u8 = &.{};
@@ -158,24 +161,24 @@ fn writeStrips(io: Io, allocator: Allocator, size: values.Size, source: anytype,
             pending[slot] = null;
         }
         const workspace = slots[slot * slot_bytes ..][0..slot_bytes];
-        const history = workspace[0..@min(deflate.history_bytes, previous.len)];
+        const history = workspace[0..@min(zlib.history_bytes, previous.len)];
         // Different slots own consecutive strips, so the previous input
         // remains available even while its worker is compressing it.
         @memcpy(history, previous[previous.len - history.len ..]);
-        const end = @min(size.height, first + strip_rows);
-        const input = workspace[deflate.history_bytes..][0 .. (end - first) * encoded_row_bytes];
+        const end = @min(size.height, first + rows_per_strip);
+        const input = workspace[zlib.history_bytes..][0 .. (end - first) * encoded_row_bytes];
         for (first..end) |y| {
             const scratch = rows[(y % 2) * size.width ..][0..size.width];
             const row = std.mem.sliceAsBytes(source.row(y, scratch));
             const encoded = filterRow(row, above, filtered, rgb_only);
             const encoded_row = input[(y - first) * encoded_row_bytes ..][0..encoded_row_bytes];
-            encoded_row[0] = encoded.method;
+            encoded_row[0] = @backingInt(encoded.method);
             @memcpy(encoded_row[1..], encoded.bytes);
             above = row;
         }
-        const out = workspace[deflate.history_bytes + strip_bytes ..];
-        const flush: deflate.Strip.Flush = if (end == size.height) .finish else .sync;
-        pending[slot] = io.async(deflate.Strip.compress, .{ &streams[slot], history, input, out, flush });
+        const out = workspace[zlib.history_bytes + strip_bytes ..];
+        const flush: zlib.Strip.Flush = if (end == size.height) .finish else .sync;
+        pending[slot] = io.async(zlib.Strip.compress, .{ &streams[slot], history, input, out, flush });
         previous = input;
         first = end;
     }
@@ -190,22 +193,22 @@ fn writeStrips(io: Io, allocator: Allocator, size: values.Size, source: anytype,
 fn filterRow(row: []const u8, above: []const u8, filtered: []u8, rgb_only: bool) Filtered {
     const pixel = @sizeOf(values.Pixel);
     if (above.len == 0) return .{
-        .method = png_format.up_filter,
+        .method = .up,
         .bytes = if (rgb_only) packRgb(false, filtered, row, &.{}) else row,
     };
     if (rgb_only and std.mem.eql(u8, row, above)) {
         const zeros = filtered[0 .. row.len / pixel * 3];
         @memset(zeros, 0);
-        return .{ .method = png_format.up_filter, .bytes = zeros };
+        return .{ .method = .up, .bytes = zeros };
     }
-    const method = if (rgb_only) preferredFilter(row, above) else png_format.up_filter;
+    const method = if (rgb_only) preferredFilter(row, above) else .up;
     const bytes = switch (method) {
-        png_format.sub_filter => sub: {
+        .sub => sub: {
             filtered[0..3].* = row[0..3].*;
             const encoded = packRgb(true, filtered[3..], row[pixel..], row[0 .. row.len - pixel]);
             break :sub filtered[0 .. 3 + encoded.len];
         },
-        png_format.paeth_filter => paeth: {
+        .paeth => paeth: {
             filterPaeth(filtered, row, above);
             break :paeth packRgb(false, filtered, filtered, &.{});
         },
@@ -252,7 +255,7 @@ fn filter(out: []u8, current: []const u8, predictor: []const u8) void {
     for (out[i..], current[i..], predictor[i..]) |*byte, now, from| byte.* = now -% from;
 }
 
-fn preferredFilter(row: []const u8, above: []const u8) u8 {
+fn preferredFilter(row: []const u8, above: []const u8) png_format.Filter {
     // Nonzero residuals interrupt runs. Sample the row and favor Up when
     // choosing another predictor saves only a few of them.
     const pixel = @sizeOf(values.Pixel);
@@ -270,15 +273,15 @@ fn preferredFilter(row: []const u8, above: []const u8) u8 {
             const top: i16 = above[i];
             const corner: i16 = above[i - pixel];
             const px: i16 = row[i];
-            const p = paethPredictor(left, top, corner);
+            const p = png_format.paeth(left, top, corner);
             up += @intFromBool(px != top);
             sub += @intFromBool(px != left);
             paeth += @intFromBool(px != p);
         }
     }
-    if (paeth + paeth / filter_switch_margin < @min(up, sub)) return png_format.paeth_filter;
-    if (sub + sub / filter_switch_margin < up) return png_format.sub_filter;
-    return png_format.up_filter;
+    if (paeth + paeth / filter_switch_margin < @min(up, sub)) return .paeth;
+    if (sub + sub / filter_switch_margin < up) return .sub;
+    return .up;
 }
 
 fn filterPaeth(out: []u8, current: []const u8, above: []const u8) void {
@@ -303,15 +306,8 @@ fn filterPaeth(out: []u8, current: []const u8, above: []const u8) void {
         const a: i16 = current[i - pixel];
         const b: i16 = above[i];
         const c: i16 = above[i - pixel];
-        out[i] = current[i] -% @as(u8, @intCast(paethPredictor(a, b, c)));
+        out[i] = current[i] -% @as(u8, @intCast(png_format.paeth(a, b, c)));
     }
-}
-
-fn paethPredictor(a: i16, b: i16, c: i16) i16 {
-    const left = @abs(b - c);
-    const top = @abs(a - c);
-    const corner = @abs(a + b - c - c);
-    return if (left <= @min(top, corner)) a else if (top <= corner) b else c;
 }
 
 fn encodeOnce(allocator: Allocator, image: Image) !void {
@@ -330,7 +326,7 @@ test "an encoded image starts with the PNG signature and ends with IEND" {
     defer out.deinit();
     try write(std.testing.allocator, .{ .width = 2, .height = 1, .pixels = &pixels }, &out.writer);
     try std.testing.expect(std.mem.startsWith(u8, out.written(), png_format.signature));
-    try std.testing.expect(std.mem.endsWith(u8, out.written(), "IEND\xae\x42\x60\x82"));
+    try std.testing.expect(std.mem.endsWith(u8, out.written(), png_format.iend_type ++ "\xae\x42\x60\x82"));
 }
 
 test "each emitted chunk carries the PNG checksum" {
@@ -339,14 +335,11 @@ test "each emitted chunk carries the PNG checksum" {
     var out: Writer.Allocating = .init(allocator);
     defer out.deinit();
     try write(allocator, .{ .width = 2, .height = 1, .pixels = &pixels }, &out.writer);
-    var chunks = out.written()[png_format.signature.len..];
-    while (chunks.len != 0) {
-        const length = std.mem.readInt(u32, chunks[0..4], .big);
-        const tag_and_data = chunks[4..][0 .. 4 + length];
-        const stored = std.mem.readInt(u32, chunks[8 + length ..][0..4], .big);
-        try std.testing.expectEqual(std.hash.Crc32.hash(tag_and_data), stored);
-        chunks = chunks[12 + length ..];
+    var chunks: png_format.Chunks = .{ .remaining = out.written()[png_format.signature.len..] };
+    while (chunks.nextChecksums()) |checksums| {
+        try std.testing.expectEqual(checksums.computed, checksums.stored);
     }
+    try std.testing.expectEqual(0, chunks.remaining.len);
 }
 
 test "encoding releases each allocation on failure" {
@@ -357,6 +350,8 @@ test "encoding releases each allocation on failure" {
 test "staged PNG rows preserve the predictor across two strip boundaries and a tail" {
     const Source = struct {
         image: Image,
+
+        pub const staged = true;
 
         pub fn isOpaque(self: @This()) bool {
             return self.image.isOpaque();
@@ -372,7 +367,7 @@ test "staged PNG rows preserve the predictor across two strip boundaries and a t
 
     const allocator = std.testing.allocator;
     const width = 17;
-    const height = 2 * sheet_strip_rows + 3;
+    const height = 2 * strip_rows + 3;
     var pixels: [width * height]values.Pixel = undefined;
     const image: Image = .{ .width = width, .height = height, .pixels = &pixels };
     for ([_]u8{ 255, 101 }) |alpha| {
@@ -407,6 +402,8 @@ test "sheets below the parallel threshold use the serial encoder" {
     const image: Image = .{ .width = width, .height = height, .pixels = pixels };
     const Source = struct {
         image: Image,
+
+        pub const staged = true;
 
         pub fn isOpaque(_: @This()) bool {
             return true;

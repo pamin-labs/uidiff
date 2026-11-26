@@ -1,8 +1,6 @@
 //! Detects, reads and decodes bounded PNG, JPEG, or WebP inputs, and encodes PNG.
 const std = @import("std");
 const values = @import("value.zig");
-const stb = @import("codec/stb.zig");
-
 const webp = @import("codec/webp.zig");
 const jpeg = @import("codec/jpeg.zig");
 const png = @import("codec/png.zig");
@@ -26,7 +24,7 @@ pub const max_encoded_bytes = values.max_encoded_bytes;
 
 const Format = std.meta.FieldEnum(@TypeOf(formats));
 
-// The stb binding exports the allocation hooks stb's C code calls, so it is
+// The memory module exports the allocation hooks the C codecs call, so it is
 // analyzed in every build that links the decoders, decoding or not.
 comptime {
     _ = memory;
@@ -271,7 +269,6 @@ test "reading a file releases each allocation on failure" {
 
 test {
     std.testing.refAllDecls(jpeg);
-    std.testing.refAllDecls(stb);
     std.testing.refAllDecls(webp);
     std.testing.refAllDecls(png);
     std.testing.refAllDecls(memory);

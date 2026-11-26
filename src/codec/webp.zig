@@ -2,12 +2,12 @@
 const std = @import("std");
 const c = @import("webp_c");
 const memory = @import("codec_memory");
-const decoded_size = @import("dimensions.zig");
+const types = @import("types.zig");
 const values = @import("../value.zig");
 const Allocator = std.mem.Allocator;
 const Pixel = values.Pixel;
 const Size = values.Size;
-const Header = decoded_size.Header;
+const Header = types.Header;
 
 /// Malformed or unsupported input, an exceeded budget, or a failed allocation.
 pub const DecodeError = memory.Error || error{UnsupportedImageFormat};
@@ -62,7 +62,7 @@ fn dimensions(bytes: []const u8) (values.Image.Invalid || error{UnsupportedImage
     var features: c.WebPBitstreamFeatures = undefined;
     if (c.WebPGetFeatures(bytes.ptr, bytes.len, &features) != c.VP8_STATUS_OK) return error.InvalidImage;
     if (features.has_animation != 0) return error.UnsupportedImageFormat;
-    return decoded_size.fromC(features.width, features.height);
+    return types.fromC(features.width, features.height);
 }
 
 test "a RIFF header without a WebP image is rejected" {

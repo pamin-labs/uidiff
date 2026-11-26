@@ -84,8 +84,8 @@ const sample_agents =
     \\
     \\| Module | Importers |
     \\| --- | --- |
-    \\| `stb_c` | `src/codec/stb.zig` |
-    \\| `export` | `src/codec/stb.zig` |
+    \\| `stb_c` | `src/codec/png/stb.zig` |
+    \\| `export` | `src/codec/png/stb.zig` |
     \\| `cases` | `tests/fuzz/` |
     \\| `uidiff_testing` | `tests/decode.zig` |
     \\| `uidiff_test_canvas` | `src/diff/` `src/testing.zig` `src/testing/expect.zig` |
@@ -94,6 +94,7 @@ const sample_agents =
     \\| --- | --- |
     \\| `src/diff/regions.zig` | `src/diff/regions/` |
     \\| `src/diff/rows.zig` | `src/diff/rows/` |
+    \\| `src/codec/png.zig` | `src/codec/png/` |
     \\
     \\| Diff tier | Paths | Holds |
     \\| --- | --- | --- |
@@ -371,6 +372,10 @@ test "the guard rejects reverse imports, submodule imports and foreign bindings"
         .{ .path = "src/value/image.zig", .text = "const values = @import(\"../value.zig\");" },
         .{ .path = "bench/main.zig", .text = "const codec = @import(\"../src/codec.zig\");" },
         .{ .path = "tests/e2e.zig", .text = "const report = @import(\"../src/report.zig\");" },
+        .{ .path = "src/root.zig", .text = "const png = @import(\"codec/png.zig\");" },
+        .{ .path = "src/codec/webp.zig", .text = "const codec = @import(\"../codec.zig\");" },
+        .{ .path = "src/codec.zig", .text = "const decoder = @import(\"codec/png/decoder.zig\");" },
+        .{ .path = "src/codec/png/decoder.zig", .text = "const png = @import(\"../png.zig\");" },
         .{ .path = "src/codec/png.zig", .text = "const c = @import(\"stb_c\");" },
         .{ .path = "src/cli/args.zig", .text = "const cli = @import(\"../cli.zig\");" },
         .{ .path = "src/cli/args.zig", .text = "const codec = @import(\"../codec.zig\");" },
@@ -381,7 +386,11 @@ test "the guard rejects reverse imports, submodule imports and foreign bindings"
     try testing.expectError(error.ForeignDeclaration, checkWithText("src/codec/webp.zig", "extern \"c\" fn decode() void;"));
     try testing.expectError(error.ForeignDeclaration, checkWithText("src/codec.zig", "const c = @cImport(@cInclude(\"image.h\"));"));
     try testing.expectError(error.ForeignDeclaration, checkWithText("src/diff.zig", "export fn hook() void {}"));
-    try checkWithText("src/codec/stb.zig", "const c = @import(\"stb_c\");\nexport fn hook() void {}");
+    try checkWithText("src/codec/png/stb.zig", "const c = @import(\"stb_c\");\nexport fn hook() void {}");
+    try checkWithText("src/root.zig", "const codec = @import(\"codec.zig\");");
+    try checkWithText("src/codec.zig", "const png = @import(\"codec/png.zig\");");
+    try checkWithText("src/codec/png.zig", "const decoder = @import(\"png/decoder.zig\");");
+    try checkWithText("src/codec/png/decoder.zig", "const scanlines = @import(\"scanlines.zig\");");
     try checkWithText("src/diff/regions.zig", "const groups = @import(\"regions/grouping.zig\");");
     try checkWithText("src/diff/regions/grouping.zig", "const pending = @import(\"candidate.zig\");");
     try checkWithText("src/diff/span.zig", "const regions = @import(\"regions.zig\");");

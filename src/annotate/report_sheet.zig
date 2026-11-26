@@ -70,6 +70,8 @@ pub const Sheet = struct {
 pub const Rows = struct {
     plan: report_layout.Plan,
 
+    pub const staged = true;
+
     /// Lays out the sheet before drawing any rows.
     pub fn init(allocator: Allocator, before: Image, after: Image, regions: []const Region, moves: []const Move) RenderError!Rows {
         return .{ .plan = try report_layout.Plan.init(allocator, before, after, regions, moves) };

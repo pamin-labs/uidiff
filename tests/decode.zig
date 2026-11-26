@@ -3,6 +3,7 @@
 const std = @import("std");
 const uidiff = @import("uidiff");
 const canvas = @import("uidiff_testing").canvas;
+const png_format = @import("png_format");
 const fixtures = @import("fixtures");
 const testing = std.testing;
 
@@ -37,13 +38,13 @@ test "JPEG profile pixels match on scalar and SIMD builds" {
 test "PNG header rejects oversized dimensions before pixel data is needed" {
     const bytes = try fixtures.readSample(.png);
     defer testing.allocator.free(bytes);
-    var header: [41]u8 = bytes[0..41].*;
     // The IDAT marker allows stb to finish the probe without seeing compressed pixels.
+    const probe_bytes = png_format.header_end + png_format.chunk_prefix;
+    var header = bytes[0..probe_bytes].*;
     const side = @min(uidiff.max_extent, std.math.sqrt(uidiff.max_pixels));
     for ([_][2]u32{ .{ side, uidiff.max_pixels / side + 1 }, .{ uidiff.max_extent + 1, 1 }, .{ 1, uidiff.max_extent + 1 } }) |size| {
-        std.mem.writeInt(u32, header[16..20], size[0], .big);
-        std.mem.writeInt(u32, header[20..24], size[1], .big);
-        std.mem.writeInt(u32, header[29..33], std.hash.Crc32.hash(header[12..29]), .big);
+        png_format.writeDimensions(header[png_format.dimensions_offset..][0..png_format.dimensions_bytes], size[0], size[1]);
+        png_format.rewriteHeaderCrc(header[0..png_format.header_end]);
         try testing.expectError(error.ImageTooLarge, uidiff.decode(testing.allocator, &header));
     }
 }

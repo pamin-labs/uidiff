@@ -4,26 +4,23 @@ const std = @import("std");
 const values = @import("../value.zig");
 const Pixel = values.Pixel;
 const Io = std.Io;
-const deflate = @import("png/deflate.zig");
+const zlib = @import("png/zlib.zig");
 const encoder = @import("png/encoder.zig");
 const decoder = @import("png/decoder.zig");
-const png_format = @import("png_format.zig");
-const stb = @import("stb.zig");
+const png_format = @import("png_format");
+const stb = @import("png/stb.zig");
 
 /// Malformed PNG bytes, a decode past the memory budget, or allocation failure.
 pub const DecodeError = decoder.DecodeError;
 /// Allocation, invalid image or output failures.
-pub const EncodeError = deflate.EncodeError;
+pub const EncodeError = zlib.EncodeError;
 /// Decodes the probed dimensions through the scanline or legacy decoder.
 pub const decode = decoder.decode;
 /// Encodes a valid image. Allocates the compressor's window and one filtered row.
 pub const write = encoder.write;
-/// Encodes a source that supplies one row at a time. BorrowedRows can return
-/// existing pixels. Other sources are consumed in strips and can fill the
-/// provided row buffer or lend a row to copy into the strip.
-/// Sources may supply isOpaque for RGB output.
+/// Encodes PNG from a row source with the encoder's source contract.
 pub const writeRows = encoder.writeRows;
-/// Encodes large sheets using parallel compression when supplied with I/O.
+/// Encodes PNG from a row source with optional I/O concurrency.
 pub const writeRowsWithIo = encoder.writeRowsWithIo;
 
 /// Probes the dimensions and channel depth.
@@ -78,5 +75,6 @@ test "RGB8 streaming preserves opaque partial rows" {
 }
 
 test {
+    std.testing.refAllDecls(stb);
     std.testing.refAllDecls(@This());
 }

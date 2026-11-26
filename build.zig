@@ -12,6 +12,7 @@ const Decoders = struct {
     webp: *Build.Module,
     zlib: *Build.Module,
     memory: *Build.Module,
+    png_format: *Build.Module,
 };
 
 /// How a build compiles the C decoders: in their own measured mode for the
@@ -24,7 +25,7 @@ const X86Simd = enum { shipped, baseline, without_ssse3, without_sse4, without_a
 // run with UBSan in the checked test build and in fuzzing.
 const shipped_mode: Optimize = .safe;
 const codec_mode: Optimize = .fast;
-const jpeg_public_config = "#define UIDIFF_JPEG_PUBLIC_CONFIG 1\n#include \"jpeg_build_config.h\"\n#undef UIDIFF_JPEG_PUBLIC_CONFIG\n";
+const jpeg_public_config = "#define UIDIFF_JPEG_PUBLIC_CONFIG 1\n#include \"build_config.h\"\n#undef UIDIFF_JPEG_PUBLIC_CONFIG\n";
 const png_compression_level = 3;
 /// The shipped CLI's size budget for every CI target. Run zig build size
 /// with -Dtarget to measure a specific binary.
@@ -220,6 +221,7 @@ fn libraryOptions(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, d
             .{ .name = "webp_c", .module = decoders.webp },
             .{ .name = "zlib_c", .module = decoders.zlib },
             .{ .name = "codec_memory", .module = decoders.memory },
+            .{ .name = "png_format", .module = decoders.png_format },
             .{ .name = "required_test_options", .module = defaults.createModule() },
         }) catch @panic("OOM"),
     };
@@ -313,9 +315,9 @@ fn addJpegDecoder(b: *Build, module: *Build.Module, target: Build.ResolvedTarget
     configureJpeg(b, module, jpeg, files, neon);
     const vendor_flags = std.mem.concat(b.allocator, []const u8, &.{
         &codec_section_flags,                                                                                                                        &fuzz_coverage_flags, flags,
-        &.{ "-fvisibility=hidden", "-DNO_GETENV", "-include", b.root.joinString(b.allocator, "src/codec/jpeg_build_config.h") catch @panic("OOM") },
+        &.{ "-fvisibility=hidden", "-DNO_GETENV", "-include", b.root.joinString(b.allocator, "src/codec/jpeg/build_config.h") catch @panic("OOM") },
     }) catch @panic("OOM");
-    module.addCSourceFile(.{ .file = b.path("src/codec/jpeg.c"), .flags = &(codec_section_flags ++ fuzz_coverage_flags) });
+    module.addCSourceFile(.{ .file = b.path("src/codec/jpeg/bridge.c"), .flags = &(codec_section_flags ++ fuzz_coverage_flags) });
     module.addCSourceFiles(.{ .root = jpeg.path("src"), .flags = vendor_flags, .files = &.{
         "jcomapi.c",            "jdapimin.c",           "jdatasrc.c",           "jdhuff.c",
         "jdinput.c",            "jdmarker.c",           "jdphuff.c",            "jmemmgr.c",
@@ -334,7 +336,7 @@ fn addJpegDecoder(b: *Build, module: *Build.Module, target: Build.ResolvedTarget
     module.addCSourceFile(.{ .file = files.add("jdmaster.c", modifiedJpeg(b, master)), .flags = vendor_flags });
 
     var backing = readDependencySource(b, jpeg, "src/jmemnobs.c");
-    backing = replaceExactly(b.allocator, backing, "#include \"jmemsys.h\"", "#include \"codec_memory.h\"\n#include \"jmemsys.h\"", 1);
+    backing = replaceExactly(b.allocator, backing, "#include \"jmemsys.h\"", "#include \"memory.h\"\n#include \"jmemsys.h\"", 1);
     backing = replaceExactly(b.allocator, backing, "MALLOC(sizeofobject)", "uidiff_codec_malloc(sizeofobject)", 2);
     backing = replaceExactly(b.allocator, backing, "free(object);", "uidiff_codec_free(object);", 2);
     module.addCSourceFile(.{ .file = files.add("jmemnobs.c", modifiedJpeg(b, backing)), .flags = vendor_flags });
@@ -382,11 +384,11 @@ fn configureJpeg(b: *Build, module: *Build.Module, jpeg: *Build.Dependency, file
     module.addCMacro("UIDIFF_JPEG_VERSION", b.fmt("\"{s}\"", .{version}));
     if (neon) module.addCMacro("UIDIFF_JPEG_NEON", "1");
     _ = files.add("jconfig.h", jpeg_public_config);
-    _ = files.add("jconfigint.h", "#define UIDIFF_JPEG_INTERNAL_CONFIG 1\n#include \"jpeg_build_config.h\"\n#undef UIDIFF_JPEG_INTERNAL_CONFIG\n");
+    _ = files.add("jconfigint.h", "#define UIDIFF_JPEG_INTERNAL_CONFIG 1\n#include \"build_config.h\"\n#undef UIDIFF_JPEG_INTERNAL_CONFIG\n");
     module.addIncludePath(files.getDirectory());
     module.addIncludePath(jpeg.path("src"));
     module.addIncludePath(jpeg.path("simd"));
-    module.addIncludePath(b.path("src/codec"));
+    module.addIncludePath(b.path("src/codec/jpeg"));
 }
 
 fn pinnedValue(source: []const u8, anchor: []const u8, delimiter: u8) []const u8 {
@@ -436,7 +438,7 @@ fn addStbDecoder(b: *Build, module: *Build.Module, target: Build.ResolvedTarget,
     module.addIncludePath(b.dependency("stb", .{}).path(""));
     module.addIncludePath(b.path("src/codec"));
     module.addCSourceFile(.{
-        .file = b.path("src/codec/stb.c"),
+        .file = b.path("src/codec/png/stb.c"),
         .flags = std.mem.concat(b.allocator, []const u8, &.{
             &.{b.fmt("-DSTBI_MAX_DIMENSIONS={d}", .{values.max_extent})}, &codec_section_flags, &fuzz_coverage_flags, legacy_flags,
         }) catch @panic("OOM"),
@@ -647,11 +649,11 @@ fn addDecoders(b: *Build, target: Build.ResolvedTarget) Decoders {
     const jpeg = b.dependency("libjpeg_turbo", .{});
     const jpeg_config = b.addWriteFiles();
     _ = jpeg_config.add("jconfig.h", jpeg_public_config);
-    const jpeg_c = b.addTranslateC(.{ .root_source_file = b.path("src/codec/jpeg.h"), .target = target, .optimize = shipped_mode });
+    const jpeg_c = b.addTranslateC(.{ .root_source_file = b.path("src/codec/jpeg/bridge.h"), .target = target, .optimize = shipped_mode });
     jpeg_c.addIncludePath(jpeg_config.getDirectory());
     jpeg_c.addIncludePath(jpeg.path("src"));
-    jpeg_c.addIncludePath(b.path("src/codec"));
-    const stb_c = b.addTranslateC(.{ .root_source_file = b.path("src/codec/stb.h"), .target = target, .optimize = shipped_mode });
+    jpeg_c.addIncludePath(b.path("src/codec/jpeg"));
+    const stb_c = b.addTranslateC(.{ .root_source_file = b.path("src/codec/png/stb.h"), .target = target, .optimize = shipped_mode });
     stb_c.addIncludePath(stb.path(""));
     stb_c.defineCMacro("STBI_NO_STDIO", null);
     const webp_c = b.addTranslateC(.{ .root_source_file = webp.path("src/webp/decode.h"), .target = target, .optimize = shipped_mode });
@@ -661,6 +663,7 @@ fn addDecoders(b: *Build, target: Build.ResolvedTarget) Decoders {
         .stb = stb_c.createModule(),
         .webp = webp_c.createModule(),
         .zlib = zlib_c.createModule(),
+        .png_format = b.createModule(.{ .root_source_file = b.path("src/codec/png/format.zig"), .target = target }),
         .memory = b.createModule(.{ .root_source_file = b.path("src/codec/memory.zig"), .target = target }),
     };
 }
@@ -726,6 +729,7 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
                 .{ .name = "fixtures", .module = cases },
             },
         });
+        if (index == fuzz_sources.len) test_module.addImport("png_format", decoders.png_format);
         if (std.mem.eql(u8, source, cli_source)) test_module.addImport("cli_options", cli_config);
         step.dependOn(&b.addRunArtifact(b.addTest(.{
             .root_module = test_module,
@@ -846,6 +850,7 @@ fn addE2e(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, uidiff: *
                 .{ .name = "uidiff_testing", .module = uidiff_testing },
                 .{ .name = "fixtures", .module = cases },
                 .{ .name = "e2e_options", .module = options.createModule() },
+                .{ .name = "png_format", .module = uidiff.import_table.get("png_format").? },
             },
         }),
     });
@@ -922,6 +927,7 @@ fn fixtureGenerator(b: *Build, target: Build.ResolvedTarget, decoders: Decoders)
         .link_libc = true,
         .imports = &.{
             .{ .name = "uidiff", .module = library },
+            .{ .name = "png_format", .module = decoders.png_format },
             .{ .name = "stb_write_c", .module = stb_write.createModule() },
             .{ .name = "webp_encode_c", .module = webp_encode.createModule() },
             .{ .name = "codec_memory", .module = decoders.memory },
@@ -965,7 +971,7 @@ fn addJpegFixtures(b: *Build) Build.LazyPath {
     const c = b.addTranslateC(.{ .root_source_file = header, .target = b.graph.host, .optimize = .safe });
     c.addIncludePath(config.getDirectory());
     c.addIncludePath(jpeg.path("src"));
-    c.addIncludePath(b.path("src/codec"));
+    c.addIncludePath(b.path("src/codec/jpeg"));
     const module = b.createModule(.{
         .root_source_file = b.path("tests/fixtures/jpeg_generate.zig"),
         .target = b.graph.host,
