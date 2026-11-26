@@ -13,6 +13,7 @@ const rectAtSize = geometry.rectAtSize;
 const mapMark = geometry.mapMark;
 const Text = text.Text;
 const Crop = crops.Crop;
+const Zoom = crops.Zoom;
 const Region = values.Region;
 const Size = values.Size;
 
@@ -109,21 +110,23 @@ pub fn layoutFocus(details: []Detail, focuses: []Focus, sizes: [2]Size, start: u
         if (detail.focus != index) continue;
         focus.top = top;
         var height: usize = 32;
+        var zoom: Zoom = .{ .numerator = 1 };
+        for (focus.windows) |window| {
+            const from = window orelse continue;
+            zoom = zoom.fit(from, .{ .width = focus_slot_width, .height = values.max_extent });
+        }
         for (focus.windows, &focus.crops, &focus.captions, [2][]const u8{ copy.before, copy.after }, 0..) |window, *patch, *caption, name, side| {
             const from = window orelse {
                 caption.* = try Text.format(copy.name_format, .{name});
                 continue;
             };
-            // Draw native pixels up to the half-sheet width. Shrinking uses
-            // the same box filter as the ordinary close-up renderer.
-            const w: usize = @min(focus_slot_width, from.w);
-            const h = @max(1, from.h * w / from.w);
-            patch.* = .{ .from = from, .to = .{ .x = focusColumn(side), .y = top + focus_caption_height, .w = w, .h = h } };
-            caption.* = if (w == from.w)
+            const projected = zoom.apply(from, focusColumn(side), top + focus_caption_height);
+            patch.* = projected;
+            caption.* = if (zoom.numerator == zoom.denominator)
                 try Text.format(copy.focus_format, .{ name, from.x, from.right() })
             else
-                try Text.format(copy.scaled_focus_format, .{ name, from.x, from.right(), @max(1, (100 * w + from.w / 2) / from.w) });
-            height = @max(height, h);
+                try Text.format(copy.scaled_focus_format, .{ name, from.x, from.right(), @max(1, (100 * zoom.numerator + zoom.denominator / 2) / zoom.denominator) });
+            height = @max(height, projected.to.h);
         }
         focus.height = focus_caption_height + height;
         top += focus.height + detail_gap;

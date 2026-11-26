@@ -21,6 +21,33 @@ const Image = values.Image;
 /// Maps a rectangle of source pixels to a rectangle on the sheet.
 pub const Crop = struct { from: SourceRect, to: Rect };
 
+/// A common source-to-sheet scale, before rounding pane edges to whole pixels.
+pub const Zoom = struct {
+    numerator: usize,
+    denominator: usize = 1,
+
+    pub fn fit(self: Zoom, source: SourceRect, slot: values.Size) Zoom {
+        return self.limitedBy(slot.width, source.w).limitedBy(slot.height, source.h);
+    }
+
+    pub fn apply(self: Zoom, source: SourceRect, x: usize, y: usize) Crop {
+        return .{
+            .from = source,
+            .to = .{
+                .x = x,
+                .y = y,
+                .w = @max(1, source.w * self.numerator / self.denominator),
+                .h = @max(1, source.h * self.numerator / self.denominator),
+            },
+        };
+    }
+
+    fn limitedBy(self: Zoom, numerator: usize, denominator: usize) Zoom {
+        if (numerator * self.denominator >= self.numerator * denominator) return self;
+        return .{ .numerator = numerator, .denominator = denominator };
+    }
+};
+
 const Axis = enum { row, column };
 const Direction = enum { lower, higher };
 
@@ -41,23 +68,27 @@ const text_column_gap_px = 24;
 // Words and list summaries can extend farther sideways than a line is tall.
 const text_column_search_px = max_crop_w;
 
-/// Plans a detail crop with context clipped to the source and slot.
-pub fn crop(image: Image, box: ?SourceRect, x: usize, y: usize, slot: usize, ui: Layout) ?Crop {
-    const region = box orelse return null;
-    const from = cropBounds(image, region, ui);
+/// Plans both detail crops at the largest common zoom that fits their slots.
+pub fn cropPair(images: [2]Image, boxes: [2]?SourceRect, x: [2]usize, y: usize, slot: usize, ui: Layout) [2]?Crop {
     const inset = ui.px(detail_inset_px);
-    const slot_w = slot - 2 * inset;
-    const slot_h = ui.px(max_crop_h) - 2 * inset;
-    const long = @max(region.w, region.h);
-    const ideal_zoom = (ui.px(detail_zoom_target_px) + long - 1) / long;
-    // Keep the recovered line intact even if this lowers the enlargement.
-    const zoom = @min(ideal_zoom, slot_w / from.w, slot_h / from.h);
-    const out_w = if (zoom > 1) from.w * zoom else @max(1, @min(from.w, slot_w, from.w * slot_h / from.h));
-    const out_h = @min(slot_h, @max(1, @divFloor(from.h * out_w, from.w)));
-    return .{
-        .from = from,
-        .to = .{ .x = x + inset, .y = y + inset, .w = out_w, .h = out_h },
-    };
+    const available: values.Size = .{ .width = slot - 2 * inset, .height = ui.px(max_crop_h) - 2 * inset };
+    const target = ui.px(detail_zoom_target_px);
+    var zoom: Zoom = .{ .numerator = target };
+    var windows: [2]?SourceRect = @splat(null);
+    for (images, boxes, &windows) |image, box, *window| {
+        const region = box orelse continue;
+        const long = @max(region.w, region.h);
+        const from = cropBounds(image, region, ui);
+        window.* = from;
+        zoom = zoom.limitedBy((target + long - 1) / long, 1).fit(from, available);
+    }
+    // Keep integer enlargement so text and edges stay crisp.
+    if (zoom.numerator >= zoom.denominator) zoom = .{ .numerator = zoom.numerator / zoom.denominator };
+    var pair: [2]?Crop = @splat(null);
+    for (&pair, windows, x) |*crop, from, left| {
+        if (from) |window| crop.* = zoom.apply(window, left + inset, y + inset);
+    }
+    return pair;
 }
 
 /// Draws the detail crop or its absent-side label on one row.
@@ -173,13 +204,45 @@ fn cropBounds(image: Image, box: SourceRect, ui: Layout) SourceRect {
     return growContext(image, from, box, ui.px(search), ui.px(text_column_search_px));
 }
 
+fn singleCrop(image: Image, box: SourceRect, slot: usize, ui: Layout) Crop {
+    return cropPair(.{ image, image }, .{ box, null }, .{ 0, 0 }, 0, slot, ui)[0].?;
+}
+
+test "paired close-ups render enlarged content at the same zoom" {
+    const width = 180;
+    const height = 130;
+    var before_pixels: [width * height]Pixel = @splat(palette.white);
+    var after_pixels = before_pixels;
+    const old: SourceRect = .{ .x = 40, .y = 40, .w = 30, .h = 12 };
+    const new: SourceRect = .{ .x = 40, .y = 40, .w = 60, .h = 18 };
+    for (old.y..old.bottom()) |y| @memset(before_pixels[y * width + old.x ..][0..old.w], palette.ink);
+    for (new.y..new.bottom()) |y| @memset(after_pixels[y * width + new.x ..][0..new.w], palette.ink);
+    const before: Image = .{ .width = width, .height = height, .pixels = &before_pixels };
+    const after: Image = .{ .width = width, .height = height, .pixels = &after_pixels };
+    const ui: Layout = .{ .wide = false, .percent = 100, .numerator = 1, .denominator = 1 };
+    const pair = cropPair(.{ before, after }, .{ old, new }, .{ 0, 0 }, 0, max_crop_w, ui);
+    const a = pair[0].?;
+    const b = pair[1].?;
+    try std.testing.expectEqual(a.to.w * b.from.w, b.to.w * a.from.w);
+    try std.testing.expectEqual(a.to.h * b.from.h, b.to.h * a.from.h);
+    var counts: [2]usize = @splat(0);
+    var output: [max_crop_w]Pixel = undefined;
+    for ([_]Crop{ a, b }, [_]Image{ before, after }, [_]SourceRect{ old, new }, &counts) |patch, image, box, *count| {
+        const y = (box.y - patch.from.y) * patch.to.h / patch.from.h;
+        cropRow(patch, image, y, output[0..patch.to.w]);
+        for (output[0..patch.to.w]) |pixel| count.* += @intFromBool(std.meta.eql(pixel, palette.ink));
+    }
+    try std.testing.expectEqual(new.w * counts[0], old.w * counts[1]);
+    try std.testing.expect(counts[1] > counts[0]);
+}
+
 test "close-ups enlarge a tiny edit and average samples when shrinking" {
     const ink = palette.ink;
     const white = palette.white;
     const pixels = [_]Pixel{ ink, white, ink, white };
     const image: Image = .{ .width = 4, .height = 1, .pixels = &pixels };
     const ui = Layout.init(image.size(), image.size());
-    const patch = crop(image, .{ .x = 1, .y = 0, .w = 1, .h = 1 }, 0, 0, ui.px(max_crop_w), ui).?;
+    const patch = singleCrop(image, .{ .x = 1, .y = 0, .w = 1, .h = 1 }, ui.px(max_crop_w), ui);
     try std.testing.expect(patch.to.w / patch.from.w >= 80);
     try std.testing.expectEqual(patch.to.w / patch.from.w, patch.to.h / patch.from.h);
 
@@ -210,7 +273,7 @@ test "a narrow close-up keeps the complete labels above and beside an edit" {
     for (48..56) |y| @memset(pixels[y * width + 68 ..][0..27], palette.ink);
     const image: Image = .{ .width = width, .height = height, .pixels = &pixels };
     const ui = Layout.init(image.size(), image.size());
-    const patch = crop(image, .{ .x = 62, .y = 50, .w = 6, .h = 5 }, 0, 0, ui.px(90), ui).?;
+    const patch = singleCrop(image, .{ .x = 62, .y = 50, .w = 6, .h = 5 }, ui.px(90), ui);
     try std.testing.expect(patch.from.y < 23);
     try std.testing.expect(patch.from.right() > 95);
 }
@@ -220,7 +283,7 @@ test "detail crop clips the height of a one-pixel-wide source" {
     const pixels: [height]Pixel = @splat(palette.white);
     const image: Image = .{ .width = 1, .height = height, .pixels = &pixels };
     const ui = Layout.init(image.size(), image.size());
-    const patch = crop(image, .{ .x = 0, .y = 0, .w = 1, .h = height }, 0, 0, ui.px(max_crop_w), ui).?;
+    const patch = singleCrop(image, .{ .x = 0, .y = 0, .w = 1, .h = height }, ui.px(max_crop_w), ui);
     try std.testing.expectEqual(@as(usize, 1), patch.to.w);
     try std.testing.expectEqual(ui.px(max_crop_h) - 2 * ui.px(detail_inset_px), patch.to.h);
 }
@@ -263,7 +326,7 @@ test "a wide close-up keeps a neighbouring partial line out of its context" {
     const image: Image = .{ .width = width, .height = height, .pixels = &pixels };
     const ui: Layout = .{ .wide = false, .percent = 100, .numerator = 1, .denominator = 1 };
     const edit: SourceRect = .{ .x = 30, .y = 50, .w = 380, .h = 50 };
-    const patch = crop(image, edit, 0, 0, max_crop_w, ui).?;
+    const patch = singleCrop(image, edit, max_crop_w, ui);
     try std.testing.expect(patch.from.bottom() >= edit.bottom());
     try std.testing.expect(patch.from.bottom() <= 113);
     try std.testing.expect(patch.to.w <= max_crop_w);

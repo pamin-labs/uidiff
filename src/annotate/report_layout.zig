@@ -24,7 +24,7 @@ const Detail = focus_layout.Detail;
 const detail_gap = focus_layout.detail_gap;
 const focusWindow = focus_layout.focusWindow;
 const layoutFocus = focus_layout.layoutFocus;
-const crop = crops.crop;
+const cropPair = crops.cropPair;
 const max_crop_w = crops.max_crop_w;
 const placeBadges = badges.placeBadges;
 const overviewDiameter = badges.overviewDiameter;
@@ -211,8 +211,7 @@ fn planDetails(allocator: Allocator, before: Image, after: Image, regions: []con
         if ((region.before != null and old == null) or (region.after != null and new == null)) return error.InvalidRegionBox;
         if (region.number == 0 and (old != null or new != null)) return error.InvalidRegionNumber;
         kinds |= kindBit(region.kind);
-        const a = if (layout.wide) null else crop(before, old, detail_x, top, slot, layout);
-        const b = if (layout.wide) null else crop(after, new, after_detail_x, top, slot, layout);
+        const a, const b = if (layout.wide) .{ null, null } else cropPair(.{ before, after }, .{ old, new }, .{ detail_x, after_detail_x }, top, slot, layout);
         const height = @max(layout.px(min_slot_h), if (a) |p| p.to.h + 2 * layout.px(3) else 0, if (b) |p| p.to.h + 2 * layout.px(3) else 0);
         const before_mark = offsetMark(old, panes[0], before.size());
         const after_mark = offsetMark(new, panes[1], after.size());

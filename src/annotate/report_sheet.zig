@@ -30,7 +30,6 @@ const tint = palette.tint;
 const Line = canvas.Line;
 const focus_caption_height = focus_layout.focus_caption_height;
 const focusColumn = focus_layout.focusColumn;
-const crop = crops.crop;
 const Pane = geometry.Pane;
 const paneRect = geometry.paneRect;
 const roundSpan = canvas.roundSpan;
