@@ -141,7 +141,8 @@ pub fn chunk(output: *Writer, comptime kind: *const [4]u8, data: []const u8) Wri
     try output.writeInt(u32, std.math.cast(u32, data.len) orelse return error.WriteFailed, .big);
     try output.writeAll(kind);
     try output.writeAll(data);
-    const checksum = if (zlib.UIDIFF_ZLIB_CRC != 0) acceleratedChecksum(kind, data) else portableChecksum(kind, data);
+    const tag_crc = zlib.zng_crc32_z(0, kind, kind.len);
+    const checksum = zlib.zng_crc32_z(tag_crc, data.ptr, data.len);
     try output.writeInt(u32, checksum, .big);
 }
 
@@ -177,18 +178,6 @@ fn zfree(
     address: ?*anyopaque,
 ) callconv(.c) void {
     memory.freeBlock(address);
-}
-
-fn acceleratedChecksum(kind: *const [4]u8, data: []const u8) u32 {
-    const tag_crc = zlib.zng_crc32_z(0, kind, kind.len);
-    return zlib.zng_crc32_z(tag_crc, data.ptr, data.len);
-}
-
-fn portableChecksum(kind: *const [4]u8, data: []const u8) u32 {
-    var crc = std.hash.Crc32.init();
-    crc.update(kind);
-    crc.update(data);
-    return crc.final();
 }
 
 test "strip checksums describe the uncompressed bytes in stream order" {

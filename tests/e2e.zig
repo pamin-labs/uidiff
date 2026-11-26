@@ -96,6 +96,17 @@ test "an annotated sheet is written atomically beside a normal report" {
     }
     const bytes = try tmp.dir.readFileAlloc(testing.io, "sheet.png", allocator, .limited(uidiff.max_encoded_bytes));
     defer allocator.free(bytes);
+    try testing.expect(bytes.len >= 8);
+    var chunks = bytes[8..]; // Skip the PNG signature.
+    while (chunks.len != 0) {
+        try testing.expect(chunks.len >= 12); // Length, tag, and checksum.
+        const data_len = std.mem.readInt(u32, chunks[0..4], .big);
+        try testing.expect(data_len <= chunks.len - 12);
+        const payload = chunks[4..][0 .. 4 + @as(usize, data_len)];
+        const stored = std.mem.readInt(u32, chunks[4 + payload.len ..][0..4], .big);
+        try testing.expectEqual(std.hash.Crc32.hash(payload), stored);
+        chunks = chunks[8 + payload.len ..];
+    }
     var sheet = try uidiff.decode(allocator, bytes);
     defer sheet.deinit();
     var source = try uidiff.decodeFile(testing.io, allocator, before);

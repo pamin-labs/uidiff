@@ -18,7 +18,7 @@ const Decoders = struct {
 /// shipped binary, or inside the Zig module, in its mode with UBSan, for
 /// tests and fuzzing (without coverage feedback; see fuzz_coverage_flags).
 const CodecBuild = enum { shipped, shipped_lto, checked, fixture };
-const X86Simd = enum { shipped, baseline, without_ssse3, without_sse4, without_avx2, without_pclmul };
+const X86Simd = enum { shipped, baseline, without_ssse3, without_sse4, without_avx2 };
 
 // The shipped Zig binary retains runtime safety checks. The C decoders
 // run with UBSan in the checked test build and in fuzzing.
@@ -443,8 +443,8 @@ fn zlibHeaders(b: *Build, target: Build.ResolvedTarget) *Build.Step.WriteFile {
     const zlib = b.dependency("zlib_ng", .{});
     const files = b.addWriteFiles();
     const api = replaceExactly(b.allocator, readDependencySource(b, zlib, "zlib-ng.h.in"), "@ZLIB_SYMBOL_PREFIX@", "", 2);
-    _ = files.add("zlib-ng.h", b.fmt("#define UIDIFF_PNG_COMPRESSION_LEVEL {d}\n#define UIDIFF_ZLIB_CRC {d}\n{s}\n", .{
-        png_compression_level, @intFromBool(zlibPngCrc(target)), api,
+    _ = files.add("zlib-ng.h", b.fmt("#define UIDIFF_PNG_COMPRESSION_LEVEL {d}\n{s}\n", .{
+        png_compression_level, api,
     }));
     const conf = readDependencySource(b, zlib, "zconf-ng.h.in");
     _ = files.add("zconf-ng.h", if (target.result.os.tag == .windows) conf else replaceExactly(b.allocator, conf, "#ifdef HAVE_UNISTD_H", "#if 1", 1));
@@ -501,6 +501,8 @@ fn zlibDispatch(b: *Build, zlib: *Build.Dependency) Build.LazyPath {
         .{ "    FUNCTABLE_VERIFY_ASSIGN(ft, crc32_fold);\n    FUNCTABLE_VERIFY_ASSIGN(ft, crc32_fold_copy);\n    FUNCTABLE_VERIFY_ASSIGN(ft, crc32_fold_final);\n    FUNCTABLE_VERIFY_ASSIGN(ft, crc32_fold_reset);\n", 1 },
     };
     for (removed) |edit| text = replaceExactly(b.allocator, text, edit[0], "", edit[1]);
+    // The PCLMUL kernel also extracts lanes with SSE4.1.
+    text = replaceExactly(b.allocator, text, "if (cf.x86.has_pclmulqdq) {", "if (cf.x86.has_pclmulqdq && cf.x86.has_sse41) {", 1);
     const fold_callbacks =
         \\    crc32_fold_stub,
         \\    crc32_fold_copy_stub,
@@ -517,15 +519,7 @@ fn replaceExactly(allocator: std.mem.Allocator, text: []const u8, from: []const 
     return std.mem.replaceOwned(u8, allocator, text, from, to) catch @panic("OOM");
 }
 
-fn zlibPngCrc(target: Build.ResolvedTarget) bool {
-    return switch (target.result.cpu.arch) {
-        .aarch64 => std.Target.aarch64.featureSetHas(target.result.cpu.features, .crc),
-        .x86_64 => true,
-        else => false,
-    };
-}
-
-/// Builds the zlib stream and PNG checksum routines. Only x86 uses runtime dispatch.
+/// Builds the zlib stream and PNG checksums with the available CPU kernels.
 fn addZlibNg(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, x86_simd: X86Simd, mode: CodecBuild) void {
     const zlib = b.dependency("zlib_ng", .{});
     const headers = zlibHeaders(b, target).getDirectory();
@@ -538,6 +532,7 @@ fn addZlibNg(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, x86
     if (os == .linux) common.appendSlice(b.allocator, &.{ "-DHAVE_SYS_AUXV_H", "-DHAVE_LINUX_AUXVEC_H" }) catch @panic("OOM");
     const stream = [_][]const u8{
         "adler32.c",
+        "crc32.c",
         "deflate_medium.c",
         "inflate.c",
         "insert_string.c",
@@ -545,27 +540,32 @@ fn addZlibNg(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, x86
         "trees.c",
     };
     const scalar = [_][]const u8{
-        "arch/generic/adler32_c.c",     "arch/generic/adler32_fold_c.c", "arch/generic/chunkset_c.c",     "arch/generic/compare256_c.c",
-        "arch/generic/crc32_braid_c.c", "arch/generic/slide_hash_c.c",   "arch/generic/crc32_chorba_c.c",
+        "arch/generic/adler32_c.c",    "arch/generic/adler32_fold_c.c", "arch/generic/chunkset_c.c", "arch/generic/compare256_c.c",
+        "arch/generic/slide_hash_c.c",
     };
     switch (arch) {
         .aarch64 => {
             const neon = std.Target.aarch64.featureSetHas(target.result.cpu.features, .neon);
-            const crc = zlibPngCrc(target);
-            common.appendSlice(b.allocator, &.{ "-DARM_FEATURES", "-DDISABLE_RUNTIME_CPU_DETECTION", "-DWITHOUT_CHORBA" }) catch @panic("OOM");
+            const static_crc = std.Target.aarch64.featureSetHas(target.result.cpu.features, .crc) and os != .windows;
+            common.appendSlice(b.allocator, &.{ "-DARM_FEATURES", "-DARM_CRC32", "-DARM_CRC32_INTRIN", "-DHAVE_ARM_ACLE_H", "-DWITHOUT_CHORBA" }) catch @panic("OOM");
+            if (static_crc) common.append(b.allocator, "-DDISABLE_RUNTIME_CPU_DETECTION") catch @panic("OOM");
+            if (!static_crc) common.append(b.allocator, "-DWITH_ALL_FALLBACKS") catch @panic("OOM");
             if (neon) common.appendSlice(b.allocator, &.{ "-DARM_NEON", "-DARM_NEON_HASLD4", "-DARM_NOCHECK_NEON=1" }) catch @panic("OOM");
-            if (crc) common.appendSlice(b.allocator, &.{ "-DARM_CRC32", "-DARM_CRC32_INTRIN", "-DHAVE_ARM_ACLE_H" }) catch @panic("OOM");
             const kernels: []const []const u8 = if (neon)
                 &.{ "arch/arm/adler32_neon.c", "arch/arm/chunkset_neon.c", "arch/arm/compare256_neon.c", "arch/arm/slide_hash_neon.c" }
             else
-                &.{ "arch/generic/adler32_c.c", "arch/generic/adler32_fold_c.c", "arch/generic/chunkset_c.c", "arch/generic/compare256_c.c", "arch/generic/slide_hash_c.c" };
-            module.addCSourceFiles(.{ .root = zlib.path(""), .files = &stream, .flags = common.items });
-            module.addCSourceFiles(.{ .root = zlib.path(""), .files = kernels, .flags = common.items });
-            if (crc) module.addCSourceFiles(.{
+                &scalar;
+            module.addCSourceFiles(.{
                 .root = zlib.path(""),
-                .files = &.{ "crc32.c", "crc32_braid_comb.c", "arch/arm/crc32_armv8.c" },
+                .files = &(stream ++ .{ "arch/generic/crc32_braid_c.c", "arch/arm/crc32_armv8.c" }),
                 .flags = common.items,
             });
+            module.addCSourceFiles(.{ .root = zlib.path(""), .files = kernels, .flags = common.items });
+            if (!static_crc) {
+                if (neon) module.addCSourceFiles(.{ .root = zlib.path(""), .files = &scalar, .flags = common.items });
+                module.addCSourceFile(.{ .file = zlibDispatch(b, zlib), .flags = common.items });
+                module.addCSourceFiles(.{ .root = zlib.path(""), .files = &.{ "cpu_features.c", "arch/arm/arm_features.c" }, .flags = common.items });
+            }
         },
         .x86_64 => {
             // Higher zlib-ng levels call lower kernels as fallbacks. Removing
@@ -573,23 +573,21 @@ fn addZlibNg(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, x86
             const ssse3 = x86_simd != .without_ssse3;
             const sse4 = ssse3 and x86_simd != .without_sse4;
             const avx2 = sse4 and x86_simd != .shipped and x86_simd != .without_avx2;
-            const pclmul = sse4 and x86_simd != .shipped and x86_simd != .without_pclmul;
-            common.appendSlice(b.allocator, &.{ "-DX86_FEATURES", "-DX86_SSE2", "-DHAVE_CPUID_GNU", "-DX86_HAVE_XSAVE_INTRIN" }) catch @panic("OOM");
+            common.appendSlice(b.allocator, &.{ "-DX86_FEATURES", "-DX86_SSE2", "-DHAVE_CPUID_GNU", "-DX86_HAVE_XSAVE_INTRIN", "-DWITHOUT_CHORBA", "-DWITHOUT_CHORBA_SSE" }) catch @panic("OOM");
             if (ssse3) common.append(b.allocator, "-DX86_SSSE3") catch @panic("OOM");
             if (sse4) common.appendSlice(b.allocator, &.{ "-DX86_SSE41", "-DX86_SSE42" }) catch @panic("OOM");
+            if (sse4) common.append(b.allocator, "-DX86_PCLMULQDQ_CRC") catch @panic("OOM");
             if (avx2) common.append(b.allocator, "-DX86_AVX2") catch @panic("OOM");
-            if (pclmul) common.append(b.allocator, "-DX86_PCLMULQDQ_CRC") catch @panic("OOM");
             const base = common.items;
             module.addCSourceFile(.{ .file = zlibDispatch(b, zlib), .flags = base });
-            module.addCSourceFiles(.{ .root = zlib.path(""), .files = &(stream ++ scalar ++ .{ "crc32.c", "crc32_braid_comb.c", "cpu_features.c", "arch/x86/chunkset_sse2.c", "arch/x86/chorba_sse2.c", "arch/x86/compare256_sse2.c", "arch/x86/slide_hash_sse2.c" }), .flags = base });
+            module.addCSourceFiles(.{ .root = zlib.path(""), .files = &(stream ++ scalar ++ .{ "arch/generic/crc32_braid_c.c", "cpu_features.c", "arch/x86/chunkset_sse2.c", "arch/x86/compare256_sse2.c", "arch/x86/slide_hash_sse2.c" }), .flags = base });
             // Zig pins each object's CPU features, so -m flags cannot raise
             // them per file; each dispatch level is its own object instead.
             const levels = .{
                 .{ "x86_features", true, std.Target.x86.featureSet(&.{.xsave}), &[_][]const u8{"arch/x86/x86_features.c"} },
                 .{ "ssse3", ssse3, std.Target.x86.featureSet(&.{.ssse3}), &[_][]const u8{ "arch/x86/adler32_ssse3.c", "arch/x86/chunkset_ssse3.c" } },
-                .{ "sse41", sse4, std.Target.x86.featureSet(&.{.sse4_1}), &[_][]const u8{"arch/x86/chorba_sse41.c"} },
                 .{ "sse42", sse4, std.Target.x86.featureSet(&.{.sse4_2}), &[_][]const u8{"arch/x86/adler32_sse42.c"} },
-                .{ "pclmul", pclmul, std.Target.x86.featureSet(&.{ .sse4_2, .pclmul }), &[_][]const u8{"arch/x86/crc32_pclmulqdq.c"} },
+                .{ "pclmul", sse4, std.Target.x86.featureSet(&.{ .sse4_1, .pclmul }), &[_][]const u8{"arch/x86/crc32_pclmulqdq.c"} },
                 .{ "avx2", avx2, std.Target.x86.featureSet(&.{ .avx2, .bmi2 }), &[_][]const u8{ "arch/x86/slide_hash_avx2.c", "arch/x86/chunkset_avx2.c", "arch/x86/compare256_avx2.c", "arch/x86/adler32_avx2.c" } },
             };
             inline for (levels) |level| {
@@ -613,7 +611,7 @@ fn addZlibNg(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, x86
         },
         else => {
             common.append(b.allocator, "-DDISABLE_RUNTIME_CPU_DETECTION") catch @panic("OOM");
-            module.addCSourceFiles(.{ .root = zlib.path(""), .files = &(stream ++ scalar), .flags = common.items });
+            module.addCSourceFiles(.{ .root = zlib.path(""), .files = &(stream ++ scalar ++ .{"arch/generic/crc32_braid_c.c"}), .flags = common.items });
         },
     }
     // These support routines sit outside the inflate and deflate loops.

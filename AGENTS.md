@@ -84,6 +84,8 @@ The noninterlaced RGB8 and RGBA8 PNG path uses zlib-ng to inflate scanlines into
 
 `zig build jpeg-fixtures` regenerates the JPEG profiles with the pinned scalar encoder. The test gate verifies both the encoded fixtures and their decoded pixel hashes.
 
+PNG chunk checksums use zlib-ng's CRC-32. On x86_64, zlib-ng detects PCLMULQDQ at runtime and uses its braid kernel as a fallback. Chorba is disabled. On Arm64, zlib-ng uses ARMv8 CRC instructions when the target or runtime CPU supports them. The zlib stream uses Adler-32.
+
 ## Gates
 
 - `zig fmt --check .`
