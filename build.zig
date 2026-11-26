@@ -42,6 +42,10 @@ const styled_sheet_fuzz_source = fuzz_directory ++ "/sheet.zig";
 /// still fuzzed, checked by UBSan, but without coverage feedback. Without
 /// -ffuzz these flags change nothing.
 const fuzz_coverage_flags = [_][]const u8{"-fno-sanitize-coverage=inline-8bit-counters,pc-table,trace-cmp"};
+
+// The self-hosted x86_64 backend used by Debug on Linux does not emit the
+// fuzzer's PC tables. The coverage runners need LLVM even in Debug.
+const fuzz_use_llvm = true;
 /// Lets the linker drop unused entry points from the C decoder objects.
 const codec_section_flags = [_][]const u8{ "-ffunction-sections", "-fdata-sections" };
 /// Tests that read source files outside the compiler's import graph.
@@ -681,7 +685,7 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
         // Other test binaries could filter out every use of the library, and
         // with it the decoders' allocation hooks they link against.
         const filters = b.allocator.dupe([]const u8, &.{pattern}) catch @panic("OOM");
-        step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = uidiff, .filters = filters })).step);
+        step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = uidiff, .filters = filters, .use_llvm = fuzz_use_llvm })).step);
         addDiffScenarios(b, step, target, optimize, filters);
         return;
     }
@@ -690,7 +694,7 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
     const fuzz_count_install = b.addInstallFile(fuzz_count, "fuzz-target-count.txt");
     b.step("fuzz-target-count", "Discover fuzz tests from the compiled runners").dependOn(&fuzz_count_install.step);
     addFuzzInventory(b, inventory, uidiff);
-    step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = uidiff })).step);
+    step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = uidiff, .use_llvm = fuzz_use_llvm })).step);
     addDiffScenarios(b, step, target, optimize, &.{});
     const fuzz_sources = fuzzSources(b);
     const checked_sources = b.allocator.alloc([]const u8, fuzz_sources.len + 1) catch @panic("OOM");
@@ -709,7 +713,10 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
             .imports = &.{ .{ .name = "uidiff", .module = tested }, .{ .name = "fixtures", .module = cases } },
         });
         if (std.mem.eql(u8, source, cli_source)) test_module.addImport("cli_options", cli_config);
-        step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = test_module })).step);
+        step.dependOn(&b.addRunArtifact(b.addTest(.{
+            .root_module = test_module,
+            .use_llvm = if (index < fuzz_sources.len) fuzz_use_llvm else null,
+        })).step);
         if (index < fuzz_sources.len) addFuzzInventory(b, inventory, test_module);
     }
     for (source_tests) |source| {
