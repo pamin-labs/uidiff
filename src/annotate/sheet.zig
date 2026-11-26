@@ -98,7 +98,7 @@ pub const Rows = struct {
 
     /// Paints one output row into storage supplied by the encoder.
     pub noinline fn row(self: Rows, y: usize, pixels: []Pixel) []const Pixel {
-        const sheet_plan = self.plan;
+        const sheet_plan = &self.plan;
         const line: Line = .{ .pixels = pixels, .y = y };
         const pane_layout = sheet_plan.pane_layout;
         const a = sheet_plan.panes.get(.before);
@@ -123,14 +123,16 @@ pub const Rows = struct {
         const caption = sheet_plan.captions.bounds.get(.after);
         if (caption.containsRow(y)) line.text(caption.x, caption.y, copy.after, .bold, sheet_plan.captions.size, secondary);
         if (y + pane_layout.px(8) >= a.y and y < sheet_plan.pane_end + pane_layout.px(12)) {
-            if (!pane_layout.panoramic or nearPane(y, a, pane_layout)) drawPane(line, sheet_plan.sources.get(.before), a.x, a.y, pane_layout);
-            if (!pane_layout.panoramic or nearPane(y, b, pane_layout)) drawPane(line, sheet_plan.sources.get(.after), b.x, b.y, pane_layout);
+            for (&sheet_plan.sources.values, &sheet_plan.panes.values) |*source, rect| {
+                if (!pane_layout.panoramic or nearPane(y, rect, pane_layout)) drawPane(line, source, rect.x, rect.y, pane_layout);
+            }
         }
         const badge_reach = overviewDiameter(pane_layout);
         if (y + badge_reach >= a.y and y < sheet_plan.pane_end + badge_reach) {
-            for (sheet_plan.details) |detail| {
-                drawMark(line, detail.marks.get(.before), detail.badges.get(.before), detail, pane_layout);
-                drawMark(line, detail.marks.get(.after), detail.badges.get(.after), detail, pane_layout);
+            for (sheet_plan.details) |*detail| {
+                for (&detail.marks.values, &detail.badges.values) |mark, location| {
+                    drawMark(line, mark, location, detail.region.kind, &detail.number, pane_layout);
+                }
             }
         }
         if (sheet_plan.details.len != 0 and y >= sheet_plan.pane_end) {
@@ -143,15 +145,14 @@ pub const Rows = struct {
                 self.drawFocus(line);
                 return pixels;
             }
-            const detail_x = sheet_plan.detail_x.get(.before);
-            const after_detail_x = sheet_plan.detail_x.get(.after);
-            for (sheet_plan.details) |detail| {
+            for (sheet_plan.details) |*detail| {
                 if (y < detail.top or y >= detail.top + detail.height) continue;
                 const diameter = labels.detail_badge;
                 badge(line, .{ .x = left_x, .y = detail.top, .width = diameter, .height = diameter }, detail.region.kind, detail.number.bytes(), pane_layout);
                 line.text(labels.detail_kind_x, detail.top + labels.detail_kind_offset, kindName(detail.region.kind), .regular, labels.body_size, secondary);
-                drawDetail(line, detail.crops.get(.before), sheet_plan.sources.get(.before).image, detail_x, sheet_plan.detail_slot_width, detail.top, detail.height, detail.region.kind, pane_layout);
-                drawDetail(line, detail.crops.get(.after), sheet_plan.sources.get(.after).image, after_detail_x, sheet_plan.detail_slot_width, detail.top, detail.height, detail.region.kind, pane_layout);
+                for (&detail.crops.values, &sheet_plan.sources.values, &sheet_plan.detail_x.values) |patch, *source, x| {
+                    drawDetail(line, patch, source.image, x, sheet_plan.detail_slot_width, detail.top, detail.height, detail.region.kind, pane_layout);
+                }
                 break;
             }
         }
@@ -159,26 +160,27 @@ pub const Rows = struct {
     }
 
     noinline fn drawFocus(self: Rows, line: Line) void {
-        const sheet_plan = self.plan;
+        const sheet_plan = &self.plan;
         const badge_reach = badgeDiameter(sheet_plan.pane_layout) -| focus_caption_height;
-        for (sheet_plan.focuses, 0..) |window, index| {
+        for (sheet_plan.focuses, 0..) |*window, index| {
             // A badge placed above a short crop can extend into the gap
             // before the caption. Unused merge entries have zero height.
             if (window.height == 0 or line.y + badge_reach < window.top or line.y >= window.top + window.height) continue;
-            for (window.crops.values, sheet_plan.sources.values, window.captions.values, std.enums.values(value.Side)) |patch, source, caption, side| {
+            for (std.enums.values(value.Side)) |side| {
                 const x = focusColumn(side);
+                const caption = window.captions.getPtrConst(side);
                 line.text(x, window.top, caption.bytes(), .regular, text.caption_size, secondary);
-                if (patch) |p| {
-                    paintCrop(line, p, source.image);
-                    line.stroke(p.to.outset(1), 2, 1, outline_gray);
+                if (window.crops.get(side)) |patch| {
+                    paintCrop(line, patch, sheet_plan.sources.getPtrConst(side).image);
+                    line.stroke(patch.to.outset(1), 2, 1, outline_gray);
                 } else {
                     line.text(x, window.top + focus_caption_height, copy.not_on_side, .regular, text.caption_size, muted);
                 }
             }
-            for (sheet_plan.details) |detail| {
+            for (sheet_plan.details) |*detail| {
                 if (detail.focus != index) continue;
                 for (detail.focus_marks.values, detail.focus_badges.values) |mark, location| {
-                    drawMark(line, mark, location, detail, sheet_plan.pane_layout);
+                    drawMark(line, mark, location, detail.region.kind, &detail.number, sheet_plan.pane_layout);
                 }
             }
             return;
@@ -197,7 +199,7 @@ pub fn render(allocator: Allocator, before: Image, after: Image, regions: []cons
 }
 
 /// Copies the visible preview pixels for one row.
-noinline fn drawPane(line: Line, pane: Pane, x: usize, y: usize, pane_layout: PaneLayout) void {
+noinline fn drawPane(line: Line, pane: *const Pane, x: usize, y: usize, pane_layout: PaneLayout) void {
     const rect = paneRect(x, y, pane.dimensions);
     const radius = pane_layout.px(16);
     const shades = [_]Pixel{ .{ 241, 241, 242, 255 }, .{ 237, 237, 238, 255 }, .{ 232, 232, 234, 255 } };

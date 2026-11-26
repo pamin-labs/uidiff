@@ -7,12 +7,12 @@ const value = @import("../../value.zig");
 const geometry = @import("../geometry.zig");
 const canvas = drawing.canvas;
 const focus = @import("../focus.zig");
+const text = drawing.text;
 const palette = drawing.palette;
 const Rect = geometry.Rect;
 const PaneLayout = geometry.PaneLayout;
 const Line = canvas.Line;
 const roundSpan = canvas.roundSpan;
-const Detail = focus.Detail;
 const Badge = focus.Badge;
 const white = palette.white;
 const tint = palette.tint;
@@ -22,18 +22,18 @@ const Pixel = value.Pixel;
 pub const badge_ring = 3;
 
 /// Draws the outward halo and assigned badge on one sheet row.
-pub noinline fn drawMark(line: Line, box: ?Rect, route: Badge, detail: Detail, pane_layout: PaneLayout) void {
+pub noinline fn drawMark(line: Line, box: ?Rect, route: Badge, kind: value.Kind, number: *const text.Text, pane_layout: PaneLayout) void {
     const rect = box orelse return;
-    if (route == .linked) drawLeader(line, rect, route.linked, tint(detail.region.kind));
+    if (route == .linked) drawLeader(line, rect, route.linked, tint(kind));
     const width = 2;
     const halo = 2;
     const frame = rect.outset(3);
     if (line.y >= frame.y -| halo and line.y < frame.y + frame.height + halo) {
         const r = pane_layout.px(6);
         strokeOutside(line, frame.outset(halo), r + halo, halo, white, rect);
-        strokeOutside(line, frame, r, width, tint(detail.region.kind), rect);
+        strokeOutside(line, frame, r, width, tint(kind), rect);
     }
-    if (route.position()) |where| badge(line, where, detail.region.kind, detail.number.bytes(), pane_layout);
+    if (route.position()) |where| badge(line, where, kind, number.bytes(), pane_layout);
 }
 
 /// Paints the visible row of a numbered badge.
