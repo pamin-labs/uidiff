@@ -10,7 +10,7 @@ Moved content is lined up, and every real edit is boxed, numbered and labelled a
 
 - **Changes, not pixels.** A pixel diff paints everything below an inserted row. uidiff aligns what only moved and reports it as one shift with its offset, so only real edits get a box.
 - **Catches what eyes miss.** A colour a few shades off or a single changed word is boxed and shown side by side in a close-up.
-- **One small native binary.** About 600 KB, no runtime, roughly 11 ms for a 2560×1600 pair. PNG, JPEG and WebP in; a sheet and JSON out.
+- **One small native binary.** 604 KB, no runtime, 9.8 ms to report JSON for a 2560×1600 pair. PNG, JPEG and WebP in; a sheet and JSON out.
 
 ## Quick start
 
@@ -85,12 +85,12 @@ Boxes are in device pixels. A region has a box on each side where it exists. A m
 | Boxes on things that did not change | **4** | 46 | 147 | 131 |
 | Moved content found with its offset | **56 / 56** | 56 / 56 | n/a | n/a |
 | What you get | labelled regions, moves, a sheet | a mask | a mask | a mask |
-| CLI time, 2560×1600 pair | **11.4 ms** | 65 ms | 103 ms | 379 ms |
-| CPU time, same pair | **14.2 ms** | 80 ms | 127 ms | 419 ms |
+| CLI time, 2560×1600 pair | **9.8 ms** | 65 ms | 103 ms | 379 ms |
+| CPU time, same pair | **12.9 ms** | 80 ms | 127 ms | 419 ms |
 | Peak RSS | **35.4 MiB** | 70 MiB | 50 MiB | 147 MiB |
 | Install | **604 KB**, one file | 1.3 MB + Node | 2.4 MB | 0.76 MB + Node |
 
-<sub>Timings are medians from 15 rotated rounds on Arm64 macOS. The uidiff column was refreshed independently on the same pair. Each comparison starts a new process. uidiff writes JSON, and Iris and pixelmatch include Node startup. See the <a href="bench/README.md">benchmark method</a>.</sub>
+<sub>Timings are medians from 15 rotated rounds on Arm64 macOS. The uidiff column was refreshed independently on the original pair, alternating the current CLI with v0.0.2. Competitor figures are from the original run. Each comparison starts a new process. uidiff writes JSON, and Iris and pixelmatch include Node startup. See the <a href="bench/README.md">benchmark method</a>.</sub>
 
 ## Usage
 
@@ -105,7 +105,7 @@ uidiff --version
 | `<before>`, `<after>` | The two captures: PNG, JPEG or WebP. Different heights are fine; a different width is reported as added or removed columns. |
 | `--scale N` | Device pixels per logical pixel (CSS px, points or dp), as a plain decimal such as `2` or `1.5`. Default `1`. It sets padding and merge distances in logical pixels; boxes stay in device pixels. |
 | `--json` | Print the report as one JSON object instead of the region count. |
-| `--annotate <out.png>` | Also write the sheet to this PNG. The file is replaced only once the sheet is complete. |
+| `--annotate <out.png>` | Also write the sheet to this PNG. The file is replaced only once the sheet is complete. Large sheets are compressed on several cores, so the PNG bytes can differ between machines while the pixels stay the same. |
 | `--help` | Print usage and exit 0. |
 | `--version` | Print the installed version and exit 0. |
 
