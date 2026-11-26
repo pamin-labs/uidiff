@@ -63,14 +63,18 @@ const diagonal_clearance_px = 32;
 /// Chooses a badge position and checks whether its leader crosses ink.
 pub fn routeBadge(mark: Rect, outside: ?Rect, image: Image, patch: Crop, diameter: usize, obstacles: []const Rect) Badge {
     if (outside) |position| {
-        if (position.distanceSquared(mark) <= diameter * diameter) return .{ .plain = position };
-        switch (leaderClearance(mark, position, image, patch, obstacles)) {
-            .clear => return .{ .linked = position },
-            .obstructed => return .{ .plain = position },
-            .ink => return .{ .plain = adjacentOnPaint(mark, image, patch, diameter, obstacles) orelse position },
-        }
+        const aligned = (position.x < mark.right() and mark.x < position.right()) or
+            (position.y < mark.bottom() and mark.y < position.bottom());
+        const pane = patch.to;
+        const inset = @min(mark.x - pane.x, mark.y - pane.y, pane.right() - mark.right(), pane.bottom() - mark.bottom());
+        const near_edge = inset <= diameter / 4;
+        if ((aligned or near_edge) and position.distanceSquared(mark) <= diameter * diameter) return .{ .plain = position };
+        const clearance = leaderClearance(mark, position, image, patch, obstacles);
+        if (clearance == .clear and (aligned or near_edge)) return .{ .linked = position };
+        if (adjacentOnPaint(mark, image, patch, diameter, obstacles)) |adjacent| return .{ .plain = adjacent };
+        return if (clearance == .clear) .{ .linked = position } else .{ .plain = position };
     }
-    return if (placement.place(mark, patch.to, diameter, obstacles)) |position| .{ .plain = position } else .none;
+    return if (adjacentOnPaint(mark, image, patch, diameter, obstacles)) |position| .{ .plain = position } else .none;
 }
 
 fn adjacentOnPaint(mark: Rect, image: Image, patch: Crop, diameter: usize, obstacles: []const Rect) ?Rect {
@@ -89,8 +93,13 @@ fn adjacentOnPaint(mark: Rect, image: Image, patch: Crop, diameter: usize, obsta
         const across_rows = side % 2 != 0;
         const start = if (across_rows) bounds.y else bounds.x;
         const finish = (if (across_rows) bounds.bottom() else bounds.right()) - diameter;
-        const at = if (across_rows) initial.y else initial.x;
-        for ([_]usize{ at, @max(start, at -| radius), @min(finish, at + radius) }) |along| {
+        const center = if (across_rows) mark.y + mark.h / 2 else mark.x + mark.w / 2;
+        const at = std.math.clamp(center -| radius, start, finish);
+        const first = if (across_rows) mark.y else mark.x;
+        const last = if (across_rows) mark.bottom() else mark.right();
+        const placed = if (across_rows) initial.y else initial.x;
+        for ([_]usize{ at, @max(start, at -| radius), @min(finish, at + radius), placed }) |along| {
+            if (along >= last or along + diameter <= first) continue;
             var candidate = initial;
             if (across_rows) candidate.y = along else candidate.x = along;
             const gap = candidate.distanceSquared(mark);
@@ -187,6 +196,29 @@ test "overview leaders move a blocked badge near the edited box" {
         try std.testing.expect(route != .linked);
         try std.testing.expect(!std.meta.eql(route.position().?, outside));
         try std.testing.expect(route.position().?.distanceSquared(mark) <= 40 * 40);
+    }
+}
+
+test "an in-pane badge avoids text directly above the edited box" {
+    const width = 240;
+    const height = 180;
+    var pixels: [width * height]Pixel = @splat(white);
+    const image: Image = .{ .width = width, .height = height, .pixels = &pixels };
+    const patch: Crop = .{
+        .from = .{ .x = 0, .y = 0, .w = width, .h = height },
+        .to = .{ .x = 0, .y = 0, .w = width, .h = height },
+    };
+    const mark: Rect = .{ .x = 20, .y = 104, .w = 80, .h = 30 };
+    for (90..100) |y| @memset(pixels[y * width + 22 ..][0..84], palette.ink);
+    for (140..180) |y| @memset(pixels[y * width + 20 ..][0..82], palette.ink);
+    const diameter = 40;
+    const diagonal: Rect = .{ .x = width, .y = 54, .w = diameter, .h = diameter };
+    for ([_]?Rect{ null, diagonal }) |outside| {
+        const badge = routeBadge(mark, outside, image, patch, diameter, &.{});
+        try std.testing.expect(badge == .plain);
+        try std.testing.expect(badge.plain.x >= mark.right());
+        try std.testing.expectEqual(mark.y + mark.h / 2, badge.plain.y + diameter / 2);
+        try std.testing.expect(badgeOnPaint(image, patch, badge.plain));
     }
 }
 

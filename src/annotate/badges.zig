@@ -334,9 +334,13 @@ test "edge badges use the gutter margins and the space above the caption" {
     try std.testing.expect(right.x >= rows.plan.panes[1].right());
     try std.testing.expect(top.bottom() <= rows.plan.panes[1].y);
     const center = rows.plan.details[3].before_badge.position().?;
-    for ([_]Rect{ left, gap, right, top, center }) |badge_rect| {
+    for ([_]Rect{ left, gap, right, top }) |badge_rect| {
         for (rows.plan.panes) |pane| try std.testing.expect(!badge_rect.overlaps(pane));
     }
+    const center_mark = rows.plan.details[3].before_mark.?;
+    try std.testing.expect(center.overlaps(rows.plan.panes[0]));
+    try std.testing.expect(!center.overlaps(center_mark));
+    try std.testing.expect(center.distanceSquared(center_mark) <= 36);
 }
 
 test {
