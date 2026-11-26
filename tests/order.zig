@@ -86,7 +86,7 @@ fn checkContainer(tree: *const Ast, members: []const Ast.Node.Index, finding: *F
         if (@backingInt(kind) < @backingInt(last)) return error.OutOfOrder;
         last = kind;
         if (importTarget(tree, member)) |target| {
-            if (first_import and !std.mem.eql(u8, target, "\"std\"")) return error.StdNotFirst;
+            if (!first_import and std.mem.eql(u8, target, "\"std\"")) return error.StdNotFirst;
             first_import = false;
         }
         if (kind == .type) try checkLaterTypes(tree, members[i + 1 ..], member, finding);
@@ -155,6 +155,7 @@ test "the order check rejects each kind of misplacement" {
     try testing.expectError(error.OutOfOrder, checkText("const Box = struct {\n    const max = 1;\n    const Inner = struct {};\n};\n"));
     try testing.expectError(error.TypeUsedBeforeDeclared, checkText("const A = struct { b: B };\nconst B = struct {};\n"));
     try testing.expectError(error.StdNotFirst, checkText("const a = @import(\"a.zig\");\nconst std = @import(\"std\");\n"));
+    try checkText("const a = @import(\"a.zig\");\nconst b = @import(\"b.zig\");\n");
     try checkText("const std = @import(\"std\");\nconst a = @import(\"a.zig\");\nconst B = struct {};\nconst A = struct { b: B, c: a.C };\nconst max = 1;\nfn init() void {}\npub fn g() void {}\nexport fn h() void {}\nfn f() void {}\ntest {}\n");
 }
 

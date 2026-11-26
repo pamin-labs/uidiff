@@ -1,19 +1,19 @@
 //! Fuzzes the comparison with small RGBA pairs, half of them sharing shifted rows.
 const std = @import("std");
 const uidiff = @import("uidiff");
-const rgba = @import("fixtures/rgba.zig");
+const fuzz = @import("uidiff_testing").fuzz;
 const testing = std.testing;
 
 /// Scales are drawn as quarters from 1/4 to 4.
 const max_scale_quarters = 16;
 
 fn fuzzCompare(_: void, smith: *testing.Smith) !void {
-    var before_pixels: rgba.Storage = undefined;
-    var after_pixels: rgba.Storage = undefined;
-    const before = rgba.image(smith, &before_pixels);
-    const after = rgba.image(smith, &after_pixels);
+    var before_pixels: fuzz.Storage = undefined;
+    var after_pixels: fuzz.Storage = undefined;
+    const before = fuzz.image(smith, &before_pixels);
+    const after = fuzz.image(smith, &after_pixels);
     if (smith.value(bool)) {
-        const shift = smith.valueRangeAtMost(u8, 0, rgba.extent);
+        const shift = smith.valueRangeAtMost(u8, 0, fuzz.extent);
         const shared_width = @min(before.width, after.width);
         for (shift..@max(shift, @min(after.height, before.height + shift))) |y| {
             const start = y * after.width;

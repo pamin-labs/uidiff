@@ -19,10 +19,11 @@ Follow the public pamin-labs/skills engineering rules in [core](.agents/skills/p
 
 ## Layout
 
-- `src/root.zig` exposes the public library. It imports only module roots: the files beside each layer directory.
+- `src/root.zig` exposes the public library. It imports only module roots, the files beside each layer directory.
+- `src/testing.zig` is the private `uidiff_testing` module created for repository test runners. It exposes procedural RGBA canvases and painters, assertions over public comparison results, and bounded RGBA inputs for fuzzing.
 - `src/value.zig` and `src/value/` hold shared values and the image and memory bounds. Value modules depend only on other values and the standard library.
 - `src/codec.zig` and `src/codec/` handle format detection, bounded file reads, dimension and memory-budget checks, decoding and PNG encoding. Only `src/codec/stb.zig` imports the translated stb_image header, only `src/codec/jpeg.zig` the translated libjpeg-turbo bridge, and only `src/codec/webp.zig` the translated libwebp decoder header; the encoder headers are translated separately for the fixture generator, so the shipped library never includes them. `src/codec/png.zig` exposes PNG registration, decoding and encoding through the bounded streams in `src/codec/png/`.
-- `src/diff.zig` owns the comparison API and resolves collected regions. The comparison internals in `src/diff/` are named, with their tiers, under Layers. `src/diff/test_support.zig` supplies fixtures to unit tests and the standalone comparison scenarios. `src/annotate.zig` and `src/annotate/` number and place labels and draw the annotated sheet. `src/annotate/badges.zig` places badges and exposes the routing and painting in `src/annotate/badges/`. `src/annotate/crops.zig` owns close-up geometry and sampling, and `src/annotate/report_sheet.zig` composes the overview and the detail rows. `src/report.zig` owns the versioned JSON report.
+- `src/diff.zig` owns the comparison API and resolves collected regions. The comparison internals in `src/diff/` are named, with their tiers, under Layers. `src/annotate.zig` and `src/annotate/` number and place labels and draw the annotated sheet. `src/annotate/badges.zig` places badges and exposes the routing and painting in `src/annotate/badges/`. `src/annotate/crops.zig` owns close-up geometry and sampling, and `src/annotate/report_sheet.zig` composes the overview and the detail rows. `src/report.zig` owns the versioned JSON report.
 - `src/files.zig` is the file pipeline: it checks the options once, decodes both files, compares them and writes the sheet atomically. The CLI calls it and only translates.
 - `src/cli.zig` is the CLI entry and `src/cli/` its argument syntax and usage text.
 - `bench/` measures the public API.
@@ -30,7 +31,7 @@ Follow the public pamin-labs/skills engineering rules in [core](.agents/skills/p
 - `skills/uidiff/` documents screenshot capture, comparison and report interpretation for agents.
 - `scripts/` contains developer tooling. `scripts/release/` packages the CLI, renders the Homebrew formula and tests the launcher and installers. The installers are `install.sh` and `install.ps1` at the repository root.
 - `.github/` contains the release target list and workflows. Dispatch `release.yml` from `main` with a `version` input. The workflow commits that version to `build.zig.zon`, builds the ReleaseSafe matrix shared with CI, creates the tagged GitHub release, mirrors assets to R2 and publishes npm packages through OIDC with provenance. Stable releases also update the Homebrew tap from the published formula asset.
-- `tests/diff.zig` registers the comparison scenarios in `tests/diff/`, which use the diff facade and shared procedural fixtures. `tests/` runs the installed CLI (`tests/e2e.zig`), decodes the fixtures through the public API (`tests/decode.zig`), checks the binary size budget, and checks source layout, layering and declaration order. `tests/fuzz/` holds one fuzz target per top-level file, each its own test binary. Shared RGBA inputs live in `tests/fuzz/fixtures/`. `tests/fixtures.zig` is the fixture set's root; `tests/fixtures/` holds the synthetic fixture generator, its encoders, the freshness check and the generated images with expected reports. Unit tests live beside the code they exercise.
+- `tests/compare.zig` registers the comparison scenarios in `tests/compare/`, and `tests/sheet.zig` registers the annotated sheet scenarios in `tests/sheet/`. Both use the public `uidiff` module and the private `uidiff_testing` module. `tests/` runs the installed CLI (`tests/e2e.zig`), decodes the fixtures through the public API (`tests/decode.zig`), checks the binary size budget, and checks source layout, layering and declaration order. `tests/fuzz/` holds one fuzz target per top-level file, each its own test binary. `tests/fixtures.zig` is the fixture set's root; `tests/fixtures/` holds the synthetic fixture generator, its encoders, the freshness check and the generated images with expected reports. A unit test sits at the end of the file whose code it exercises. A comparison or sheet scenario lives in its area under `tests/compare/` or `tests/sheet/`. Shared test helpers live in `src/testing/`, with committed fixture metadata and sample reads owned by `tests/fixtures.zig`. Private fuzz targets sit beside the code they exercise, including the CLI arguments target, and public API fuzz targets live in `tests/fuzz/`.
 
 ## Layers
 
@@ -44,11 +45,12 @@ Follow the public pamin-labs/skills engineering rules in [core](.agents/skills/p
 | annotate | `src/annotate.zig` `src/annotate/` | value |
 | report | `src/report.zig` | value |
 | files | `src/files.zig` | value, codec, diff, annotate |
+| testing | `src/testing.zig` `src/testing/` | uidiff |
 | api | `src/root.zig` | value, codec, diff, annotate, report, files |
 | cli | `src/cli.zig` `src/cli/` | `uidiff` |
 | tool | `bench/` `tests/` | `uidiff` |
 
-Unit tests import `src/diff/test_support.zig` from test blocks. The diff root exposes it only in test builds for the standalone scenarios, and the helper calls back through the diff root to compare its fixtures.
+`src/testing/jpeg.zig` belongs to `uidiff` and is path-imported by test declarations in `src/codec/jpeg.zig` and `src/files.zig`, `src/testing/canvas.zig` is `uidiff_test_canvas`, and the remaining files in `src/testing/` belong to `uidiff_testing`. Scenario runners and fuzz targets import fixtures by the named `uidiff_testing` module. Source unit tests and the private testing module share the named `uidiff_test_canvas` leaf because Zig assigns each source file to one module per compilation.
 
 Named build modules, and the only files that may import them. The `export` row names the files whose exported functions C code calls back.
 
@@ -62,7 +64,8 @@ Named build modules, and the only files that may import them. The `export` row n
 | `stb_write_c` | `tests/fixtures/encode.zig` |
 | `webp_encode_c` | `tests/fixtures/encode.zig` |
 | `codec_memory` | `src/codec.zig` `src/codec/png/deflate.zig` `src/codec/png/scanlines.zig` `src/codec/stb.zig` `src/codec/jpeg.zig` `src/codec/webp.zig` `tests/fixtures/encode.zig` |
-| `diff_scenarios` | `tests/diff/` (comparison API and test-only fixture support) |
+| `uidiff_test_canvas` | `src/testing.zig` `src/testing/expect.zig` `src/diff.zig` `src/diff/` `src/annotate/report_layout.zig` |
+| `uidiff_testing` | `tests/compare/` `tests/sheet/` `tests/decode.zig` `tests/e2e.zig` `tests/fuzz/` |
 | `fixtures` | `tests/e2e.zig` `tests/decode.zig` `tests/fuzz/` |
 | `e2e_options` | `tests/e2e.zig` |
 | `cli_options` | `src/cli.zig` |
@@ -78,9 +81,10 @@ Only a submodule's facade and implementation files may import its implementation
 | `src/diff/rows.zig` | `src/diff/rows/` |
 | `src/annotate/badges.zig` | `src/annotate/badges/` |
 | `src/codec/png.zig` | `src/codec/png/` |
-| `tests/diff.zig` | `tests/diff/` |
+| `tests/compare.zig` | `tests/compare/` |
+| `tests/sheet.zig` | `tests/sheet/` |
 
-Each unit of the diff internals, with its tier. A unit imports another only if that unit's tier is lower; files inside one unit import each other under the rules above. `src/diff.zig` sits above every tier and `src/diff/test_support.zig` outside them. A file under `src/diff/` that this table does not name fails the test.
+Each unit of the diff internals, with its tier. A unit imports another only if that unit's tier is lower; files inside one unit import each other under the rules above. `src/diff.zig` sits above every tier. A file under `src/diff/` that this table does not name fails the test.
 
 | Diff tier | Paths | Holds |
 | --- | --- | --- |
@@ -109,7 +113,7 @@ PNG chunk checksums use zlib-ng's CRC-32. On x86_64, zlib-ng detects PCLMULQDQ a
 - `zig build e2e`
 - `zig build test-threaded` on Linux
 - `zig build test-png-rows` and `zig build test-x86-fallback` on the CI architectures
-- `bash scripts/fuzz.sh` (every fuzz target: the CLI's argument parser and each file in `tests/fuzz/`)
+- `bash scripts/fuzz.sh` (the inline CLI and PNG targets and each target in `tests/fuzz/`)
 - `zig build bench`
 - `zig build size`
 - `python3 scripts/readme-images.py check` and `python3 scripts/test-readme-images.py` (validate local README image links)

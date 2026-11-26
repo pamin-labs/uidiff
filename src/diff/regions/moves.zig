@@ -51,17 +51,9 @@ fn containsMove(box: Box, rows: values.RowRange, move: values.Move, slack: f64, 
     return top >= box.y - slack and bottom <= box.bottom() + slack;
 }
 
-test "replacement regions suppress enclosed and sub-line displacement" {
-    const sample = @import("../test_support.zig");
-    const before = try sample.Canvas.init(120, 140);
-    defer before.deinit();
-    const after = try sample.Canvas.init(120, 140);
-    defer after.deinit();
-    before.fill(10, 20, 50, 34, sample.inkShade(32, 4));
-    after.fill(10, 20, 50, 34, sample.inkShade(72, 4));
-    const result = try sample.compareCanvases(before, after, 1);
-    defer result.deinit(std.testing.allocator);
-    try std.testing.expectEqual(@as(usize, 1), result.regions.len);
+test {
+    const box = Box.fromPixels(6, 16, 58, 42);
+    const edits = [_]Region{.{ .number = 1, .kind = .changed, .before = box, .after = box }};
     var moves = [_]values.Move{
         .{ .before = .{ .y = 27, .height = 10 }, .after = .{ .y = 34, .height = 10 }, .x = .init(10), .width = .init(50) },
         .{ .before = .{ .y = 61, .height = 3 }, .after = .{ .y = 70, .height = 3 }, .x = .init(10), .width = .init(50) },
@@ -70,7 +62,7 @@ test "replacement regions suppress enclosed and sub-line displacement" {
         .{ .before = .{ .y = 49, .height = 12 }, .after = .{ .y = 50, .height = 12 }, .x = .init(10), .width = .init(50) },
         .{ .before = .{ .y = 4, .height = 125 }, .after = .{ .y = 6, .height = 125 }, .x = .init(10), .width = .init(50) },
     };
-    try std.testing.expectEqual(@as(usize, 3), keepMoves(&moves, result.regions, .one, Scale.one.devicePixels(scroll_shift)));
+    try std.testing.expectEqual(@as(usize, 3), keepMoves(&moves, &edits, .one, Scale.one.devicePixels(scroll_shift)));
     try std.testing.expectEqual(@as(usize, 62), moves[0].before.y);
     try std.testing.expectEqual(@as(usize, 80), moves[1].x.count());
 }

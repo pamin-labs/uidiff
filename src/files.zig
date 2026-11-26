@@ -244,6 +244,7 @@ test "an invalid scale clears file diagnostics before loading" {
 }
 
 test "overlapped decodes preserve PNG and JPEG errors and results" {
+    const jpeg = @import("testing/jpeg.zig");
     const io = std.testing.io;
     const allocator = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
@@ -262,7 +263,7 @@ test "overlapped decodes preserve PNG and JPEG errors and results" {
     const after = try tmp.dir.realPathFileAlloc(io, after_name, allocator);
     defer allocator.free(after);
     const paths: Paths = .{ .before = before, .after = after };
-    const samples = [_][]const u8{ output.written(), &codec.jpeg_test_images.gray };
+    const samples = [_][]const u8{ output.written(), &jpeg.gray };
     for (samples) |old| {
         for (samples) |new| {
             var a = try codec.decode(allocator, old);
@@ -283,13 +284,13 @@ test "overlapped decodes preserve PNG and JPEG errors and results" {
     }
 
     var diagnostics: Diagnostics = .{};
-    const jpeg = &codec.jpeg_test_images.gray;
-    const truncated = jpeg[0 .. jpeg.len - codec.jpeg_test_images.eoi.len];
+    const encoded_jpeg = &jpeg.gray;
+    const truncated = encoded_jpeg[0 .. encoded_jpeg.len - jpeg.eoi.len];
     try tmp.dir.writeFile(io, .{ .sub_path = before_name, .data = truncated });
     try tmp.dir.writeFile(io, .{ .sub_path = after_name, .data = "unsupported" });
     try std.testing.expectError(error.InvalidImage, compareFiles(io, allocator, paths, .{}, &diagnostics));
     try std.testing.expectEqualStrings(before, diagnostics.path.?);
-    try tmp.dir.writeFile(io, .{ .sub_path = before_name, .data = jpeg });
+    try tmp.dir.writeFile(io, .{ .sub_path = before_name, .data = encoded_jpeg });
     try tmp.dir.writeFile(io, .{ .sub_path = after_name, .data = truncated });
     try std.testing.expectError(error.InvalidImage, compareFiles(io, allocator, paths, .{}, &diagnostics));
     try std.testing.expectEqualStrings(after, diagnostics.path.?);

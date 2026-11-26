@@ -225,32 +225,12 @@ test "one-sided stacks join across a blank seam but keep painted rows separate" 
     try std.testing.expectEqual(@as(usize, 2), mergeLogical(&boxes, image, image, .one, &.{}));
 }
 
-test "a compact outline joins edits to its label and value without spanning cards" {
-    const sample = @import("../test_support.zig");
-    const move_rules = @import("moves.zig");
-    const before = try sample.Canvas.init(480, 164);
+test {
+    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
+    const moves_rules = @import("moves.zig");
+    const before, const after = try canvas.compactCardEdits();
     defer before.deinit();
-    const after = try sample.Canvas.init(480, 164);
     defer after.deinit();
-    for ([_]sample.Canvas{ before, after }) |canvas| {
-        for ([_]usize{ 20, 254 }) |left| {
-            canvas.fill(left, 20, 198, 112, sample.inkShade(120, 4));
-            canvas.fill(left + 2, 22, 194, 108, sample.inkShade(240, 4));
-        }
-    }
-    for ([_]usize{ 52, 286 }) |left| {
-        before.fill(left, 44, 40, 12, sample.inkShade(64, 4));
-        after.fill(left, 44, 56, 12, sample.inkShade(72, 4));
-        before.fill(left, 70, 68, 22, sample.inkShade(64, 4));
-        after.fill(left, 70, 82, 22, sample.inkShade(72, 4));
-    }
-    const result = try sample.compareCanvases(before, after, 1);
-    defer result.deinit(std.testing.allocator);
-    try std.testing.expectEqual(@as(usize, 2), result.regions.len);
-    for ([_]usize{ 52, 286 }) |left| {
-        try std.testing.expect(sample.hasRegion(result.regions, .after, left, 46, .changed));
-        try std.testing.expect(sample.hasRegion(result.regions, .after, left, 90, .changed));
-    }
     const label = Box.fromPixels(52, 44, 56, 12);
     const value = Box.fromPixels(52, 70, 82, 22);
     var candidates = [_]pending.Candidate{
@@ -266,7 +246,7 @@ test "a compact outline joins edits to its label and value without spanning card
     const len = mergeLogical(&candidates, before.view, after.view, .one, &moves);
     var edits: [candidates.len]values.Region = undefined;
     for (edits[0..len], candidates[0..len]) |*edit, candidate| edit.* = candidate.region;
-    try std.testing.expectEqual(@as(usize, 1), move_rules.keepMoves(&moves, edits[0..len], .one, Scale.one.devicePixels(move_rules.scroll_shift)));
+    try std.testing.expectEqual(@as(usize, 1), moves_rules.keepMoves(&moves, edits[0..len], .one, Scale.one.devicePixels(moves_rules.scroll_shift)));
 }
 
 test {

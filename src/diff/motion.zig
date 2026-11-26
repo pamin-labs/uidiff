@@ -88,10 +88,10 @@ fn columnMotion(scope: Scope, keys: []const u64, move: values.Move, scroll_limit
 }
 
 test "an aligned blank tail contributes no phantom move" {
-    const sample = @import("test_support.zig");
-    const before = try sample.Canvas.init(64, 32);
+    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
+    const before = try canvas.Canvas.init(64, 32);
     defer before.deinit();
-    const after = try sample.Canvas.init(64, 64);
+    const after = try canvas.Canvas.init(64, 64);
     defer after.deinit();
     const span: columns.Span = .{ .left = 0, .width = 64 };
     const scope: columns.Scope = .{ .before = before.view, .after = after.view, .span = span, .bounds = span };
@@ -100,8 +100,8 @@ test "an aligned blank tail contributes no phantom move" {
     defer moves.deinit(std.testing.allocator);
     try gatherMoves(std.testing.allocator, &moves, scope, &.{band});
     try std.testing.expectEqual(@as(usize, 0), moves.items.len);
-    before.fill(3, 28, 8, 2, sample.inkShade(70, 4));
-    after.fill(3, 60, 8, 2, sample.inkShade(70, 4));
+    before.fill(3, 28, 8, 2, canvas.inkShade(70, 4));
+    after.fill(3, 60, 8, 2, canvas.inkShade(70, 4));
     try gatherMoves(std.testing.allocator, &moves, scope, &.{band});
     try std.testing.expectEqual(@as(usize, 1), moves.items.len);
 }

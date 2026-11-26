@@ -2,25 +2,18 @@
 //! allocation failure, and headers past the image bounds.
 const std = @import("std");
 const uidiff = @import("uidiff");
+const canvas = @import("uidiff_testing").canvas;
 const fixtures = @import("fixtures");
 const testing = std.testing;
 
-const blank = fixtures.find(.identical);
-/// The blank fixture's files are small; this bounds the read.
-const max_sample_bytes = 4096;
-
-fn sample(comptime format: fixtures.Format) ![]u8 {
-    return std.Io.Dir.cwd().readFileAlloc(testing.io, blank.path(.before, format), testing.allocator, .limited(max_sample_bytes));
-}
-
 fn decodeSamples(allocator: std.mem.Allocator) !void {
     inline for (comptime std.meta.tags(fixtures.Format)) |format| {
-        const bytes = try sample(format);
+        const bytes = try fixtures.readSample(format);
         defer testing.allocator.free(bytes);
         var decoded = try uidiff.decode(allocator, bytes);
         defer decoded.deinit();
-        try testing.expectEqual(uidiff.Size{ .width = blank.width * fixtures.scale, .height = blank.height * fixtures.scale }, decoded.image.size());
-        for (decoded.image.pixels) |pixel| try testing.expectEqual(uidiff.Pixel{ 255, 255, 255, 255 }, pixel);
+        try testing.expectEqual(uidiff.Size{ .width = fixtures.blank.width * fixtures.scale, .height = fixtures.blank.height * fixtures.scale }, decoded.image.size());
+        for (decoded.image.pixels) |pixel| try testing.expectEqual(canvas.white, pixel);
     }
 }
 
@@ -42,7 +35,7 @@ test "JPEG profile pixels match on scalar and SIMD builds" {
 }
 
 test "PNG header rejects oversized dimensions before pixel data is needed" {
-    const bytes = try sample(.png);
+    const bytes = try fixtures.readSample(.png);
     defer testing.allocator.free(bytes);
     var header: [41]u8 = bytes[0..41].*;
     // The IDAT marker allows stb to finish the probe without seeing compressed pixels.
@@ -66,14 +59,14 @@ test "a JPEG frame with representable dimensions over the pixel cap is refused" 
 
 test "a 16-bit header past the decode budget is refused before decoding" {
     inline for (fixtures.claims) |claim| {
-        const bytes = try std.Io.Dir.cwd().readFileAlloc(testing.io, claim.path(), testing.allocator, .limited(max_sample_bytes));
+        const bytes = try std.Io.Dir.cwd().readFileAlloc(testing.io, claim.path(), testing.allocator, .limited(fixtures.max_sample_bytes));
         defer testing.allocator.free(bytes);
         try testing.expectError(error.ImageTooLarge, uidiff.decode(testing.allocator, bytes));
     }
 }
 
 test "WebP header rejects dimensions beyond the RGBA8 cap" {
-    const oversized = try sample(.webp);
+    const oversized = try fixtures.readSample(.webp);
     defer testing.allocator.free(oversized);
     // VP8L stores width minus one and height minus one in adjacent 14-bit fields.
     const dimension_bits = 14;
@@ -84,9 +77,9 @@ test "WebP header rejects dimensions beyond the RGBA8 cap" {
 }
 
 test "file comparison honors the lower decode cap in every format" {
-    const output_bytes = blank.width * blank.height * fixtures.scale * fixtures.scale * @sizeOf(uidiff.Pixel);
+    const output_bytes = fixtures.blank.width * fixtures.blank.height * fixtures.scale * fixtures.scale * @sizeOf(uidiff.Pixel);
     inline for (comptime std.meta.tags(fixtures.Format)) |format| {
-        const path = comptime blank.path(.before, format);
+        const path = comptime fixtures.blank.path(.before, format);
         var diagnostics: uidiff.Diagnostics = .{};
         try testing.expectError(error.ImageTooLarge, uidiff.compareFiles(testing.io, testing.allocator, .{ .before = path, .after = path }, .{ .max_decode_bytes = output_bytes }, &diagnostics));
         try testing.expectEqualStrings(path, diagnostics.path.?);

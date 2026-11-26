@@ -51,7 +51,7 @@ const Rules = struct {
 
     /// The diff unit holding path, or null outside the tiered diff internals.
     fn diffUnitOf(self: Rules, path: []const u8) !?*const DiffUnit {
-        if (!sources.inDirectory(path, diff_directory) or std.mem.eql(u8, path, diff_test_support)) return null;
+        if (!sources.inDirectory(path, diff_directory)) return null;
         for (self.diff_units) |*unit| if (covered(unit.paths, path)) return unit;
         return error.UntieredDiffSource;
     }
@@ -63,9 +63,9 @@ const layers_heading = "## Layers";
 const max_agents_bytes = 64 * 1024;
 /// The module-table row naming files whose exported functions C code calls back.
 const export_row = "export";
-const diff_root = "src/diff.zig";
+const testing_root = "src/testing.zig";
+const jpeg_fixture = "src/testing/jpeg.zig";
 const diff_directory = "src/diff/";
-const diff_test_support = "src/diff/test_support.zig";
 
 const sample_agents =
     \\## Layout
@@ -77,6 +77,7 @@ const sample_agents =
     \\| diff | `src/diff.zig` `src/diff/` | value |
     \\| codec | `src/codec.zig` `src/codec/` | value |
     \\| annotate | `src/annotate.zig` `src/annotate/` | value |
+    \\| testing | `src/testing.zig` `src/testing/` | uidiff |
     \\| api | `src/root.zig` | value, diff, codec, annotate |
     \\| cli | `src/cli.zig` `src/cli/` | `uidiff` |
     \\| tool | `bench/` `tests/` | `uidiff` |
@@ -86,10 +87,13 @@ const sample_agents =
     \\| `stb_c` | `src/codec/stb.zig` |
     \\| `export` | `src/codec/stb.zig` |
     \\| `cases` | `tests/fuzz/` |
+    \\| `uidiff_testing` | `tests/decode.zig` |
+    \\| `uidiff_test_canvas` | `src/diff/` `src/testing.zig` `src/testing/expect.zig` |
     \\
     \\| Submodule root | Implementation directory |
     \\| --- | --- |
     \\| `src/diff/regions.zig` | `src/diff/regions/` |
+    \\| `src/diff/rows.zig` | `src/diff/rows/` |
     \\
     \\| Diff tier | Paths | Holds |
     \\| --- | --- | --- |
@@ -218,38 +222,34 @@ fn isRoot(row: *const Layer, path: []const u8) bool {
     return false;
 }
 
-fn testOnlyImport(tree: *const Ast, node: Ast.Node.Index, allow_gated_export: bool) bool {
+fn enclosingDeclaration(tree: *const Ast, node: Ast.Node.Index) ?Ast.Node.Index {
     const token = tree.nodeMainToken(node);
     for (tree.rootDecls()) |decl| {
-        if (token < tree.firstToken(decl) or token > tree.lastToken(decl)) continue;
-        if (tree.nodeTag(decl) == .test_decl) return true;
-        if (!allow_gated_export) return false;
-
-        // The standalone scenario module still needs the diff root's test export.
-        const variable = tree.fullVarDecl(decl) orelse return false;
-        const gated = tree.fullIf(variable.ast.init_node.unwrap() orelse return false) orelse return false;
-        const condition = tree.firstToken(gated.ast.cond_expr);
-        return tree.lastToken(gated.ast.cond_expr) == condition + 2 and
-            std.mem.eql(u8, tree.tokenSlice(condition), "builtin") and
-            tree.tokenTag(condition + 1) == .period and
-            std.mem.eql(u8, tree.tokenSlice(condition + 2), "is_test") and
-            token >= tree.firstToken(gated.ast.then_expr) and token <= tree.lastToken(gated.ast.then_expr);
+        if (token >= tree.firstToken(decl) and token <= tree.lastToken(decl)) return decl;
     }
-    return false;
+    return null;
 }
 
 fn allowedImport(allocator: Allocator, rules: Rules, source: *const Source, node: Ast.Node.Index, target: []const u8) !bool {
     if (std.mem.eql(u8, target, "std") or std.mem.eql(u8, target, "builtin")) return true;
     const from_path = source.path;
     const from = rules.layerOf(from_path) orelse return error.UnclassifiedSource;
-    if (!sources.isZig(target)) return contains(from.imports, target) or rules.granted(target, from_path);
+    if (!sources.isZig(target)) {
+        if (std.mem.eql(u8, target, "uidiff_test_canvas") and !std.mem.eql(u8, from.paths[0], testing_root)) {
+            const decl = enclosingDeclaration(&source.tree, node) orelse return false;
+            if (source.tree.nodeTag(decl) != .test_decl) return false;
+        }
+        return contains(from.imports, target) or rules.granted(target, from_path);
+    }
     const resolved = try std.fs.path.resolvePosix(allocator, &.{ std.fs.path.dirnamePosix(from_path) orelse ".", target });
     defer allocator.free(resolved);
     const to = rules.layerOf(resolved) orelse return false;
-    if (std.mem.eql(u8, resolved, diff_test_support))
-        return from == to and testOnlyImport(&source.tree, node, std.mem.eql(u8, from_path, diff_root));
-    if (std.mem.eql(u8, from_path, diff_test_support) and std.mem.eql(u8, resolved, diff_root))
-        return true;
+    if (std.mem.eql(u8, to.paths[0], testing_root) and from != to) {
+        if (!std.mem.startsWith(u8, from_path, "src/") or !std.mem.eql(u8, resolved, jpeg_fixture)) return false;
+        const tree = &source.tree;
+        const decl = enclosingDeclaration(tree, node) orelse return false;
+        return tree.nodeTag(decl) == .test_decl;
+    }
     if (try rules.diffUnitOf(from_path)) |from_unit| {
         if (try rules.diffUnitOf(resolved)) |to_unit| {
             if (from_unit != to_unit and to_unit.tier >= from_unit.tier) return false;
@@ -395,18 +395,27 @@ test "the guard rejects reverse imports, submodule imports and foreign bindings"
 test "diff units only import lower tiers and fixtures stay in test scope" {
     try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/yiq.zig", "const regions = @import(\"regions.zig\");"));
     try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/regions/moves.zig", "test { _ = @import(\"../span.zig\"); }"));
-    try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/span.zig", "fn sample() void { _ = @import(\"test_support.zig\"); }"));
-    try testing.expectError(error.ForbiddenImport, checkWithText(diff_root, "const sample = @import(\"diff/test_support.zig\");"));
-    try testing.expectError(error.ForbiddenImport, checkWithText(diff_root, "const sample = if (builtin.is_test) void else @import(\"diff/test_support.zig\");"));
+    try testing.expectError(error.ForbiddenImport, checkWithText("src/codec.zig", "const sample = @import(\"testing/jpeg.zig\");"));
+    try checkWithText("src/codec.zig", "test { _ = @import(\"testing/jpeg.zig\"); }");
+    try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/rows/assembly.zig", "test { _ = @import(\"../../testing.zig\"); }"));
+    try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/rows/assembly.zig", "test { _ = @import(\"../../testing/canvas.zig\"); }"));
+    try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/rows/assembly.zig", "test { _ = @import(\"../../testing/expect.zig\"); }"));
+    try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/rows/assembly.zig", "test { _ = @import(\"../../testing/fuzz.zig\"); }"));
+    try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/rows/assembly.zig", "const canvas = @import(\"uidiff_test_canvas\");"));
+    try checkWithText("src/diff/rows/assembly.zig", "test { _ = @import(\"uidiff_test_canvas\"); }");
+    try testing.expectError(error.ForbiddenImport, checkWithText("tests/decode.zig", "const sample = @import(\"../src/testing/jpeg.zig\");"));
+    try testing.expectError(error.ForbiddenImport, checkWithText("tests/decode.zig", "test { _ = @import(\"../src/testing/canvas.zig\"); }"));
+    try testing.expectError(error.ForbiddenImport, checkWithText("src/testing/expect.zig", "const api = @import(\"../root.zig\");"));
+    try testing.expectError(error.ForbiddenImport, checkWithText("bench/main.zig", "const fixtures = @import(\"uidiff_testing\");"));
+    try checkWithText("tests/decode.zig", "const fixtures = @import(\"uidiff_testing\");");
+    try testing.expectError(error.ForbiddenImport, checkWithText("bench/main.zig", "const sample = @import(\"../src/testing/jpeg.zig\");"));
+    try testing.expectError(error.ForbiddenImport, checkWithText("src/codec.zig", "fn f() void { _ = @import(\"testing/jpeg.zig\"); }"));
     try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/rows.zig", "const regions = @import(\"regions.zig\");"));
     try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/regions/logical.zig", "test { _ = @import(\"../rows.zig\"); }"));
     try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/mask.zig", "const pixel = @import(\"pixel.zig\");"));
     try testing.expectError(error.UntieredDiffSource, checkWithText("src/diff/extra.zig", "const pixel = @import(\"pixel.zig\");"));
     try checkWithText("src/diff/yiq.zig", "const mask = @import(\"mask.zig\");");
     try checkWithText("src/diff/rows/band.zig", "const search = @import(\"search.zig\");");
-    try checkWithText("src/diff/regions/moves.zig", "test { _ = @import(\"../test_support.zig\"); }");
-    try checkWithText(diff_root, "const sample = if (builtin.is_test) @import(\"diff/test_support.zig\") else void;");
-    try checkWithText(diff_test_support, "const diff = @import(\"../diff.zig\");");
 }
 
 test "layout paths come only from the layout section" {

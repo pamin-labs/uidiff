@@ -26,6 +26,8 @@ pub const max_edits = search.max_edits;
 pub const compactInsertion = insertion.compactInsertion;
 /// Places a one-sided element at the best boundary among equivalent row matches.
 pub const refineElements = refinement.refineElements;
+/// Hashes a column span in each image row.
+pub const keys = band_model.keys;
 
 /// Reuses the frontier, row matches, and frequency map across column alignments.
 pub const Workspace = struct {
@@ -43,12 +45,6 @@ pub const Workspace = struct {
         self.* = .{};
     }
 };
-
-/// Hashes each row of the column span. Asserts output.len equals the image
-/// height and left + width is at most its width.
-pub fn keys(source: Image, left: usize, width: usize, output: []u64) void {
-    for (output, 0..) |*key, y| key.* = std.hash.Wyhash.hash(0, source.rowBytes(y, left, width));
-}
 
 /// Aligns rows into caller-owned bands, or returns null for positional comparison.
 pub fn matchBands(allocator: Allocator, before: band_model.Keys, after: band_model.Keys, limits: band_model.Limits, bands: []band_model.Band, filtered: []u64, scratch: *Workspace) Allocator.Error!?[]band_model.Band {
@@ -254,79 +250,14 @@ test "a two-row alias does not hide a thirty-row scroll through periodic content
     try std.testing.expect(revealed.after <= height - scroll);
 }
 
-test "row hashes use the validated stride on one-pixel and final cropped rows" {
-    const one = [_]values.Pixel{.{ 21, 22, 23, 255 }};
-    var key: [1]u64 = undefined;
-    keys(.{ .width = 1, .height = 1, .pixels = &one }, 0, 1, &key);
-    try std.testing.expectEqual(std.hash.Wyhash.hash(0, std.mem.sliceAsBytes(&one)), key[0]);
-    var data: [10]values.Pixel = undefined;
-    for (&data, 0..) |*pixel, i| pixel.* = .{ @intCast(i), 0, 0, 255 };
-    var hashes: [2]u64 = undefined;
-    keys(.{ .width = 5, .height = 2, .pixels = &data }, 2, 3, &hashes);
-    try std.testing.expectEqual(std.hash.Wyhash.hash(0, std.mem.sliceAsBytes(data[7..])), hashes[1]);
-    try std.testing.expect(hashes[0] != hashes[1]);
-}
-
-test "fixed-header scroll reveals content and skips flat paint" {
-    const width = 40;
-    const height = 120;
-    const header = 10;
-    const body = 20;
-    const scroll = 6;
-    const backdrop: values.Pixel = @splat(255);
-    var old: [height][width]values.Pixel = @splat(@splat(backdrop));
-    var new = old;
-    for (old[0..header], new[0..header]) |*a, *b| {
-        a.* = @splat(.{ 210, 215, 220, 255 });
-        b.* = a.*;
-    }
-    for (old[body..], body..) |*row, y| {
-        for (row[4..36]) |*ink| ink.* = .{ @intCast(y), 90, 40, 255 };
-    }
-    @memcpy(new[body - scroll .. height - scroll], old[body..]);
-    const old_pixels = std.mem.bytesAsSlice(values.Pixel, std.mem.asBytes(&old));
-    const new_pixels = std.mem.bytesAsSlice(values.Pixel, std.mem.asBytes(&new));
-    const original: Image = .{ .width = width, .height = height, .pixels = old_pixels };
-    const scrolled: Image = .{ .width = width, .height = height, .pixels = new_pixels };
-    var a: [height]u64 = undefined;
-    var b: [height]u64 = undefined;
-    keys(original, 0, width, &a);
-    const matches = [_]band_model.Match{
-        .{ .before = 0, .after = 0, .length = header },
-        .{ .before = body, .after = body - scroll, .length = height - body },
-    };
-    var bands: [2 * height + 1]band_model.Band = undefined;
-    var frontier: [2 * height + 3]search.Diagonal = undefined;
-    var raw: [height]band_model.Match = undefined;
-    for ([_]bool{ false, true }) |has_content| {
-        if (has_content) for (new[height - scroll ..]) |*row| {
-            @memset(row[4..36], .{ 112, 96, 60, 255 });
-        };
-        keys(scrolled, 0, width, &b);
-        const result = assembly.assembleBands(&a, &b, .{ .scroll = 2, .replacement = 24, .images = .{ original, scrolled }, .width = width }, .{
-            .rows = &matches,
-            .footer = matches.len,
-            .first_offset = 0,
-            .background = .{ a[header], b[header] },
-        }, &frontier, &raw, &bands);
-        try std.testing.expectEqual(@as(usize, if (has_content) 4 else 3), result.len);
-        for (result[0..3]) |band| try std.testing.expectEqual(band.removed, band.added);
-        try std.testing.expectEqual(@as(usize, scroll), result[2].before - result[2].after);
-        if (has_content) {
-            try std.testing.expectEqual(@as(usize, height - scroll), result[3].after);
-            try std.testing.expectEqual(@as(usize, scroll), result[3].added);
-            try std.testing.expect(result[3].mode == .revealed);
-        }
-    }
-}
-
 test "inserting and deleting above a divider preserves the deletion" {
+    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
     const width = 96;
     const height = 120;
     const first = 24;
     const pitch = 16;
     const edge = 72;
-    const white: values.Pixel = @splat(255);
+    const white = canvas.white;
     const rule: values.Pixel = .{ 130, 134, 140, 255 };
     var old: [height][width]values.Pixel = @splat(@splat(white));
     var new = old;
@@ -342,8 +273,8 @@ test "inserting and deleting above a divider preserves the deletion" {
             pixels[y][83] = rule;
         }
     }
-    const a: Image = .{ .width = width, .height = height, .pixels = std.mem.bytesAsSlice(values.Pixel, std.mem.asBytes(&old)) };
-    const b: Image = .{ .width = width, .height = height, .pixels = std.mem.bytesAsSlice(values.Pixel, std.mem.asBytes(&new)) };
+    const a: values.Image = .{ .width = width, .height = height, .pixels = std.mem.bytesAsSlice(values.Pixel, std.mem.asBytes(&old)) };
+    const b: values.Image = .{ .width = width, .height = height, .pixels = std.mem.bytesAsSlice(values.Pixel, std.mem.asBytes(&new)) };
     const limits: band_model.Limits = .{ .scroll = 2, .replacement = 24, .images = .{ a, b }, .left = 24, .width = 48 };
     var before: [height]u64 = undefined;
     var after: [height]u64 = undefined;
@@ -363,70 +294,6 @@ test "inserting and deleting above a divider preserves the deletion" {
     }
     try std.testing.expectEqual(@as(usize, pitch), removed);
     try std.testing.expectEqual(@as(usize, pitch), added);
-}
-
-test "growth pairs an edited row head with its displaced body" {
-    const sample = @import("test_support.zig");
-    const before = try sample.Canvas.init(200, 180);
-    defer before.deinit();
-    const after = try sample.Canvas.init(200, 220);
-    defer after.deinit();
-    before.fill(10, 70, 22, 29, .{ 95, 125, 180, 255 });
-    before.fill(100, 74, 16, 12, sample.inkShade(45, 4));
-    before.fill(30, 128, 28, 24, .{ 180, 65, 114, 255 });
-    after.copyRows(0, before, 0, 70);
-    after.copyRows(110, before, 70, before.view.height);
-    after.fill(48, 72, 105, 29, .{ 210, 120, 90, 255 });
-    after.fill(100, 114, 16, 12, sample.inkShade(115, 4));
-    var old: [180]u64 = undefined;
-    var new: [220]u64 = undefined;
-    keys(before.view, 0, 200, &old);
-    keys(after.view, 0, 200, &new);
-    var bands = [_]Band{
-        .{ .before = 0, .after = 0, .removed = 70, .added = 70 },
-        .{ .before = 70, .after = 70, .removed = 32, .added = 72 },
-        .{ .before = 102, .after = 142, .removed = 78, .added = 78 },
-    };
-    refinement.refineElements(&old, &new, .{ .scroll = 2, .replacement = 24, .images = .{ before.view, after.view }, .width = 200 }, &bands);
-    try std.testing.expectEqual(@as(usize, 0), bands[1].removed);
-    try std.testing.expectEqual(@as(usize, 40), bands[1].added);
-    try std.testing.expectEqual(@as(usize, 110), bands[2].after);
-}
-
-test "an inserted row precedes the moved recolour in an ambiguous alignment" {
-    const sample = @import("test_support.zig");
-    const before = try sample.Canvas.init(120, 160);
-    defer before.deinit();
-    const after = try sample.Canvas.init(120, 160);
-    defer after.deinit();
-    before.fill(30, 24, 70, 56, .{ 180, 180, 184, 255 });
-    after.fill(40, 24, 50, 10, .{ 112, 141, 168, 255 });
-    after.fill(30, 44, 70, 56, .{ 64, 124, 202, 255 });
-    before.line(26, 112, 91, 4, 35);
-    after.copyRows(110, before, 90, 130);
-    var old_keys: [160]u64 = undefined;
-    var new_keys: [160]u64 = undefined;
-    keys(before.view, 0, 120, &old_keys);
-    keys(after.view, 0, 120, &new_keys);
-    // The recolour changes its row hashes. The initial alignment consumes
-    // part of its old silhouette as a positional edit, then catches up.
-    var bands = [_]Band{
-        .{ .before = 20, .after = 20, .removed = 62, .added = 16 },
-        .{ .before = 90, .after = 40, .removed = 0, .added = 70 },
-        .{ .before = 90, .after = 110, .removed = 12, .added = 12 },
-    };
-    refinement.refineElements(&old_keys, &new_keys, .{
-        .scroll = 4,
-        .replacement = 48,
-        .images = .{ before.view, after.view },
-        .width = 120,
-    }, &bands);
-    try std.testing.expectEqual(@as(usize, 0), bands[0].removed);
-    try std.testing.expectEqual(@as(usize, 20), bands[0].added);
-    try std.testing.expectEqual(@as(usize, 20), bands[1].before);
-    try std.testing.expectEqual(@as(usize, 40), bands[1].after);
-    try std.testing.expectEqual(@as(usize, 70), bands[1].removed);
-    try std.testing.expectEqual(@as(usize, 70), bands[1].added);
 }
 
 test {

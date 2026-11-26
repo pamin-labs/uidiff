@@ -2,6 +2,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const uidiff = @import("uidiff");
+const canvas = @import("uidiff_testing").canvas;
 const options = @import("e2e_options");
 const fixtures = @import("fixtures");
 const testing = std.testing;
@@ -204,7 +205,7 @@ test "a wide source uses the preview bounds and rejects a truncated input" {
     const width = 32_768;
     const pixels = try allocator.alloc(uidiff.Pixel, width);
     defer allocator.free(pixels);
-    @memset(pixels, .{ 255, 255, 255, 255 });
+    @memset(pixels, canvas.white);
     var encoded: std.Io.Writer.Allocating = .init(allocator);
     defer encoded.deinit();
     try uidiff.encodePng(allocator, .{ .width = width, .height = 1, .pixels = pixels }, &encoded.writer);
@@ -331,7 +332,7 @@ test "a PNG with a one-pixel diagonal exits with a change report" {
     defer tmp.cleanup();
     const pixels = try allocator.alloc(uidiff.Pixel, width * height);
     defer allocator.free(pixels);
-    @memset(pixels, @splat(255));
+    @memset(pixels, canvas.white);
     var encoded: std.Io.Writer.Allocating = .init(allocator);
     defer encoded.deinit();
     const image: uidiff.Image = .{ .width = width, .height = height, .pixels = pixels };

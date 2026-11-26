@@ -2,17 +2,17 @@
 //! PNG round trip of the sheet.
 const std = @import("std");
 const uidiff = @import("uidiff");
-const rgba = @import("fixtures/rgba.zig");
+const fuzz = @import("uidiff_testing").fuzz;
 const testing = std.testing;
 const Region = uidiff.Region;
 
 const max_regions = 2;
 
 fn fuzzSheet(_: void, smith: *testing.Smith) !void {
-    var before_pixels: rgba.Storage = undefined;
-    var after_pixels: rgba.Storage = undefined;
-    const before = rgba.image(smith, &before_pixels);
-    const after = rgba.image(smith, &after_pixels);
+    var before_pixels: fuzz.Storage = undefined;
+    var after_pixels: fuzz.Storage = undefined;
+    const before = fuzz.image(smith, &before_pixels);
+    const after = fuzz.image(smith, &after_pixels);
     var storage: [max_regions]Region = undefined;
     const regions = storage[0..smith.valueRangeAtMost(u8, 0, max_regions)];
     for (regions, 1..) |*region, number| {

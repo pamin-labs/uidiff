@@ -96,9 +96,10 @@ test "module roots expose their API" {
 }
 
 test "required test selection" {
+    const builtin = @import("builtin");
     const filter = @import("required_test_options").filter;
     if (filter.len == 0) return;
-    for (@import("builtin").test_functions) |entry| {
+    for (builtin.test_functions) |entry| {
         if (std.mem.endsWith(u8, entry.name, ".test.required test selection")) continue;
         if (std.mem.indexOf(u8, entry.name, filter) != null) return;
     }

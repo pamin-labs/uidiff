@@ -28,6 +28,17 @@ pub const files = cases.files;
 /// JPEG profiles for decoded-pixel identity and fuzz coverage.
 pub const jpeg = @import("fixtures/jpeg.zig");
 
+/// The unchanged blank screenshot pair shared by decode tests.
+pub const blank = find(.identical);
+/// Maximum size of the committed decoder samples.
+pub const max_sample_bytes = 4096;
+
+/// Reads a blank screenshot in the given format into test-allocator storage.
+pub fn readSample(comptime format: Format) std.Io.Dir.ReadFileAllocError![]u8 {
+    const testing = std.testing;
+    return std.Io.Dir.cwd().readFileAlloc(testing.io, blank.path(.before, format), testing.allocator, .limited(max_sample_bytes));
+}
+
 test {
     std.testing.refAllDecls(@This());
 }
