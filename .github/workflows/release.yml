@@ -1,8 +1,8 @@
 name: Release
 
+# Run from main in the Actions tab; the version comes from build.zig.zon and the run creates its tag.
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -13,14 +13,27 @@ concurrency:
 
 jobs:
   version:
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
-      - run: python3 scripts/release/package.py version --tag "$TAG"
+      - id: version
+        run: |
+          version=$(python3 scripts/release/package.py version)
+          if gh release view "v$version" >/dev/null 2>&1; then
+            echo "::error::v$version is already released; raise the version in build.zig.zon"
+            exit 1
+          fi
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$([[ "$version" == *-* ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
         env:
-          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
 
   build:
     needs: version
@@ -29,7 +42,7 @@ jobs:
       package: true
 
   github:
-    needs: build
+    needs: [version, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -52,12 +65,13 @@ jobs:
       - run: python3 scripts/release/package.py finalize release
       - run: |
           options=()
-          if [[ "$TAG" == *-* ]]; then options+=(--prerelease); fi
-          gh release create "$TAG" --verify-tag --generate-notes "${options[@]}" release/*
+          if [[ "$PRERELEASE" == true ]]; then options+=(--prerelease); fi
+          gh release create "$TAG" --target "$GITHUB_SHA" --generate-notes "${options[@]}" release/*
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
-      - if: ${{ !contains(github.ref_name, '-') }}
+          TAG: ${{ needs.version.outputs.tag }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+      - if: ${{ needs.version.outputs.prerelease == 'false' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: homebrew-formula
@@ -66,8 +80,8 @@ jobs:
 
   homebrew:
     # The formula downloads from the R2 mirror, so it waits for the upload.
-    needs: [github, r2]
-    if: ${{ !contains(github.ref_name, '-') }}
+    needs: [version, github, r2]
+    if: ${{ needs.version.outputs.prerelease == 'false' }}
     runs-on: ubuntu-latest
     concurrency:
       group: homebrew-formula
@@ -98,7 +112,7 @@ jobs:
           VERSION: ${{ needs.github.outputs.version }}
 
   r2:
-    needs: github
+    needs: [version, github]
     runs-on: ubuntu-latest
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -114,7 +128,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ needs.version.outputs.tag }}
       - run: python3 scripts/release/package.py mirror release mirror
       # Tagged files never change; latest and the installers move with each stable release,
       # and they go up last so they never name files the bucket lacks.
@@ -128,7 +142,7 @@ jobs:
           fi
 
   npm:
-    needs: github
+    needs: [version, github]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -152,7 +166,7 @@ jobs:
           python3 scripts/release/package.py npm release stage/npm >stage/npm-order.txt
       - run: |
           dist_tag=latest
-          if [[ "$TAG" == *-* ]]; then dist_tag=next; fi
+          if [[ "$PRERELEASE" == true ]]; then dist_tag=next; fi
           while IFS= read -r package; do
             # A rerun skips versions an earlier attempt already published.
             spec=$(node -p 'const p = require(require("path").resolve(process.argv[1])); p.name + "@" + p.version' "./$package/package.json")
@@ -160,4 +174,4 @@ jobs:
             npm publish "./$package" --access public --provenance --tag "$dist_tag"
           done <stage/npm-order.txt
         env:
-          TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}

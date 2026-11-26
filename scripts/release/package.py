@@ -225,8 +225,7 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("matrix")
     commands.add_parser("tap")
-    validate = commands.add_parser("version")
-    validate.add_argument("--tag")
+    commands.add_parser("version")
     for command in ("pack", "installer-fixture"):
         package = commands.add_parser(command)
         package.add_argument("target", choices=[target.zig for target in TARGETS])
@@ -250,8 +249,6 @@ def main():
         print(f"asset={FORMULA_ASSET}")
         print(f"version={release_version}")
     elif args.command == "version":
-        if args.tag is not None and args.tag != f"v{release_version}":
-            parser.error(f"tag {args.tag} does not match build.zig.zon (v{release_version})")
         print(release_version)
     elif args.command == "pack":
         print(pack(Target(args.target), release_version, args.bin_dir, args.output))
