@@ -4,7 +4,7 @@ const value = @import("../value.zig");
 const pixel = @import("pixel.zig");
 const Image = value.Image;
 const Pixel = value.Pixel;
-const lanes = pixel.lanes;
+const lanes = value.pixel_lanes;
 
 /// A run of columns in device pixels.
 pub const Span = struct { left: usize, width: usize };

@@ -11,6 +11,8 @@ pub const Image = image.Image;
 pub const Pair = image.Pair;
 /// Four channels in RGBA byte order.
 pub const Pixel = image.Pixel;
+/// The native vector width in packed RGBA8 pixels.
+pub const pixel_lanes = image.pixel_lanes;
 /// Source dimensions in device pixels.
 pub const Size = image.Size;
 /// Rectangle in device pixels.

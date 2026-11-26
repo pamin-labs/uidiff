@@ -6,6 +6,7 @@ const decoder = @import("decoder.zig");
 const value = @import("../../value.zig");
 const png_format = @import("png_format");
 const stb = @import("stb.zig");
+const simd = @import("simd.zig");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const Writer = Io.Writer;
@@ -222,17 +223,20 @@ fn filterRow(row: []const u8, above: []const u8, filtered: []u8, rgb_only: bool)
 }
 
 fn packRgb(comptime subtract: bool, bytes: []u8, current: []const u8, predictor: []const u8) []const u8 {
-    const Blocks = @Vector(16, u8);
-    const picks = @Vector(16, i32){ 0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, 15, 15, 15, 15 };
+    const lanes = simd.scanline_bytes;
+    const Blocks = @Vector(lanes, u8);
+    const indices = [_]i32{ 0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, 15, 15, 15, 15 };
+    const picks: @Vector(indices.len, i32) = indices;
+    comptime std.debug.assert(@typeInfo(@TypeOf(picks)).vector.len == lanes);
     var i: usize = 0;
     var out: usize = 0;
-    while (i + 16 <= current.len) : (i += 16) {
+    while (i + lanes <= current.len) : (i += lanes) {
         // A 12-byte store is split into scalar moves. The whole-vector store
         // stays within the supplied RGBA-sized buffer, and its four surplus
         // bytes are overwritten by the next block or excluded from the result.
-        var block = @as(*align(1) const Blocks, @ptrCast(current[i..][0..16])).*;
-        if (subtract) block -%= @as(*align(1) const Blocks, @ptrCast(predictor[i..][0..16])).*;
-        @as(*align(1) Blocks, @ptrCast(bytes[out..][0..16])).* = @shuffle(u8, block, undefined, picks);
+        var block = @as(*align(1) const Blocks, @ptrCast(current[i..][0..lanes])).*;
+        if (subtract) block -%= @as(*align(1) const Blocks, @ptrCast(predictor[i..][0..lanes])).*;
+        @as(*align(1) Blocks, @ptrCast(bytes[out..][0..lanes])).* = @shuffle(u8, block, undefined, picks);
         out += 12;
     }
     while (i < current.len) : (i += 4) {
@@ -244,7 +248,7 @@ fn packRgb(comptime subtract: bool, bytes: []u8, current: []const u8, predictor:
 }
 
 fn filter(out: []u8, current: []const u8, predictor: []const u8) void {
-    const lanes = std.simd.suggestVectorLength(u8) orelse 16;
+    const lanes = simd.byte_lanes;
     const Vector = @Vector(lanes, u8);
     var i: usize = 0;
     while (i + lanes <= out.len) : (i += lanes) {
@@ -285,7 +289,7 @@ fn preferredFilter(row: []const u8, above: []const u8) png_format.Filter {
 }
 
 fn filterPaeth(out: []u8, current: []const u8, above: []const u8) void {
-    const half = (std.simd.suggestVectorLength(u8) orelse 16) / 2;
+    const half = simd.byte_lanes / 2;
     const Bytes = @Vector(half, u8);
     const Wide = @Vector(half, i16);
     const pixel = @sizeOf(value.Pixel);
