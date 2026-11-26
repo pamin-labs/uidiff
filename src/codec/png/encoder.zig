@@ -1,4 +1,4 @@
-//! Encodes borrowed pixel rows and composed sheet strips as PNG.
+//! Encodes borrowed or staged pixel rows as PNG.
 
 const std = @import("std");
 const zlib = @import("zlib.zig");
@@ -16,6 +16,8 @@ const Filtered = struct { method: png_format.Filter, bytes: []const u8 };
 const BorrowedRows = struct {
     image: Image,
 
+    pub const staged = false;
+
     pub fn isOpaque(self: BorrowedRows) bool {
         return self.image.isOpaque();
     }
@@ -25,7 +27,7 @@ const BorrowedRows = struct {
     }
 };
 
-const sheet_strip_rows = 8;
+const strip_rows = 8;
 
 const parallel_min_bytes = 6 * 1024 * 1024;
 
@@ -45,21 +47,27 @@ pub fn write(allocator: Allocator, image: Image, output: *Writer) zlib.EncodeErr
     return writeRows(allocator, image.size(), BorrowedRows{ .image = image }, output);
 }
 
-/// Encodes a source that supplies one row at a time. BorrowedRows can return
-/// existing pixels. Other sources are consumed in strips and can fill the
-/// provided row buffer or lend a row to copy into the strip.
-/// Sources may supply isOpaque for RGB output.
+/// Encodes a PNG from a row source. See writeRowsWithIo for the source contract.
 pub fn writeRows(allocator: Allocator, size: values.Size, source: anytype, output: *Writer) zlib.EncodeError!void {
     return writeRowsWithIo(null, allocator, size, source, output);
 }
 
-/// Encodes large sheets with parallel deflate strips when given an I/O backend.
-/// A borrowed row must remain readable through the next source call.
+/// Encodes PNG rows, optionally using parallel compression. A row source
+/// supplies row(y, scratch) returning size.width pixels and isOpaque()
+/// reporting whether all pixels have alpha 255. Its comptime staged bool
+/// selects serial buffering. A staged source can return scratch or a row
+/// to copy immediately. A borrowed source receives empty scratch in serial
+/// mode and keeps each row readable through the next source call.
 pub fn writeRowsWithIo(io: ?Io, allocator: Allocator, size: values.Size, source: anytype, output: *Writer) zlib.EncodeError!void {
-    if (!@hasDecl(@TypeOf(source), "row"))
-        @compileError("a PNG row source must provide row(y, scratch)");
+    const Source = @TypeOf(source);
+    if (!@hasDecl(Source, "row"))
+        @compileError("a PNG row source must provide row(y, scratch) returning []const Pixel");
+    if (!@hasDecl(Source, "isOpaque"))
+        @compileError("a PNG row source must provide isOpaque() returning bool");
+    if (!@hasDecl(Source, "staged") or @TypeOf(Source.staged) != bool)
+        @compileError("a PNG row source must declare staged as a comptime bool");
     if (size.pixelCount() == null) return error.InvalidImage;
-    const rgb_only = if (@hasDecl(@TypeOf(source), "isOpaque")) source.isOpaque() else false;
+    const rgb_only = source.isOpaque();
     // Valid images have at most max_extent pixels per axis, which fits u32.
     try png_format.writeHeader(zlib.chunk, output, @intCast(size.width), @intCast(size.height), if (rgb_only) .rgb else .rgba);
 
@@ -79,7 +87,7 @@ pub fn writeRowsWithIo(io: ?Io, allocator: Allocator, size: values.Size, source:
 
 fn writeSerial(allocator: Allocator, size: values.Size, source: anytype, output: *Writer, rgb_only: bool) zlib.EncodeError!void {
     const row_bytes = size.width * @sizeOf(values.Pixel);
-    const staged_rows: usize = if (@TypeOf(source) == BorrowedRows) 0 else sheet_strip_rows + 1;
+    const staged_rows: usize = if (@TypeOf(source).staged) strip_rows + 1 else 0;
     const buffer = try allocator.alignedAlloc(u8, .@"4", zlib.chunk_bytes + row_bytes + staged_rows * row_bytes);
     defer allocator.free(buffer);
     const filtered = buffer[zlib.chunk_bytes..][0..row_bytes];
@@ -91,10 +99,10 @@ fn writeSerial(allocator: Allocator, size: values.Size, source: anytype, output:
     defer compress.deinit();
     for (0..size.height) |y| {
         const pixels = if (staged_rows == 0) source.row(y, &.{}) else staged: {
-            if (y % sheet_strip_rows == 0) {
+            if (y % strip_rows == 0) {
                 // One extra slot preserves the previous filtered row while
-                // the next strip is composed.
-                for (y..@min(size.height, y + sheet_strip_rows)) |index| {
+                // the source supplies the next strip.
+                for (y..@min(size.height, y + strip_rows)) |index| {
                     const buffer_row = staging[(index % staged_rows) * size.width ..][0..size.width];
                     const produced = source.row(index, buffer_row);
                     if (produced.ptr != buffer_row.ptr) @memcpy(buffer_row, produced);
@@ -112,8 +120,8 @@ fn writeSerial(allocator: Allocator, size: values.Size, source: anytype, output:
 }
 
 fn writeStrips(io: Io, allocator: Allocator, size: values.Size, source: anytype, output: *Writer, rgb_only: bool, encoded_row_bytes: usize, workers: usize) zlib.EncodeError!void {
-    const strip_rows = @max(1, target_strip_bytes / encoded_row_bytes);
-    const strip_bytes = strip_rows * encoded_row_bytes;
+    const rows_per_strip = @max(1, target_strip_bytes / encoded_row_bytes);
+    const strip_bytes = rows_per_strip * encoded_row_bytes;
     const compressed_bytes = zlib.Strip.outputBound(strip_bytes);
     const slot_bytes = zlib.history_bytes + strip_bytes + compressed_bytes;
     const row_bytes = size.width * @sizeOf(values.Pixel);
@@ -157,7 +165,7 @@ fn writeStrips(io: Io, allocator: Allocator, size: values.Size, source: anytype,
         // Different slots own consecutive strips, so the previous input
         // remains available even while its worker is compressing it.
         @memcpy(history, previous[previous.len - history.len ..]);
-        const end = @min(size.height, first + strip_rows);
+        const end = @min(size.height, first + rows_per_strip);
         const input = workspace[zlib.history_bytes..][0 .. (end - first) * encoded_row_bytes];
         for (first..end) |y| {
             const scratch = rows[(y % 2) * size.width ..][0..size.width];
@@ -343,6 +351,8 @@ test "staged PNG rows preserve the predictor across two strip boundaries and a t
     const Source = struct {
         image: Image,
 
+        pub const staged = true;
+
         pub fn isOpaque(self: @This()) bool {
             return self.image.isOpaque();
         }
@@ -357,7 +367,7 @@ test "staged PNG rows preserve the predictor across two strip boundaries and a t
 
     const allocator = std.testing.allocator;
     const width = 17;
-    const height = 2 * sheet_strip_rows + 3;
+    const height = 2 * strip_rows + 3;
     var pixels: [width * height]values.Pixel = undefined;
     const image: Image = .{ .width = width, .height = height, .pixels = &pixels };
     for ([_]u8{ 255, 101 }) |alpha| {
@@ -392,6 +402,8 @@ test "sheets below the parallel threshold use the serial encoder" {
     const image: Image = .{ .width = width, .height = height, .pixels = pixels };
     const Source = struct {
         image: Image,
+
+        pub const staged = true;
 
         pub fn isOpaque(_: @This()) bool {
             return true;

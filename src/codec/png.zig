@@ -18,12 +18,9 @@ pub const EncodeError = zlib.EncodeError;
 pub const decode = decoder.decode;
 /// Encodes a valid image. Allocates the compressor's window and one filtered row.
 pub const write = encoder.write;
-/// Encodes a source that supplies one row at a time. BorrowedRows can return
-/// existing pixels. Other sources are consumed in strips and can fill the
-/// provided row buffer or lend a row to copy into the strip.
-/// Sources may supply isOpaque for RGB output.
+/// Encodes PNG from a row source with the encoder's source contract.
 pub const writeRows = encoder.writeRows;
-/// Encodes large sheets using parallel compression when supplied with I/O.
+/// Encodes PNG from a row source with optional I/O concurrency.
 pub const writeRowsWithIo = encoder.writeRowsWithIo;
 
 /// Probes the dimensions and channel depth.
