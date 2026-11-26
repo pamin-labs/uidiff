@@ -15,6 +15,10 @@ pub const Pixel = image.Pixel;
 pub const Size = image.Size;
 /// Rectangle in device pixels.
 pub const Box = region.Box;
+/// Whole-pixel rectangle in device coordinates.
+pub const PixelRect = region.PixelRect;
+/// Whole-pixel rectangle in the rendered sheet.
+pub const SheetRect = region.SheetRect;
 /// Device pixels per CSS pixel.
 pub const Scale = scale.Scale;
 /// CSS-pixel length.

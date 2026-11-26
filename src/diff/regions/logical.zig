@@ -95,11 +95,11 @@ noinline fn commonCard(a: Region, b: Region, pair: value.Pair, scale: value.Scal
     const y: usize = bounds.deviceIndex(ink.y);
     const search = columns.CardSearch.compact(span, max_height, scale.devicePixels(card_corner_reach));
     const old_card = columns.enclosingCard(pair.before, span, .{ .left = 0, .width = pair.before.width }, y, search) orelse return null;
-    if (old_card.top + old_card.height < @as(usize, bounds.deviceIndex(ink.bottom())) or
-        @as(f64, @floatFromInt(old_card.columns.width)) > max_width) return null;
+    if (old_card.bottom() < @as(usize, bounds.deviceIndex(ink.bottom())) or
+        @as(f64, @floatFromInt(old_card.width)) > max_width) return null;
     const new_card = columns.enclosingCard(pair.after, span, .{ .left = 0, .width = pair.after.width }, y, search) orelse return null;
     if (!std.meta.eql(old_card, new_card)) return null;
-    return Box.fromPixels(old_card.columns.left, old_card.top, old_card.columns.width, old_card.height);
+    return Box.fromPixels(old_card.x, old_card.y, old_card.width, old_card.height);
 }
 
 fn removeCardParts(boxes: []candidate.Candidate, card: usize, cover: Box) usize {

@@ -44,21 +44,23 @@ pub fn classifyOverlay(region: *Region, pair: value.Pair, scale: value.Scale) vo
     if (overlaid(pair, radius)) region.before = null else if (overlaid(pair.reversed(), radius)) region.after = null;
 }
 
-fn checkScrimShadow(pair: value.Pair, panel: bounds.PixelRect, radius: usize, shade: scrim.Scrim) bool {
+fn checkScrimShadow(pair: value.Pair, panel: value.PixelRect, radius: usize, shade: scrim.Scrim) bool {
     const last_y = pair.before.height - 1;
     const last_x = pair.before.width - 1;
+    const right = panel.right();
+    const bottom = panel.bottom();
     var y: usize = 0;
     while (true) : (y = @min(y + scrim_sample_pitch, last_y)) {
         const old = pair.before.row(y);
         const new = pair.after.row(y);
-        const in_panel_rows = y >= panel.top and y < panel.bottom;
+        const in_panel_rows = y >= panel.y and y < bottom;
         var x: usize = 0;
         while (true) : (x = @min(x + scrim_sample_pitch, last_x)) {
-            const inside = in_panel_rows and x >= panel.left and x < panel.right;
+            const inside = in_panel_rows and x >= panel.x and x < right;
             if (!inside) {
                 const matches = shade.matches(old[x], new[x]);
-                if (!matches and (y < panel.top -| radius or y >= panel.bottom + radius or
-                    x < panel.left -| radius or x >= panel.right + radius or !shade.shadow(old[x], new[x]))) return false;
+                if (!matches and (y < panel.y -| radius or y >= bottom + radius or
+                    x < panel.x -| radius or x >= right + radius or !shade.shadow(old[x], new[x]))) return false;
             }
             if (x == last_x) break;
         }
@@ -73,7 +75,7 @@ fn overlaid(pair: value.Pair, radius: usize) bool {
     return checkScrimShadow(pair, panel, radius, shade);
 }
 
-fn panelBounds(pair: value.Pair, shade: scrim.Scrim) ?bounds.PixelRect {
+fn panelBounds(pair: value.Pair, shade: scrim.Scrim) ?value.PixelRect {
     const y = pair.before.height / 2;
     const center = pair.before.width / 2;
     const a = pair.before.row(y);
@@ -93,7 +95,7 @@ fn panelBounds(pair: value.Pair, shade: scrim.Scrim) ?bounds.PixelRect {
     const top = scrimReach(pair, shade, origin, y, -stride);
     const bottom = scrimReach(pair, shade, origin, lower_extent, stride);
     if (left == center or right == right_extent or top == y or bottom == lower_extent) return null;
-    return .{ .left = center - left, .right = center + right + 1, .top = y - top, .bottom = y + bottom + 1 };
+    return .{ .x = center - left, .y = y - top, .width = left + right + 1, .height = top + bottom + 1 };
 }
 
 // Takes a validated ray from a pixel to its row or column boundary.

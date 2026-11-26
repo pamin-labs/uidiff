@@ -213,7 +213,7 @@ fn planDetails(allocator: Allocator, pair: value.Pair, regions: []const Region, 
         if (region.number == 0 and (old != null or new != null)) return error.InvalidRegionNumber;
         kinds |= kindBit(region.kind);
         const patches = if (pane_layout.panoramic) std.EnumArray(value.Side, ?crops.Crop).initFill(null) else cropPair(pair, .init(.{ .before = old, .after = new }), placement.x, top, slot, pane_layout);
-        const height = @max(pane_layout.px(min_slot_h), if (patches.get(.before)) |p| p.to.h + 2 * pane_layout.px(3) else 0, if (patches.get(.after)) |p| p.to.h + 2 * pane_layout.px(3) else 0);
+        const height = @max(pane_layout.px(min_slot_h), if (patches.get(.before)) |p| p.to.height + 2 * pane_layout.px(3) else 0, if (patches.get(.after)) |p| p.to.height + 2 * pane_layout.px(3) else 0);
         const before_mark = offsetMark(old, panes.get(.before), pair.before.size());
         const after_mark = offsetMark(new, panes.get(.after), pair.after.size());
         detail.* = .{
@@ -308,7 +308,7 @@ fn layoutLabels(pane_layout: PaneLayout, left: usize, pane_end: usize, kinds: u8
         if (kinds & kindBit(kind) == 0) continue;
         entry.* = .{
             .kind = kind,
-            .box = .{ .x = x, .y = pane_layout.px(swatch_top), .w = swatch, .h = swatch },
+            .box = .{ .x = x, .y = pane_layout.px(swatch_top), .width = swatch, .height = swatch },
             .radius = pane_layout.px(swatch_rounding),
             .label = makeLabel(x + pane_layout.px(legend_text_x), pane_layout.px(legend_top), body, .regular),
         };
@@ -328,14 +328,14 @@ fn layoutCaptions(pane_layout: PaneLayout, panes: geometry.SideRects, width: usi
         textWidth(.bold, size, copy.after) > width - panes.get(.after).x)) size -= 1;
     var result: Captions = .{ .size = size, .bounds = undefined };
     for (panes.values, [_][]const u8{ copy.before, copy.after }, &result.bounds.values) |pane, label, *bounds| {
-        bounds.* = .{ .x = pane.x, .y = pane.y - pane_layout.px(caption_offset), .w = textWidth(.bold, size, label), .h = text.Face.bold.height(size) };
+        bounds.* = .{ .x = pane.x, .y = pane.y - pane_layout.px(caption_offset), .width = textWidth(.bold, size, label), .height = text.Face.bold.height(size) };
     }
     return result;
 }
 
 fn reserveBadgeLanes(panes: *geometry.SideRects, size: *Size, pane_layout: PaneLayout, pair: value.Pair, regions: []const Region) void {
     const diameter = overviewDiameter(pane_layout);
-    const needed = diameter + if (@min(panes.get(.before).w, panes.get(.after).w) < diameter) 2 * pane_layout.px(badges.thin_badge_gap) else 0;
+    const needed = diameter + if (@min(panes.get(.before).width, panes.get(.after).width) < diameter) 2 * pane_layout.px(badges.thin_badge_gap) else 0;
     var left = false;
     var right = false;
     var middle = false;
@@ -383,7 +383,7 @@ test "thin tall previews have room for both pane captions" {
     const sheet = try minimumSize(source, source);
     const captions = layoutCaptions(pane_layout, panes, sheet.width);
     try std.testing.expect(captions.size < pane_layout.px(24));
-    try std.testing.expectEqual(captions.bounds.get(.before).h, captions.bounds.get(.after).h);
+    try std.testing.expectEqual(captions.bounds.get(.before).height, captions.bounds.get(.after).height);
     try std.testing.expect(captions.bounds.get(.before).right() + pane_layout.px(caption_gap) <= captions.bounds.get(.after).x);
     try std.testing.expect(captions.bounds.get(.after).right() <= sheet.width);
 }
@@ -400,7 +400,7 @@ test "a top change in a thin preview can use the beside lane" {
     defer plan.deinit(allocator);
     const edit = plan.details[0].marks.get(.before).?;
     const badge = plan.details[0].badges.get(.before).position().?;
-    try std.testing.expect(badge.y + badge.h > edit.y and badge.y < edit.bottom());
+    try std.testing.expect(badge.y + badge.height > edit.y and badge.y < edit.bottom());
 }
 
 test "two stacked badges stay level with their own marks" {
@@ -419,7 +419,7 @@ test "two stacked badges stay level with their own marks" {
     for (plan.details) |detail| {
         const badge = detail.badges.get(.after).position() orelse return error.TestUnexpectedResult;
         const mark = detail.marks.get(.after) orelse return error.TestUnexpectedResult;
-        try std.testing.expectEqual(mark.y + mark.h / 2, badge.y + badge.h / 2);
+        try std.testing.expectEqual(mark.y + mark.height / 2, badge.y + badge.height / 2);
     }
 }
 
@@ -450,8 +450,8 @@ test {
     const overview = detail.badges.get(.after).position().?;
     const focus_badge = detail.focus_badges.get(.after).position().?;
     const pane_layout = PaneLayout.init(image.size(), image.size());
-    try std.testing.expectEqual(overviewDiameter(pane_layout), overview.w);
-    try std.testing.expectEqual(@as(usize, 59), focus_badge.w);
+    try std.testing.expectEqual(overviewDiameter(pane_layout), overview.width);
+    try std.testing.expectEqual(@as(usize, 59), focus_badge.width);
     try std.testing.expectEqual(plan.panes.get(.after).y, overview.bottom());
     try std.testing.expectEqual(plan.focuses[0].crops.get(.after).?.to.y, focus_badge.bottom());
 }
@@ -545,7 +545,7 @@ test "panoramic sheets use bounded overviews and merge overlapping focus crops" 
     const plan = try Plan.init(allocator, .{ .before = image, .after = image }, &regions, &.{});
     defer plan.deinit(allocator);
     try std.testing.expect(plan.size.width <= max_sheet_width);
-    try std.testing.expectEqual(@as(usize, geometry.overview_width), plan.panes.get(.before).w);
+    try std.testing.expectEqual(@as(usize, geometry.overview_width), plan.panes.get(.before).width);
     try std.testing.expectEqual(@as(usize, 0), plan.panes.get(.after).x - plan.panes.get(.before).x);
     try std.testing.expectEqual(@as(usize, overview_caption_gap), plan.panes.get(.after).y - plan.panes.get(.before).bottom());
     try std.testing.expectEqual(plan.details[0].focus, plan.details[1].focus);
@@ -553,14 +553,14 @@ test "panoramic sheets use bounded overviews and merge overlapping focus crops" 
     const first = plan.focuses[0];
     const before = first.crops.get(.before).?;
     const after = first.crops.get(.after).?;
-    try std.testing.expectEqual(@as(usize, 300), before.from.h);
-    try std.testing.expectEqual(before.from.w, before.to.w);
-    try std.testing.expectEqual(before.from.h, before.to.h);
+    try std.testing.expectEqual(@as(usize, 300), before.from.height);
+    try std.testing.expectEqual(before.from.width, before.to.width);
+    try std.testing.expectEqual(before.from.height, before.to.height);
     try std.testing.expect(after.to.x > before.to.right());
     try std.testing.expectEqualStrings(copy.before ++ " | x 250-1180", first.captions.get(.before).bytes());
     const shrunk = plan.focuses[2].crops.get(.after).?;
-    try std.testing.expectEqual(@as(usize, focus.focus_slot_width), shrunk.to.w);
-    try std.testing.expect(shrunk.to.h < shrunk.from.h);
+    try std.testing.expectEqual(@as(usize, focus.focus_slot_width), shrunk.to.width);
+    try std.testing.expect(shrunk.to.height < shrunk.from.height);
     for (plan.details) |detail| {
         if (detail.badges.get(.after).position()) |b| try std.testing.expect(!b.overlaps(detail.marks.get(.after).?));
         if (detail.focus_badges.get(.after).position()) |b| try std.testing.expect(!b.overlaps(detail.focus_marks.get(.after).?));

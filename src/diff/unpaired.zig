@@ -27,7 +27,7 @@ pub fn collect(collector: *Collector, scope: Scope, scratch: mask.Scratch, rows:
     const y = rows.y;
     if (rows.element and rows.background == null) {
         if (columns.enclosingCard(source, scope.span, scope.frame orelse scope.bounds, y, columns.CardSearch.motion(scope.span, rows.count))) |card| {
-            const box = Box.fromPixels(card.columns.left, card.top, card.columns.width, card.height);
+            const box = Box.fromPixels(card.x, card.y, card.width, card.height);
             collector.addOn(rows.side, box);
             return;
         }

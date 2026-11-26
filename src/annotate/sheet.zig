@@ -148,7 +148,7 @@ pub const Rows = struct {
             for (sheet_plan.details) |detail| {
                 if (y < detail.top or y >= detail.top + detail.height) continue;
                 const diameter = labels.detail_badge;
-                badge(line, .{ .x = left_x, .y = detail.top, .w = diameter, .h = diameter }, detail.region.kind, detail.number.bytes(), pane_layout);
+                badge(line, .{ .x = left_x, .y = detail.top, .width = diameter, .height = diameter }, detail.region.kind, detail.number.bytes(), pane_layout);
                 line.text(labels.detail_kind_x, detail.top + labels.detail_kind_offset, kindName(detail.region.kind), .regular, labels.body_size, secondary);
                 drawDetail(line, detail.crops.get(.before), sheet_plan.sources.get(.before).image, detail_x, sheet_plan.detail_slot_width, detail.top, detail.height, detail.region.kind, pane_layout);
                 drawDetail(line, detail.crops.get(.after), sheet_plan.sources.get(.after).image, after_detail_x, sheet_plan.detail_slot_width, detail.top, detail.height, detail.region.kind, pane_layout);
@@ -201,8 +201,8 @@ noinline fn drawPane(line: Line, pane: Pane, x: usize, y: usize, pane_layout: Pa
     const rect = paneRect(x, y, pane.dimensions);
     const radius = pane_layout.px(16);
     const shades = [_]Pixel{ .{ 241, 241, 242, 255 }, .{ 237, 237, 238, 255 }, .{ 232, 232, 234, 255 } };
-    if (line.y >= y + radius + pane_layout.px(5) and line.y + radius + pane_layout.px(5) < y + rect.h) {
-        const right = x + rect.w;
+    if (line.y >= y + radius + pane_layout.px(5) and line.y + radius + pane_layout.px(5) < y + rect.height) {
+        const right = x + rect.width;
         var outer = pane_layout.px(8);
         for ([_]usize{ 5, 2, 0 }, shades) |inset, tone| {
             const inner = pane_layout.px(inset);
@@ -216,8 +216,8 @@ noinline fn drawPane(line: Line, pane: Pane, x: usize, y: usize, pane_layout: Pa
     const visible = roundSpan(rect, radius, line.y);
     if (visible) |span| {
         line.fill(x, span[0], page);
-        line.fill(span[1], x + rect.w, page);
-    } else line.fill(x, x + rect.w, page);
+        line.fill(span[1], x + rect.width, page);
+    } else line.fill(x, x + rect.width, page);
 
     // Layer short bands of softening shadow while leaving the pane interior
     // to its source copy. The extra painting only touches the perimeter.

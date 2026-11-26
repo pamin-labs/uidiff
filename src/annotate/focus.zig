@@ -77,7 +77,7 @@ pub fn focusWindow(box: ?SourceRect, size: Size) ?SourceRect {
     const y = if (size.height <= full_height_limit) 0 else source.y -| vertical_context;
     if (x >= size.width or y >= size.height) return null;
     const bottom = if (size.height <= full_height_limit) size.height else @min(size.height, source.bottom() + vertical_context);
-    return .{ .x = x, .y = y, .w = @min(size.width, source.right() + horizontal_context) - x, .h = bottom - y };
+    return .{ .x = x, .y = y, .width = @min(size.width, source.right() + horizontal_context) - x, .height = bottom - y };
 }
 
 /// Returns the left sheet coordinate for a focus column.
@@ -124,7 +124,7 @@ pub fn layoutFocus(details: []Detail, focuses: []Focus, sizes: std.EnumArray(val
                 try Text.format(copy.focus_format, .{ name, from.x, from.right() })
             else
                 try Text.format(copy.scaled_focus_format, .{ name, from.x, from.right(), @max(1, (100 * zoom.numerator + zoom.denominator / 2) / zoom.denominator) });
-            height = @max(height, projected.to.h);
+            height = @max(height, projected.to.height);
         }
         focus.height = focus_caption_height + height;
         top += focus.height + detail_gap;
@@ -159,11 +159,11 @@ fn unionWindow(a: ?SourceRect, b: ?SourceRect) ?SourceRect {
     const second = b orelse return a;
     const x = @min(first.x, second.x);
     const y = @min(first.y, second.y);
-    return .{ .x = x, .y = y, .w = @max(first.right(), second.right()) - x, .h = @max(first.bottom(), second.bottom()) - y };
+    return .{ .x = x, .y = y, .width = @max(first.right(), second.right()) - x, .height = @max(first.bottom(), second.bottom()) - y };
 }
 
 test {
-    const tall = focusWindow(.{ .x = 240, .y = 250, .w = 10, .h = 20 }, .{ .width = 1500, .height = 600 }).?;
+    const tall = focusWindow(.{ .x = 240, .y = 250, .width = 10, .height = 20 }, .{ .width = 1500, .height = 600 }).?;
     try std.testing.expectEqual(@as(usize, 130), tall.y);
-    try std.testing.expectEqual(@as(usize, 260), tall.h);
+    try std.testing.expectEqual(@as(usize, 260), tall.height);
 }

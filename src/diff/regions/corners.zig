@@ -113,13 +113,13 @@ fn tracedOutline(pair: value.Pair, top: Box, right: Box, bottom: Box, lower_righ
 }
 
 fn rail(pair: value.Pair, start: Box, end: Box, direction: RailDirection, max_rail: f64) bool {
-    const a = bounds.PixelRect.fromBox(start).oriented(direction.axis);
-    const b = bounds.PixelRect.fromBox(end).oriented(direction.axis);
-    if (a.right >= b.left or @as(f64, @floatFromInt(b.left - a.right)) > max_rail) return false;
-    const first = @max(a.top, b.top);
-    const last = @min(a.bottom, b.bottom);
-    if (first >= last) return false;
     const horizontal = direction.axis == .horizontal;
+    const rail_start = bounds.deviceIndex(if (horizontal) start.right() else start.bottom());
+    const rail_end = bounds.deviceIndex(if (horizontal) end.x else end.y);
+    if (rail_start >= rail_end or @as(f64, @floatFromInt(rail_end - rail_start)) > max_rail) return false;
+    const first = bounds.deviceIndex(if (horizontal) @max(start.y, end.y) else @max(start.x, end.x));
+    const last = bounds.deviceIndex(if (horizontal) @min(start.bottom(), end.bottom()) else @min(start.right(), end.right()));
+    if (first >= last) return false;
     const extent = if (horizontal) pair.before.height else pair.before.width;
     const outside = switch (direction.exterior) {
         .start => if (first != 0) first - 1 else return false,
@@ -128,7 +128,7 @@ fn rail(pair: value.Pair, start: Box, end: Box, direction: RailDirection, max_ra
     const along = if (horizontal) 1 else pair.before.width;
     const across = if (horizontal) pair.before.width else 1;
     for (first..last) |line| {
-        for (a.right..b.left) |x| {
+        for (rail_start..rail_end) |x| {
             const index = line * across + x * along;
             const ink = pair.before.pixels[index];
             if (!pixel.same(ink, pair.after.pixels[index]) or
@@ -136,10 +136,10 @@ fn rail(pair: value.Pair, start: Box, end: Box, direction: RailDirection, max_ra
         } else {
             if (!horizontal) return true;
             const old = pair.before.row(line);
-            if ((railTurns(pair.before, start, line, old[a.right], .left, direction.exterior) and
-                railTurns(pair.before, end, line, old[b.left - 1], .right, direction.exterior)) or
-                (railTurns(pair.after, start, line, old[a.right], .left, direction.exterior) and
-                    railTurns(pair.after, end, line, old[b.left - 1], .right, direction.exterior))) return true;
+            if ((railTurns(pair.before, start, line, old[rail_start], .left, direction.exterior) and
+                railTurns(pair.before, end, line, old[rail_end - 1], .right, direction.exterior)) or
+                (railTurns(pair.after, start, line, old[rail_start], .left, direction.exterior) and
+                    railTurns(pair.after, end, line, old[rail_end - 1], .right, direction.exterior))) return true;
         }
     }
     return false;

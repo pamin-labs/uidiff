@@ -117,8 +117,8 @@ pub fn drawGutter(line: Line, y: usize, pane_layout: PaneLayout, panes: geometry
         }
         return;
     }
-    const before_h = panes.get(.before).h;
-    const after_h = panes.get(.after).h;
+    const before_h = panes.get(.before).height;
+    const after_h = panes.get(.after).height;
     const overlap = @min(before_h, after_h);
     if (y >= overlap and before_h != after_h) {
         const delta = @max(before_h, after_h) - overlap;

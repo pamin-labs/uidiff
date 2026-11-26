@@ -22,9 +22,6 @@ pub const Scope = struct {
     frame: ?Span = null,
 };
 
-/// A card outline enclosing an edited row.
-pub const Card = struct { columns: Span, top: usize, height: usize };
-
 /// Bounds the rule and corner probes for one card search.
 pub const CardSearch = struct {
     reach: usize,
@@ -177,7 +174,7 @@ pub fn spanRows(pair: value.Pair, bounds: Span, top: usize, bottom: usize) Span 
 
 /// Finds a card around a text-width alignment by requiring matching top and
 /// bottom rules plus the two sides between them.
-pub fn enclosingCard(image: Image, ink: Span, lane: Span, y: usize, search: CardSearch) ?Card {
+pub fn enclosingCard(image: Image, ink: Span, lane: Span, y: usize, search: CardSearch) ?value.PixelRect {
     if (search.minimum_width >= lane.width or search.reach < min_card_height) return null;
     var rules: usize = 0;
     for (0..search.reach + 1) |distance| {
@@ -196,7 +193,7 @@ pub fn enclosingCard(image: Image, ink: Span, lane: Span, y: usize, search: Card
             if (edge.left != lower.left or edge.right != lower.right or !pixel.same(edge.color, lower.color)) continue;
             const middle = top + (bottom - top) / 2;
             const box = outlineSides(image, middle, edge, lane, search.corner_reach) orelse continue;
-            return .{ .columns = box, .top = top, .height = bottom - top + 1 };
+            return .{ .x = box.left, .y = top, .width = box.width, .height = bottom - top + 1 };
         }
     }
     return null;

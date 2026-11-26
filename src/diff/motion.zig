@@ -61,8 +61,8 @@ pub fn gatherMoves(allocator: Allocator, moves: *std.ArrayList(value.Move), scop
         var full = move;
         const pitch = move.shift();
         if (columns.enclosingCard(scope.pair.before, span, scope.frame orelse scope.bounds, move.before.y, columns.CardSearch.motion(span, pitch))) |card| {
-            full.x = .init(card.columns.left);
-            full.width = .init(card.columns.width);
+            full.x = .init(card.x);
+            full.width = .init(card.width);
         }
         moves.items[kept] = full;
         kept += 1;

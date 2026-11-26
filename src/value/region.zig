@@ -45,6 +45,11 @@ pub const Box = struct {
     }
 };
 
+/// A whole-pixel rectangle in source device coordinates.
+pub const PixelRect = PixelRectFor(.device);
+/// A whole-pixel rectangle in rendered sheet coordinates.
+pub const SheetRect = PixelRectFor(.sheet);
+
 /// Which side contains the difference. Non-exhaustive, so a later release
 /// may add a kind (a moved block, say) without breaking callers; a switch
 /// over it handles the three known kinds and `_`.
@@ -109,6 +114,57 @@ fn PixelRows(comptime _: PixelSpace) type {
     return struct {
         y: usize,
         height: usize,
+    };
+}
+
+/// Defines rectangle operations for one coordinate space.
+fn PixelRectFor(comptime _: PixelSpace) type {
+    return struct {
+        x: usize,
+        y: usize,
+        width: usize,
+        height: usize,
+
+        const Self = @This();
+
+        /// Expands the rectangle on every side, clipping at the origin.
+        pub fn outset(self: Self, n: usize) Self {
+            const x = self.x -| n;
+            const y = self.y -| n;
+            return .{ .x = x, .y = y, .width = self.x + self.width + n - x, .height = self.y + self.height + n - y };
+        }
+
+        /// Shrinks the rectangle by a uniform margin.
+        pub fn inset(self: Self, n: usize) Self {
+            return .{ .x = self.x + n, .y = self.y + n, .width = self.width -| (2 * n), .height = self.height -| (2 * n) };
+        }
+
+        /// Reports whether the rectangle covers the specified row.
+        pub fn containsRow(self: Self, y: usize) bool {
+            return y >= self.y and y - self.y < self.height;
+        }
+
+        /// Returns the exclusive right edge.
+        pub fn right(self: Self) usize {
+            return self.x + self.width;
+        }
+
+        /// Returns the exclusive bottom edge.
+        pub fn bottom(self: Self) usize {
+            return self.y + self.height;
+        }
+
+        /// Reports a positive-area overlap in the same pixel space.
+        pub fn overlaps(self: Self, other: Self) bool {
+            return self.x < other.right() and other.x < self.right() and self.y < other.bottom() and other.y < self.bottom();
+        }
+
+        /// Returns the squared gap in pixels between rectangles.
+        pub fn distanceSquared(self: Self, other: Self) usize {
+            const dx = @max(self.x -| other.right(), other.x -| self.right());
+            const dy = @max(self.y -| other.bottom(), other.y -| self.bottom());
+            return dx *| dx +| dy *| dy;
+        }
     };
 }
 

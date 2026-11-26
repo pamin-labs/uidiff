@@ -29,26 +29,28 @@ pub fn shadeMarginEdit(region: Region, pair: value.Pair, scale: value.Scale) ?ca
     const box = candidate.stationaryBox(region) orelse return null;
     const viewport = Box.fromPixels(0, 0, pair.before.width, pair.before.height);
     if (std.meta.eql(box, viewport) or box.width < scale.devicePixels(shade_margin_width)) return null;
-    const area = bounds.PixelRect.fromBox(box);
+    const area = bounds.pixelRect(box);
     const extent = bounds.deviceIndex(@min(scale.devicePixels(shade_margin_height), box.height / 2));
     return shadeMargin(pair, area, extent, .start) orelse shadeMargin(pair, area, extent, .end);
 }
 
-fn shadeMargin(pair: value.Pair, area: bounds.PixelRect, extent: usize, edge: bounds.RailEnd) ?candidate.Candidate {
-    const width = area.right - area.left;
-    const center = area.left + width / 2;
+fn shadeMargin(pair: value.Pair, area: value.PixelRect, extent: usize, edge: bounds.RailEnd) ?candidate.Candidate {
+    const width = area.width;
+    const area_right = area.right();
+    const area_bottom = area.bottom();
+    const center = area.x + width / 2;
     const max_mark_width = width / shade_mark_width_divisor;
     const min_support = width / shade_support_divisor;
-    var left = area.right;
-    var right = area.left;
-    var top = area.bottom;
-    var bottom = area.top;
+    var left = area_right;
+    var right = area.x;
+    var top = area_bottom;
+    var bottom = area.y;
     var evidence: usize = 0;
     var strongest: f32 = 0;
     // A margin must reach a stronger change. A page-wide tint alone does
     // not provide evidence that a smaller mark is independent.
     for (0..extent) |offset| {
-        const y = if (edge == .start) area.top + offset else area.bottom - 1 - offset;
+        const y = if (edge == .start) area.y + offset else area_bottom - 1 - offset;
         const old = pair.before.row(y);
         const new = pair.after.row(y);
         const source = scrim.tone(old[center]);
@@ -58,10 +60,10 @@ fn shadeMargin(pair: value.Pair, area: bounds.PixelRect, extent: usize, edge: bo
         const shade: scrim.Scrim = .{ .transmission = transmission, .base = @splat(0) };
         if (transmission < scrim.scrim_min_shadow_transmission or transmission >= 1 or !shade.matches(old[center], new[center])) break;
         var support: usize = 0;
-        var line_left = area.right;
-        var line_right = area.left;
+        var line_left = area_right;
+        var line_right = area.x;
         var count: usize = 0;
-        for (area.left..area.right) |x| {
+        for (area.x..area_right) |x| {
             if (pixel.same(old[x], new[x])) continue;
             if (shade.matches(old[x], new[x])) {
                 support += 1;
@@ -100,7 +102,7 @@ test "faint shadow variation at the margin is not a separate colour edit" {
     for (0..4) |y| @memset(new[y * width ..][0..8], near_corner);
     const before: Image = .{ .pixels = &old, .width = width, .height = height };
     const after: Image = .{ .pixels = &new, .width = width, .height = height };
-    const area: bounds.PixelRect = .{ .left = 0, .right = width, .top = 0, .bottom = height };
+    const area: value.PixelRect = .{ .x = 0, .y = 0, .width = width, .height = height };
     try std.testing.expectEqual(null, shadeMargin(.{ .before = before, .after = after }, area, 8, .start));
 }
 
