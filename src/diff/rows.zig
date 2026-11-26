@@ -26,6 +26,8 @@ pub const max_edits = search.max_edits;
 pub const compactInsertion = insertion.compactInsertion;
 /// Places a one-sided element at the best boundary among equivalent row matches.
 pub const refineElements = refinement.refineElements;
+/// Hashes a column span in each image row.
+pub const keys = band_model.keys;
 
 /// Reuses the frontier, row matches, and frequency map across column alignments.
 pub const Workspace = struct {
@@ -43,12 +45,6 @@ pub const Workspace = struct {
         self.* = .{};
     }
 };
-
-/// Hashes each row of the column span. Asserts output.len equals the image
-/// height and left + width is at most its width.
-pub fn keys(source: Image, left: usize, width: usize, output: []u64) void {
-    for (output, 0..) |*key, y| key.* = std.hash.Wyhash.hash(0, source.rowBytes(y, left, width));
-}
 
 /// Aligns rows into caller-owned bands, or returns null for positional comparison.
 pub fn matchBands(allocator: Allocator, before: band_model.Keys, after: band_model.Keys, limits: band_model.Limits, bands: []band_model.Band, filtered: []u64, scratch: *Workspace) Allocator.Error!?[]band_model.Band {
@@ -254,17 +250,50 @@ test "a two-row alias does not hide a thirty-row scroll through periodic content
     try std.testing.expect(revealed.after <= height - scroll);
 }
 
-test "row hashes use the validated stride on one-pixel and final cropped rows" {
-    const one = [_]values.Pixel{.{ 21, 22, 23, 255 }};
-    var key: [1]u64 = undefined;
-    keys(.{ .width = 1, .height = 1, .pixels = &one }, 0, 1, &key);
-    try std.testing.expectEqual(std.hash.Wyhash.hash(0, std.mem.sliceAsBytes(&one)), key[0]);
-    var data: [10]values.Pixel = undefined;
-    for (&data, 0..) |*pixel, i| pixel.* = .{ @intCast(i), 0, 0, 255 };
-    var hashes: [2]u64 = undefined;
-    keys(.{ .width = 5, .height = 2, .pixels = &data }, 2, 3, &hashes);
-    try std.testing.expectEqual(std.hash.Wyhash.hash(0, std.mem.sliceAsBytes(data[7..])), hashes[1]);
-    try std.testing.expect(hashes[0] != hashes[1]);
+test "inserting and deleting above a divider preserves the deletion" {
+    const canvas = @import("../testing/canvas.zig");
+    const width = 96;
+    const height = 120;
+    const first = 24;
+    const pitch = 16;
+    const edge = 72;
+    const white = canvas.white;
+    const rule: values.Pixel = .{ 130, 134, 140, 255 };
+    var old: [height][width]values.Pixel = @splat(@splat(white));
+    var new = old;
+    for (old[first..edge], first..) |*row, y| {
+        @memset(row[24..72], .{ @intCast(y), 90, 40, 255 });
+    }
+    @memcpy(new[first + pitch .. edge], old[first .. edge - pitch]);
+    for (new[first .. first + pitch]) |*row| @memset(row[24..72], .{ 224, 36, 80, 255 });
+    for ([_]*[height][width]values.Pixel{ &old, &new }) |pixels| {
+        @memset(pixels[edge][20..76], rule);
+        for (edge - pitch / 2..edge - pitch / 2 + 2) |y| {
+            pixels[y][12] = rule;
+            pixels[y][83] = rule;
+        }
+    }
+    const a: values.Image = .{ .width = width, .height = height, .pixels = std.mem.bytesAsSlice(values.Pixel, std.mem.asBytes(&old)) };
+    const b: values.Image = .{ .width = width, .height = height, .pixels = std.mem.bytesAsSlice(values.Pixel, std.mem.asBytes(&new)) };
+    const limits: band_model.Limits = .{ .scroll = 2, .replacement = 24, .images = .{ a, b }, .left = 24, .width = 48 };
+    var before: [height]u64 = undefined;
+    var after: [height]u64 = undefined;
+    keys(a, limits.left, limits.width, &before);
+    keys(b, limits.left, limits.width, &after);
+    var bands: [2 * height + 1]band_model.Band = undefined;
+    try std.testing.expect(insertion.panelInsertion(&before, &after, first, limits, &bands) == null);
+    var workspace: Workspace = .{};
+    defer workspace.deinit(std.testing.allocator);
+    var filtered: [2 * height]u64 = undefined;
+    const aligned = (try matchBands(std.testing.allocator, &before, &after, limits, &bands, &filtered, &workspace)) orelse return error.TestUnexpectedResult;
+    var removed: usize = 0;
+    var added: usize = 0;
+    for (aligned) |band| {
+        removed += band.removed -| band.added;
+        added += band.added -| band.removed;
+    }
+    try std.testing.expectEqual(@as(usize, pitch), removed);
+    try std.testing.expectEqual(@as(usize, pitch), added);
 }
 
 test {

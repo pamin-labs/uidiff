@@ -54,6 +54,25 @@ pub fn changedEnd(before: Keys, after: Keys, first: usize, limit: usize) usize {
     return end;
 }
 
+/// Hashes each row of the column span. Asserts output.len equals the image
+/// height and left + width is at most its width.
+pub fn keys(source: Image, left: usize, width: usize, output: []u64) void {
+    for (output, 0..) |*key, y| key.* = std.hash.Wyhash.hash(0, source.rowBytes(y, left, width));
+}
+
+test "row hashes use the validated stride on one-pixel and final cropped rows" {
+    const one = [_]values.Pixel{.{ 21, 22, 23, 255 }};
+    var key: [1]u64 = undefined;
+    keys(.{ .width = 1, .height = 1, .pixels = &one }, 0, 1, &key);
+    try std.testing.expectEqual(std.hash.Wyhash.hash(0, std.mem.sliceAsBytes(&one)), key[0]);
+    var data: [10]values.Pixel = undefined;
+    for (&data, 0..) |*pixel, i| pixel.* = .{ @intCast(i), 0, 0, 255 };
+    var hashes: [2]u64 = undefined;
+    keys(.{ .width = 5, .height = 2, .pixels = &data }, 2, 3, &hashes);
+    try std.testing.expectEqual(std.hash.Wyhash.hash(0, std.mem.sliceAsBytes(data[7..])), hashes[1]);
+    try std.testing.expect(hashes[0] != hashes[1]);
+}
+
 test "trailing equal keys do not consume rows below the search floor" {
     const before = [_]u64{ 2, 4, 6, 8 };
     const after = [_]u64{ 3, 4, 6, 8 };

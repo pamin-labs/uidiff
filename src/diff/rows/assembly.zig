@@ -6,7 +6,6 @@ const search = @import("search.zig");
 const chrome = @import("chrome.zig");
 const paint = @import("paint.zig");
 const refinement = @import("refinement.zig");
-const values = @import("../../value.zig");
 
 const Anchors = struct {
     rows: []const band_model.Match,
@@ -158,13 +157,14 @@ fn replacementEnd(anchors: []const band_model.Match, old_y: usize, new_y: usize,
 }
 
 test "fixed-header scroll reveals content and skips flat paint" {
-    const sample = @import("../../testing.zig");
+    const canvas = @import("../../testing/canvas.zig");
+    const values = @import("../../value.zig");
     const width = 40;
     const height = 120;
     const header = 10;
     const body = 20;
     const scroll = 6;
-    const backdrop = sample.canvas.white;
+    const backdrop = canvas.white;
     var old: [height][width]values.Pixel = @splat(@splat(backdrop));
     var new = old;
     for (old[0..header], new[0..header]) |*a, *b| {
@@ -181,7 +181,7 @@ test "fixed-header scroll reveals content and skips flat paint" {
     const scrolled: values.Image = .{ .width = width, .height = height, .pixels = new_pixels };
     var a: [height]u64 = undefined;
     var b: [height]u64 = undefined;
-    sample.rowKeys(original, 0, width, &a);
+    band_model.keys(original, 0, width, &a);
     const matches = [_]band_model.Match{
         .{ .before = 0, .after = 0, .length = header },
         .{ .before = body, .after = body - scroll, .length = height - body },
@@ -193,7 +193,7 @@ test "fixed-header scroll reveals content and skips flat paint" {
         if (has_content) for (new[height - scroll ..]) |*row| {
             @memset(row[4..36], .{ 112, 96, 60, 255 });
         };
-        sample.rowKeys(scrolled, 0, width, &b);
+        band_model.keys(scrolled, 0, width, &b);
         const result = assembleBands(&a, &b, .{ .scroll = 2, .replacement = 24, .images = .{ original, scrolled }, .width = width }, .{
             .rows = &matches,
             .footer = matches.len,

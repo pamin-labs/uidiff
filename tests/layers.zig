@@ -92,6 +92,7 @@ const sample_agents =
     \\| Submodule root | Implementation directory |
     \\| --- | --- |
     \\| `src/diff/regions.zig` | `src/diff/regions/` |
+    \\| `src/diff/rows.zig` | `src/diff/rows/` |
     \\
     \\| Diff tier | Paths | Holds |
     \\| --- | --- | --- |
@@ -250,6 +251,11 @@ fn allowedImport(allocator: Allocator, rules: Rules, source: *const Source, node
     defer allocator.free(resolved);
     const to = rules.layerOf(resolved) orelse return false;
     if (std.mem.eql(u8, to.paths[0], testing_root) and from != to) {
+        if (std.mem.eql(u8, resolved, testing_root)) {
+            for (rules.submodules) |submodule| {
+                if (sources.inDirectory(from_path, submodule.directory)) return false;
+            }
+        }
         if (sources.inDirectory(from_path, tests_directory)) return true;
         const tree = &source.tree;
         const decl = enclosingDeclaration(tree, node) orelse return false;
@@ -408,6 +414,8 @@ test "diff units only import lower tiers and fixtures stay in test scope" {
     try testing.expectError(error.ForbiddenImport, checkWithText(api_root, "pub const testing = if (builtin.is_test) void else @import(\"testing.zig\");"));
     try checkWithText(api_root, "pub const testing = if (builtin.is_test) @import(\"testing.zig\") else void;");
     try checkWithText("src/codec.zig", "test { _ = @import(\"testing/jpeg.zig\"); }");
+    try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/rows/assembly.zig", "test { _ = @import(\"../../testing.zig\"); }"));
+    try checkWithText("src/diff/rows/assembly.zig", "test { _ = @import(\"../../testing/canvas.zig\"); }");
     try checkWithText("tests/decode.zig", "const sample = @import(\"../src/testing/jpeg.zig\");");
     try testing.expectError(error.ForbiddenImport, checkWithText("bench/main.zig", "const sample = @import(\"../src/testing/jpeg.zig\");"));
     try testing.expectError(error.ForbiddenImport, checkWithText("src/codec.zig", "fn f() void { _ = @import(\"testing/jpeg.zig\"); }"));

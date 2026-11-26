@@ -206,22 +206,22 @@ fn sampleBand(comptime mode: enum { colour, silhouette }, before: Image, after: 
 }
 
 test "growth pairs an edited row head with its displaced body" {
-    const sample = @import("../../testing.zig");
-    const before = try sample.canvas.Canvas.init(200, 180);
+    const canvas = @import("../../testing/canvas.zig");
+    const before = try canvas.Canvas.init(200, 180);
     defer before.deinit();
-    const after = try sample.canvas.Canvas.init(200, 220);
+    const after = try canvas.Canvas.init(200, 220);
     defer after.deinit();
     before.fill(10, 70, 22, 29, .{ 95, 125, 180, 255 });
-    before.fill(100, 74, 16, 12, sample.canvas.inkShade(45, 4));
+    before.fill(100, 74, 16, 12, canvas.inkShade(45, 4));
     before.fill(30, 128, 28, 24, .{ 180, 65, 114, 255 });
     after.copyRows(0, before, 0, 70);
     after.copyRows(110, before, 70, before.view.height);
     after.fill(48, 72, 105, 29, .{ 210, 120, 90, 255 });
-    after.fill(100, 114, 16, 12, sample.canvas.inkShade(115, 4));
+    after.fill(100, 114, 16, 12, canvas.inkShade(115, 4));
     var old: [180]u64 = undefined;
     var new: [220]u64 = undefined;
-    sample.rowKeys(before.view, 0, 200, &old);
-    sample.rowKeys(after.view, 0, 200, &new);
+    band_model.keys(before.view, 0, 200, &old);
+    band_model.keys(after.view, 0, 200, &new);
     var bands = [_]band_model.Band{
         .{ .before = 0, .after = 0, .removed = 70, .added = 70 },
         .{ .before = 70, .after = 70, .removed = 32, .added = 72 },
@@ -234,10 +234,10 @@ test "growth pairs an edited row head with its displaced body" {
 }
 
 test "an inserted row precedes the moved recolour in an ambiguous alignment" {
-    const sample = @import("../../testing.zig");
-    const before = try sample.canvas.Canvas.init(120, 160);
+    const canvas = @import("../../testing/canvas.zig");
+    const before = try canvas.Canvas.init(120, 160);
     defer before.deinit();
-    const after = try sample.canvas.Canvas.init(120, 160);
+    const after = try canvas.Canvas.init(120, 160);
     defer after.deinit();
     before.fill(30, 24, 70, 56, .{ 180, 180, 184, 255 });
     after.fill(40, 24, 50, 10, .{ 112, 141, 168, 255 });
@@ -246,8 +246,8 @@ test "an inserted row precedes the moved recolour in an ambiguous alignment" {
     after.copyRows(110, before, 90, 130);
     var old_keys: [160]u64 = undefined;
     var new_keys: [160]u64 = undefined;
-    sample.rowKeys(before.view, 0, 120, &old_keys);
-    sample.rowKeys(after.view, 0, 120, &new_keys);
+    band_model.keys(before.view, 0, 120, &old_keys);
+    band_model.keys(after.view, 0, 120, &new_keys);
     // The recolour changes its row hashes. The initial alignment consumes
     // part of its old silhouette as a positional edit, then catches up.
     var bands = [_]band_model.Band{
