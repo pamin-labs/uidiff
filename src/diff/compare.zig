@@ -5,6 +5,7 @@ const row_diff = @import("rows.zig");
 const columns = @import("columns.zig");
 const pixel_ops = @import("pixel.zig");
 const yiq = @import("yiq.zig");
+const change_mask = @import("mask.zig");
 const regions = @import("regions.zig");
 const sample = @import("test_support.zig");
 const Allocator = std.mem.Allocator;
@@ -75,17 +76,17 @@ const Scope = struct {
 const Unpaired = struct { side: values.Side, y: usize, count: usize, background: ?[]const Pixel = null, element: bool = false, opposite: ?usize = null };
 
 /// Scratch reused by every band: one mask byte per pixel and the fill's seeds.
-const Scratch = struct { mask: []regions.Cell, seeds: []u32 };
+const Scratch = struct { mask: []change_mask.Cell, seeds: []u32 };
 
 const CompareBuffers = struct {
-    mask: []regions.Cell = &.{},
+    mask: []change_mask.Cell = &.{},
     seeds: std.ArrayList(u32) = .empty,
     alignment: row_diff.Workspace = .{},
 
     fn deinit(self: *CompareBuffers, allocator: Allocator) void {
         self.alignment.deinit(allocator);
         self.seeds.deinit(allocator);
-        values.freeUnfilled(regions.Cell, allocator, self.mask);
+        values.freeUnfilled(change_mask.Cell, allocator, self.mask);
     }
 
     fn prepare(self: *CompareBuffers, allocator: Allocator, area: usize) Allocator.Error!Scratch {
@@ -94,9 +95,9 @@ const CompareBuffers = struct {
             // Remapping lets the allocator reuse the storage. If it cannot,
             // release the old mask first because yiq.mask overwrites every cell.
             self.mask = allocator.remap(self.mask, area) orelse grow: {
-                values.freeUnfilled(regions.Cell, allocator, self.mask);
+                values.freeUnfilled(change_mask.Cell, allocator, self.mask);
                 self.mask = &.{};
-                break :grow try values.allocUnfilled(regions.Cell, allocator, area);
+                break :grow try values.allocUnfilled(change_mask.Cell, allocator, area);
             };
         }
         try self.seeds.ensureTotalCapacityPrecise(allocator, seed_rows);
@@ -402,7 +403,7 @@ fn compareSpan(allocator: Allocator, collector: *Collector, scope: Scope, aligne
             if (yiq.mask(a, b, top, paired, mask)) {
                 const changed = mask[0 .. width * paired];
                 if (moved) yiq.clearMovedCoverage(a, b, top, changed);
-                const cells: regions.Mask = .{ .cells = changed, .width = width };
+                const cells: change_mask.Mask = .{ .cells = changed, .width = width };
                 grouped = regions.group(collector, cells, seeds, .{ .left = left, .rows = .{ .paired = .{ .before = band.before, .after = band.after } } }) == .kept;
             }
             if (band.mode == .replacement) compareReplacement(collector, scope, band, if (grouped) .single_row else .unreported);
@@ -569,7 +570,7 @@ fn unpaired(collector: *Collector, scope: Scope, scratch: Scratch, rows: Unpaire
         .rows = if (rows.side == .before) .{ .before = y } else .{ .after = y },
     };
     if (yiq.mask(a, b, 0, rows.count, mask)) {
-        const cells: regions.Mask = .{ .cells = mask, .width = width };
+        const cells: change_mask.Mask = .{ .cells = mask, .width = width };
         if (rows.element) {
             if (regions.groupElement(collector, cells, at)) return;
         } else if (regions.group(collector, cells, scratch.seeds, at) != .empty) return;
@@ -682,7 +683,7 @@ test "mask growth avoids having both sizes live on a remapping allocator" {
         try std.testing.expectEqual(large_area, large.mask.len);
         try std.testing.expectEqual(@as(usize, 0), counting.freed_bytes);
         // No frees occurred, so total allocated bytes is the peak live count.
-        const peak = large_area * (@sizeOf(u32) + @sizeOf(regions.Cell));
+        const peak = large_area * (@sizeOf(u32) + @sizeOf(change_mask.Cell));
         try std.testing.expectEqual(peak, counting.allocated_bytes);
     }
     try std.testing.expectEqual(counting.allocated_bytes, counting.freed_bytes);
@@ -701,7 +702,7 @@ test "mask growth releases the old mask if remapping and allocation fail" {
     _ = try buffers.prepare(allocator, small_area);
     try std.testing.expectError(error.OutOfMemory, buffers.prepare(allocator, large_area));
     try std.testing.expectEqual(@as(usize, 0), buffers.mask.len);
-    try std.testing.expectEqual(small_area * @sizeOf(regions.Cell), counting.freed_bytes);
+    try std.testing.expectEqual(small_area * @sizeOf(change_mask.Cell), counting.freed_bytes);
 }
 
 test "an interior blank run is ignored only if the layout retains its length" {
@@ -736,7 +737,7 @@ test "blank space above a fixed input bar does not inherit unrelated sidebar pai
     const scope: Scope = .{ .before = before.view, .after = after.view, .span = .{ .left = 24, .width = 96 }, .bounds = .{ .left = 0, .width = 144 } };
     var boxes: [2]regions.Candidate = undefined;
     var collector: Collector = .{ .boxes = &boxes, .gap_px = 0, .max_gap_px = 144 };
-    var mask: [96 * 20]regions.Cell = undefined;
+    var mask: [96 * 20]change_mask.Cell = undefined;
     var seeds: [20]u32 = undefined;
     unpaired(&collector, scope, .{ .mask = &mask, .seeds = &seeds }, .{ .side = .before, .y = 110, .count = 20, .opposite = 130 });
     try std.testing.expectEqual(@as(usize, 0), collector.len);
@@ -759,7 +760,7 @@ test "an equal unpaired bottom margin does not produce a removal" {
         };
         var boxes: [2]regions.Candidate = undefined;
         var collector: Collector = .{ .boxes = &boxes, .gap_px = 0, .max_gap_px = 64 };
-        var mask: [64 * 6]regions.Cell = undefined;
+        var mask: [64 * 6]change_mask.Cell = undefined;
         var seeds: [6]u32 = undefined;
         const scratch: Scratch = .{ .mask = &mask, .seeds = &seeds };
         const margin: Unpaired = .{ .side = .before, .y = 34, .count = 6, .opposite = 44 };
