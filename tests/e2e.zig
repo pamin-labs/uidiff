@@ -1,5 +1,6 @@
 //! Runs the installed CLI against committed images and checks its process contract.
 const std = @import("std");
+const builtin = @import("builtin");
 const uidiff = @import("uidiff");
 const options = @import("e2e_options");
 const fixtures = @import("fixtures");
@@ -106,6 +107,36 @@ test "an annotated sheet is written atomically beside a normal report" {
     const directory = try run(.{ .dir = tmp.dir }, 4, .{ before, after, "--annotate", "." });
     defer free(directory);
     try failure(directory, "error(uidiff): .: IsDir");
+}
+
+test "annotation refuses input paths and preserves both captures" {
+    const spec = comptime fixtures.find(.edit);
+    const before = @embedFile(comptime spec.path(.before, .png)["tests/".len..]);
+    const after = @embedFile(comptime spec.path(.after, .png)["tests/".len..]);
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "before.png", .data = before });
+    try tmp.dir.writeFile(io, .{ .sub_path = "after.png", .data = after });
+    const linked = linked: {
+        tmp.dir.symLink(io, "after.png", "alias.png", .{}) catch |err| {
+            if (builtin.os.tag == .windows and (err == error.PermissionDenied or err == error.AccessDenied)) break :linked false;
+            return err;
+        };
+        break :linked true;
+    };
+    inline for (.{ "before.png", "./after.png", "alias.png" }) |sheet| {
+        if (!std.mem.eql(u8, sheet, "alias.png") or linked) {
+            const result = try run(.{ .dir = tmp.dir }, 4, .{ "before.png", "after.png", "--annotate", sheet });
+            defer free(result);
+            try failure(result, "error(uidiff): " ++ sheet ++ ": SheetIsInput");
+            for ([_][]const u8{ "before.png", "after.png" }, [_][]const u8{ before, after }) |path, expected| {
+                const actual = try tmp.dir.readFileAlloc(io, path, allocator, .limited(uidiff.max_encoded_bytes));
+                defer allocator.free(actual);
+                try testing.expectEqualSlices(u8, expected, actual);
+            }
+        }
+    }
 }
 
 test "JSON includes moved device-pixel rows without changing version one" {

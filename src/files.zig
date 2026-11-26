@@ -1,6 +1,7 @@
 //! Compares two image files: reads and decodes both, compares them, and writes
 //! the annotated sheet, replacing its file only once the sheet is complete.
 const std = @import("std");
+const builtin = @import("builtin");
 const values = @import("value.zig");
 const codec = @import("codec.zig");
 const diff = @import("diff.zig");
@@ -40,7 +41,7 @@ pub const EncodeSheetError = annotate.RenderError || codec.EncodeError;
 
 /// Failures rendering, encoding or writing the annotated sheet.
 pub const WriteError = EncodeSheetError || Io.Dir.CreateFileAtomicError ||
-    Io.File.Atomic.ReplaceError || Io.File.Writer.Error || Io.Dir.StatFileError || error{IsDir};
+    Io.File.Atomic.ReplaceError || Io.File.Writer.Error || Io.Dir.StatFileError || error{ IsDir, SheetIsInput };
 
 /// File, codec, comparison and sheet failures.
 pub const CompareError = codec.ReadError || codec.DecodeError || diff.CompareError || WriteError;
@@ -171,7 +172,7 @@ fn decodeInOrder(io: Io, allocator: Allocator, first: codec.FileInput, second: ?
 
 fn preflightSheet(io: Io, allocator: Allocator, paths: Paths, sheet_path: []const u8, cap: usize, diagnostics: *Diagnostics) CompareError!void {
     diagnostics.path = sheet_path;
-    try refuseDirectory(io, sheet_path);
+    try checkSheetDestination(io, .cwd(), paths, sheet_path);
     diagnostics.path = paths.before;
     const before = try codec.probeFile(io, allocator, paths.before, cap);
     diagnostics.path = paths.after;
@@ -194,14 +195,48 @@ fn writeSheet(io: Io, allocator: Allocator, path: []const u8, before: values.Ima
     try file.replace(io);
 }
 
-/// A directory cannot be replaced by the sheet, and the atomic replace
-/// reports it only as Unexpected, so it is refused by name first.
-fn refuseDirectory(io: Io, path: []const u8) WriteError!void {
-    const stat = Io.Dir.cwd().statFile(io, path, .{}) catch |err| switch (err) {
+/// A directory cannot be replaced by the sheet (the atomic replace reports it
+/// only as Unexpected), and a sheet path naming an input would replace that
+/// capture, so both are refused before anything is read or written. A link to
+/// an input is refused too: the user named an input, almost surely by mistake.
+fn checkSheetDestination(io: Io, dir: Io.Dir, paths: Paths, path: []const u8) WriteError!void {
+    const sheet = dir.statFile(io, path, .{}) catch |err| switch (err) {
         error.FileNotFound => return,
         else => |other| return other,
     };
-    if (stat.kind == .directory) return error.IsDir;
+    if (sheet.kind == .directory) return error.IsDir;
+    if (sheet.kind != .file) return;
+    for ([_][]const u8{ paths.before, paths.after }) |input_path| {
+        // An input that cannot be read cannot be the sheet; loading reports it under its own path.
+        const input = dir.statFile(io, input_path, .{}) catch continue;
+        if (sameFile(input, sheet)) return error.SheetIsInput;
+    }
+}
+
+// Every spelling, symlink or hard link of one file shares all four fields.
+// std.Io.File.Stat has no volume id; two files on different volumes matching
+// on all four, to the nanosecond, only refuse the write, never lose data.
+fn sameFile(a: Io.File.Stat, b: Io.File.Stat) bool {
+    return a.inode == b.inode and a.size == b.size and
+        a.mtime.nanoseconds == b.mtime.nanoseconds and a.ctime.nanoseconds == b.ctime.nanoseconds;
+}
+
+test "sheet destination refuses both inputs and their hard links" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const paths: Paths = .{ .before = "before", .after = "after" };
+    try tmp.dir.writeFile(io, .{ .sub_path = paths.before, .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = paths.after, .data = "" });
+    for ([_][]const u8{ paths.before, paths.after }) |path| {
+        try std.testing.expectError(error.SheetIsInput, checkSheetDestination(io, tmp.dir, paths, path));
+    }
+    // Zig's Windows I/O backend does not implement hard-link creation yet.
+    if (builtin.os.tag != .windows) {
+        try tmp.dir.hardLink(paths.after, tmp.dir, "hard-link", io, .{});
+        try std.testing.expectError(error.SheetIsInput, checkSheetDestination(io, tmp.dir, paths, "hard-link"));
+    }
+    try checkSheetDestination(io, tmp.dir, paths, "new-sheet");
 }
 
 test "an invalid scale clears file diagnostics before loading" {
