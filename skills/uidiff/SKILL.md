@@ -51,6 +51,10 @@ your change:
 uidiff before.png after.png --scale 2 --json --annotate sheet.png > report.json
 ```
 
+Pass captures as files. `-` does not read stdin, and input pipes are unsupported.
+A symlink at the sheet path is replaced by the PNG itself, unless it points to
+an input, which raises `SheetIsInput`.
+
 `--scale` is device pixels per logical pixel: Playwright's `deviceScaleFactor`,
 `2` or `3` for iOS Retina screenshots, the screen density for Android (for
 example `2.625`). If unsure, divide the image width by the viewport's CSS or
@@ -90,6 +94,9 @@ change has a close-up of both sides.
 A region's absent side is `null`. A move's signed offset is
 `after.y - before.y` (positive moves down). Check `version` before relying
 on the shape.
+
+Connected changes smaller than four pixels are treated as noise. If the
+smaller capture has at most 1024 pixels, single-pixel regions can be reported.
 
 ## 5. Report back
 

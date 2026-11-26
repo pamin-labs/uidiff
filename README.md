@@ -115,6 +115,10 @@ uidiff --version
 | `1` | Change regions found. |
 | `2` | A comparison or usage error, reported on stderr. `SheetIsInput` means the sheet path names either input, including through a link. |
 
+Pass captures as files. `-` does not read stdin, and input pipes are unsupported. A symlink at the sheet path is replaced by the PNG itself, unless it points to an input, which raises `SheetIsInput`.
+
+Connected changes smaller than four pixels are treated as noise. If the smaller capture has at most 1024 pixels, single-pixel regions can be reported.
+
 For the best results, freeze animations, carets and timers, and keep fonts, locale and device scale the same for both captures.
 
 ## More ways to install
