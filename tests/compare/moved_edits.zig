@@ -1,12 +1,11 @@
 //! End-to-end detection of edits inside moving or repeated content.
 
 const std = @import("std");
-const diff = @import("diff_scenarios");
-const sample = diff.test_support;
-const values = sample.values;
-const Pixel = values.Pixel;
-const Kind = values.Kind;
-const region_padding = diff.region_padding;
+const uidiff = @import("uidiff");
+const sample = uidiff.testing;
+const Pixel = uidiff.Pixel;
+const Kind = uidiff.Kind;
+const region_padding = uidiff.region_padding;
 const min_region_pixels = sample.min_region_pixels;
 
 test "stroke edits survive row movement, neighbouring dark text and a wider crop" {
@@ -49,7 +48,7 @@ test "stroke edits survive row movement, neighbouring dark text and a wider crop
             .light_shift => for (y..y + 9) |row| {
                 const pixels = after.row(row);
                 std.mem.copyBackwards(Pixel, pixels[light_x + 1 ..][0..5], pixels[light_x..][0..5]);
-                pixels[light_x] = @splat(255);
+                pixels[light_x] = sample.white;
             },
         }
         if (edit_kind == .dark_widen) {
@@ -212,12 +211,12 @@ test "a light stem edit stays visible beside touching dark text" {
             },
             .widened, .unmoved => after.fill(105, y, 1, 9, sample.inkShade(190, 4)),
             .right => {
-                after.fill(103, y, 1, 9, @splat(255));
+                after.fill(103, y, 1, 9, sample.white);
                 after.fill(105, y, 1, 9, sample.inkShade(190, 4));
             },
             .left => {
                 after.fill(102, y, 1, 9, sample.inkShade(190, 4));
-                after.fill(104, y, 1, 9, @splat(255));
+                after.fill(104, y, 1, 9, sample.white);
             },
         }
         const x: usize = switch (edit) {
@@ -242,7 +241,7 @@ test "repeated table rows keep recoloured or deleted cells after a shift" {
         const after = try before.insert(60, 40, growth);
         defer after.deinit();
         after.fill(10, 64, 200, 30, .{ 200, 220, 240, 255 });
-        for ([_]Pixel{ .{ 90, 90, 160, 255 }, @splat(255) }) |color| {
+        for ([_]Pixel{ .{ 90, 90, 160, 255 }, sample.white }) |color| {
             after.fill(120, 248, 40, 6, color);
             const result = try sample.compareCanvases(before, after, 1);
             defer result.deinit(std.testing.allocator);
@@ -295,10 +294,10 @@ test "redrawn status pills in stationary rows cannot borrow each other's offset"
     for ([_]sample.Canvas{ before, after }) |canvas| {
         for (0..4) |i| canvas.line(18, 220, 28 + 48 * i, i, 48);
     }
-    const a: values.Pixel = .{ 160, 190, 230, 255 };
-    const b: values.Pixel = .{ 242, 150, 120, 255 };
-    const c: values.Pixel = .{ 146, 210, 145, 255 };
-    for ([_]usize{ 64, 112 }, [_]values.Pixel{ a, b }, [_]values.Pixel{ c, a }) |y, old, new| {
+    const a: uidiff.Pixel = .{ 160, 190, 230, 255 };
+    const b: uidiff.Pixel = .{ 242, 150, 120, 255 };
+    const c: uidiff.Pixel = .{ 146, 210, 145, 255 };
+    for ([_]usize{ 64, 112 }, [_]uidiff.Pixel{ a, b }, [_]uidiff.Pixel{ c, a }) |y, old, new| {
         before.fill(245, y, 70, 24, old);
         after.fill(245, y, 70, 24, new);
         before.fill(255, y + 9, 18, 5, sample.inkShade(60, 4));

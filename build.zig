@@ -679,21 +679,23 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
     _ = addE2e(b, target, optimize, uidiff, cases, install_cli, version);
     const filter = b.option([]const u8, "test-filter", "Run only the library's unit tests that match");
     const step = b.step("test", "Run unit, layer, order, fixture and fuzz-corpus tests");
-    if (filter) |pattern| {
-        // Other test binaries could filter out every use of the library, and
-        // with it the decoders' allocation hooks they link against.
-        const filters = b.allocator.dupe([]const u8, &.{pattern}) catch @panic("OOM");
-        step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = uidiff, .filters = filters, .use_llvm = fuzz_use_llvm })).step);
-        addDiffScenarios(b, step, target, optimize, filters);
-        return;
+    const filters = if (filter) |pattern| b.allocator.dupe([]const u8, &.{pattern}) catch @panic("OOM") else &.{};
+    step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = uidiff, .filters = filters, .use_llvm = fuzz_use_llvm })).step);
+    for ([_][]const u8{"tests/compare.zig"}) |source| {
+        const scenarios = b.createModule(.{
+            .root_source_file = b.path(source),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "uidiff", .module = uidiff }},
+        });
+        step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = scenarios, .filters = filters })).step);
     }
+    if (filter != null) return;
     const inventory = b.addSystemCommand(&.{ "bash", "scripts/count-fuzz-targets.sh" });
     const fuzz_count = inventory.addOutputFileArg("fuzz-target-count.txt");
     const fuzz_count_install = b.addInstallFile(fuzz_count, "fuzz-target-count.txt");
     b.step("fuzz-target-count", "Discover fuzz tests from the compiled runners").dependOn(&fuzz_count_install.step);
     addFuzzInventory(b, inventory, uidiff);
-    step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = uidiff, .use_llvm = fuzz_use_llvm })).step);
-    addDiffScenarios(b, step, target, optimize, &.{});
     const fuzz_sources = fuzzSources(b);
     const checked_sources = b.allocator.alloc([]const u8, fuzz_sources.len + 1) catch @panic("OOM");
     @memcpy(checked_sources[0..fuzz_sources.len], fuzz_sources);
@@ -739,21 +741,6 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
         .optimize = optimize,
     }) })).step);
     addFixtures(b, step, host_generator);
-}
-
-fn addDiffScenarios(b: *Build, step: *Build.Step, target: Build.ResolvedTarget, optimize: Optimize, filters: []const []const u8) void {
-    const diff = b.createModule(.{
-        .root_source_file = b.path("src/diff.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    const scenarios = b.createModule(.{
-        .root_source_file = b.path("tests/compare.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{.{ .name = "diff_scenarios", .module = diff }},
-    });
-    step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = scenarios, .filters = filters })).step);
 }
 
 fn fuzzSources(b: *Build) []const []const u8 {

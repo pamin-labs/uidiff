@@ -52,7 +52,7 @@ fn containsMove(box: Box, rows: values.RowRange, move: values.Move, slack: f64, 
 }
 
 test "replacement regions suppress enclosed and sub-line displacement" {
-    const sample = @import("../test_support.zig");
+    const sample = @import("../../testing.zig");
     const before = try sample.Canvas.init(120, 140);
     defer before.deinit();
     const after = try sample.Canvas.init(120, 140);

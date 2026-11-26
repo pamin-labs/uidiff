@@ -1,14 +1,13 @@
 //! End-to-end pixel evidence for noise, edges, colour and alpha.
 
 const std = @import("std");
-const diff = @import("diff_scenarios");
-const sample = diff.test_support;
-const values = sample.values;
-const compare = diff.compare;
-const Box = values.Box;
-const Image = values.Image;
-const Pixel = values.Pixel;
-const Kind = values.Kind;
+const uidiff = @import("uidiff");
+const sample = uidiff.testing;
+const compare = uidiff.compare;
+const Box = uidiff.Box;
+const Image = uidiff.Image;
+const Pixel = uidiff.Pixel;
+const Kind = uidiff.Kind;
 const min_region_pixels = sample.min_region_pixels;
 
 test "one-step noise and two-step red variation are ignored" {
@@ -34,8 +33,8 @@ test "eight-step token colour and grey block or stroke changes are detected" {
         before.fill(10, 10, width, 6, .{ 100, 100, 100, 255 });
         after.fill(10, 10, width, 6, .{ 92, 92, 92, 255 });
         try sample.count(before, after, 1);
-        @memset(before.pixels, .{ 255, 255, 255, 255 });
-        @memset(after.pixels, .{ 255, 255, 255, 255 });
+        @memset(before.pixels, sample.white);
+        @memset(after.pixels, sample.white);
     }
 }
 
@@ -131,8 +130,8 @@ test "recolouring diags, dots, stems and crosses preserves thin aliased marks" {
     defer after.deinit();
     for ([_]enum { diagonal, dots, stem, cross, red }{ .diagonal, .dots, .stem, .cross, .red }) |mark| {
         for ([_]u8{ 20, 40, 60, 80, 100 }) |tone| {
-            @memset(before.pixels, @splat(255));
-            @memset(after.pixels, @splat(255));
+            @memset(before.pixels, sample.white);
+            @memset(after.pixels, sample.white);
             const old: Pixel = if (mark == .red) .{ 220, 0, 0, 255 } else sample.inkShade(0, 4);
             const new: Pixel = if (mark == .red) .{ 220, 70, 0, 255 } else sample.inkShade(tone, 4);
             const points: usize = if (mark == .cross) 7 else 40;
@@ -182,7 +181,7 @@ test "substantial changes in each RGBA channel are detected" {
     const after = try sample.Canvas.square();
     defer after.deinit();
     for (0..4) |channel| {
-        var color: Pixel = @splat(255);
+        var color: Pixel = sample.white;
         color[channel] = 223;
         after.fill(10, 10, sample.block_size, sample.block_size, color);
         try sample.count(before, after, 1);
@@ -213,7 +212,7 @@ test "subpixel glyph coverage changes preserve borders and pale recolours" {
 }
 
 test "a whole-image change smaller than the noise minimum is reported" {
-    const white: Image = .{ .width = 1, .height = 1, .pixels = &.{@splat(255)} };
+    const white: Image = .{ .width = 1, .height = 1, .pixels = &.{sample.white} };
     const black: Image = .{ .width = 1, .height = 1, .pixels = &.{.{ 0, 0, 0, 255 }} };
     const result = try compare(std.testing.allocator, white, black, .{});
     defer result.deinit(std.testing.allocator);

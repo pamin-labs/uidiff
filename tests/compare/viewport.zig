@@ -1,22 +1,21 @@
 //! End-to-end alignment at viewport edges and stationary chrome.
 
 const std = @import("std");
-const diff = @import("diff_scenarios");
-const sample = diff.test_support;
-const values = sample.values;
+const uidiff = @import("uidiff");
+const sample = uidiff.testing;
 
-const compare = diff.compare;
-const Box = values.Box;
-const Pixel = values.Pixel;
-const Kind = values.Kind;
-const region_padding = diff.region_padding;
+const compare = uidiff.compare;
+const Box = uidiff.Box;
+const Pixel = uidiff.Pixel;
+const Kind = uidiff.Kind;
+const region_padding = uidiff.region_padding;
 
 fn checkTallInsertion(height: usize, inserted: usize, viewport: enum { fixed, growing }) !void {
     const at = 64;
     const old_height = if (viewport == .fixed) height else height - inserted;
-    const old = try std.testing.allocator.alloc(values.Pixel, old_height);
+    const old = try std.testing.allocator.alloc(uidiff.Pixel, old_height);
     defer std.testing.allocator.free(old);
-    const new = try std.testing.allocator.alloc(values.Pixel, height);
+    const new = try std.testing.allocator.alloc(uidiff.Pixel, height);
     defer std.testing.allocator.free(new);
     for (old, 0..) |*pixel, row| {
         pixel.* = .{ @intCast(row % 256), @intCast(row / 256), 0, 255 };
@@ -32,7 +31,7 @@ fn checkTallInsertion(height: usize, inserted: usize, viewport: enum { fixed, gr
     );
     defer result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 1), result.regions.len);
-    try std.testing.expectEqual(values.Kind.inserted, result.regions[0].kind);
+    try std.testing.expectEqual(uidiff.Kind.inserted, result.regions[0].kind);
     try std.testing.expectEqual(Box.fromPixels(0, at - region_padding, 1, inserted + 2 * region_padding), result.regions[0].after.?);
 }
 

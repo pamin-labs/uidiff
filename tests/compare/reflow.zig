@@ -1,8 +1,8 @@
 //! End-to-end recognition of row, tab and card reflow.
 
 const std = @import("std");
-const diff = @import("diff_scenarios");
-const sample = diff.test_support;
+const uidiff = @import("uidiff");
+const sample = uidiff.testing;
 
 test "separate table cell edits stay separate unless both rows exchange intact" {
     const pair = try sample.RowExchange.init();
@@ -49,7 +49,7 @@ test "a tab transfer groups its indicator and reciprocal label colors" {
     try std.testing.expect(sample.hasRegion(transfer.regions, .after, 185, 48, .changed));
 
     // Rename the right-hand label at the same time as moving the indicator.
-    after.fill(108, 24, 78, 9, .{ 255, 255, 255, 255 });
+    after.fill(108, 24, 78, 9, sample.white);
     after.line(108, 186, 24, 7, 48);
     const separate = try sample.compareCanvases(before, after, 1);
     defer separate.deinit(std.testing.allocator);

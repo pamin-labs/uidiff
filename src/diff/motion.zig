@@ -88,7 +88,7 @@ fn columnMotion(scope: Scope, keys: []const u64, move: values.Move, scroll_limit
 }
 
 test "an aligned blank tail contributes no phantom move" {
-    const sample = @import("test_support.zig");
+    const sample = @import("../testing/canvas.zig");
     const before = try sample.Canvas.init(64, 32);
     defer before.deinit();
     const after = try sample.Canvas.init(64, 64);

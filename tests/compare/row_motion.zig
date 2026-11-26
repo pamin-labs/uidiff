@@ -1,15 +1,14 @@
 //! End-to-end alignment of moving and repeated row bands.
 
 const std = @import("std");
-const diff = @import("diff_scenarios");
-const sample = diff.test_support;
-const values = sample.values;
+const uidiff = @import("uidiff");
+const sample = uidiff.testing;
 
-const compare = diff.compare;
-const Box = values.Box;
-const Pixel = values.Pixel;
-const Kind = values.Kind;
-const region_padding = diff.region_padding;
+const compare = uidiff.compare;
+const Box = uidiff.Box;
+const Pixel = uidiff.Pixel;
+const Kind = uidiff.Kind;
+const region_padding = uidiff.region_padding;
 
 test "middle insertions box only new content with and without image growth" {
     const before = try sample.Canvas.square();
@@ -134,7 +133,7 @@ test "unrelated tall shots beyond the budget compare by position" {
 }
 
 test "a tall image against its reverse stops at the edit budget" {
-    const height = values.max_extent;
+    const height = uidiff.max_extent;
     const old = try std.testing.allocator.alloc(Pixel, height);
     defer std.testing.allocator.free(old);
     const new = try std.testing.allocator.alloc(Pixel, height);
@@ -299,7 +298,7 @@ test "balanced insertion and deletion detect every visible loss in both directio
                         if (!observable) continue; // The two possible edits produce the same captured pixels.
                         errdefer std.debug.print("height={d}, chrome={}, insert={d}, delete={d}, rows_count={d}, reverse={}\n", .{ height, chrome, insert_at, delete_at, rows_count, reverse });
                         const kind: Kind = if (reverse) .inserted else .removed;
-                        const side: values.Side = if (reverse) .after else .before;
+                        const side: uidiff.Side = if (reverse) .after else .before;
                         var visible = false;
                         for (result.regions) |r| {
                             if (r.kind != kind) continue;

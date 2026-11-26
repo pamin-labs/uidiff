@@ -1,10 +1,9 @@
 //! End-to-end overlay classification and preservation of nearby edits.
 
 const std = @import("std");
-const diff = @import("diff_scenarios");
-const sample = diff.test_support;
-const values = sample.values;
-const Kind = values.Kind;
+const uidiff = @import("uidiff");
+const sample = uidiff.testing;
+const Kind = uidiff.Kind;
 
 fn dimmedPage() !struct { sample.Canvas, sample.Canvas } {
     const before = try sample.Canvas.init(192, 160);
@@ -83,7 +82,7 @@ test "round 25 audit: narrow, edge-touching and gradient panels retain the old s
     defer before.deinit();
     const after = try sample.Canvas.init(300, 164);
     defer after.deinit();
-    const background: values.Pixel = .{ 240, 240, 240, 255 };
+    const background: uidiff.Pixel = .{ 240, 240, 240, 255 };
     for ([_]enum { narrow, edge, gradient }{ .narrow, .edge, .gradient }) |profile| {
         @memset(before.pixels, background);
         @memset(after.pixels, background);
@@ -91,7 +90,7 @@ test "round 25 audit: narrow, edge-touching and gradient panels retain the old s
         after.fill(30, 54, 240, 56, .{ 52, 32, 62, 255 });
         switch (profile) {
             .narrow => before.fill(70, 57, 100, 45, .{ 70, 110, 90, 255 }),
-            .edge => before.fill(18, 57, 260, 45, .{ 255, 255, 255, 255 }),
+            .edge => before.fill(18, 57, 260, 45, sample.white),
             .gradient => for (0..176) |x| {
                 before.fill(60 + x, 57, 1, 45, .{ @intCast(40 + x), 110, 90, 255 });
             },

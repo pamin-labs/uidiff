@@ -51,7 +51,7 @@ const Rules = struct {
 
     /// The diff unit holding path, or null outside the tiered diff internals.
     fn diffUnitOf(self: Rules, path: []const u8) !?*const DiffUnit {
-        if (!sources.inDirectory(path, diff_directory) or std.mem.eql(u8, path, diff_test_support)) return null;
+        if (!sources.inDirectory(path, diff_directory)) return null;
         for (self.diff_units) |*unit| if (covered(unit.paths, path)) return unit;
         return error.UntieredDiffSource;
     }
@@ -66,9 +66,7 @@ const export_row = "export";
 const testing_root = "src/testing.zig";
 const api_root = "src/root.zig";
 const tests_directory = "tests/";
-const diff_root = "src/diff.zig";
 const diff_directory = "src/diff/";
-const diff_test_support = "src/diff/test_support.zig";
 
 const sample_agents =
     \\## Layout
@@ -256,10 +254,6 @@ fn allowedImport(allocator: Allocator, rules: Rules, source: *const Source, node
         return testOnlyImport(&source.tree, node, export_testing);
     }
     if (std.mem.eql(u8, from.paths[0], testing_root) and contains(from.imports, resolved)) return true;
-    if (std.mem.eql(u8, resolved, diff_test_support))
-        return from == to and testOnlyImport(&source.tree, node, std.mem.eql(u8, from_path, diff_root));
-    if (std.mem.eql(u8, from_path, diff_test_support) and std.mem.eql(u8, resolved, diff_root))
-        return true;
     if (try rules.diffUnitOf(from_path)) |from_unit| {
         if (try rules.diffUnitOf(resolved)) |to_unit| {
             if (from_unit != to_unit and to_unit.tier >= from_unit.tier) return false;
@@ -405,23 +399,17 @@ test "the guard rejects reverse imports, submodule imports and foreign bindings"
 test "diff units only import lower tiers and fixtures stay in test scope" {
     try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/yiq.zig", "const regions = @import(\"regions.zig\");"));
     try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/regions/moves.zig", "test { _ = @import(\"../span.zig\"); }"));
-    try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/span.zig", "fn sample() void { _ = @import(\"test_support.zig\"); }"));
-    try testing.expectError(error.ForbiddenImport, checkWithText(diff_root, "const sample = @import(\"diff/test_support.zig\");"));
     try testing.expectError(error.ForbiddenImport, checkWithText("src/codec.zig", "const sample = @import(\"testing/jpeg.zig\");"));
     try testing.expectError(error.ForbiddenImport, checkWithText(api_root, "const sample = @import(\"testing.zig\");"));
     try testing.expectError(error.ForbiddenImport, checkWithText(api_root, "const sample = if (builtin.is_test) void else @import(\"testing.zig\");"));
     try checkWithText(api_root, "pub const testing = if (builtin.is_test) @import(\"testing.zig\") else void;");
     try checkWithText("src/codec.zig", "test { _ = @import(\"testing/jpeg.zig\"); }");
-    try testing.expectError(error.ForbiddenImport, checkWithText(diff_root, "const sample = if (builtin.is_test) void else @import(\"diff/test_support.zig\");"));
     try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/rows.zig", "const regions = @import(\"regions.zig\");"));
     try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/regions/logical.zig", "test { _ = @import(\"../rows.zig\"); }"));
     try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/mask.zig", "const pixel = @import(\"pixel.zig\");"));
     try testing.expectError(error.UntieredDiffSource, checkWithText("src/diff/extra.zig", "const pixel = @import(\"pixel.zig\");"));
     try checkWithText("src/diff/yiq.zig", "const mask = @import(\"mask.zig\");");
     try checkWithText("src/diff/rows/band.zig", "const search = @import(\"search.zig\");");
-    try checkWithText("src/diff/regions/moves.zig", "test { _ = @import(\"../test_support.zig\"); }");
-    try checkWithText(diff_root, "const sample = if (builtin.is_test) @import(\"diff/test_support.zig\") else void;");
-    try checkWithText(diff_test_support, "const diff = @import(\"../diff.zig\");");
 }
 
 test "layout paths come only from the layout section" {

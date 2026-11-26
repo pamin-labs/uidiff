@@ -1,24 +1,13 @@
-//! Procedural canvases and painter patterns for diff tests.
+//! Procedural screenshot canvases and painters.
 const std = @import("std");
-/// Pixel, geometry and region values used by the scenario fixtures.
-pub const values = @import("../value.zig");
-const regions = @import("regions.zig");
-const diff = @import("../diff.zig");
-const row_alignment = @import("rows.zig");
-const pixel_ops = @import("pixel.zig");
+const values = @import("../value.zig");
+const regions = @import("../diff/regions.zig");
+const palette = @import("../annotate/palette.zig");
 const Image = values.Image;
 const Pixel = values.Pixel;
-
-/// The row alignment edit budget.
-pub const max_edits = row_alignment.max_edits;
-/// The region support threshold used by the scenarios.
-pub const min_region_pixels = regions.min_region_pixels;
-/// The initial grouping gap.
-pub const merge_gap = regions.merge_gap;
-/// Exact equality of two runs of pixels.
-pub const sameRun = pixel_ops.sameRun;
-
 const test_allocator = std.testing.allocator;
+/// The opaque white used for blank test canvases.
+pub const white = palette.white;
 
 /// A procedurally painted image owned by the test allocator.
 pub const Canvas = struct {
@@ -28,7 +17,7 @@ pub const Canvas = struct {
     /// Allocates a blank procedural image.
     pub fn init(width: usize, height: usize) !Canvas {
         const pixels = try test_allocator.alloc(Pixel, width * height);
-        @memset(pixels, .{ 255, 255, 255, 255 });
+        @memset(pixels, white);
         return .{ .view = .{ .width = width, .height = height, .pixels = pixels }, .pixels = pixels };
     }
 
@@ -171,13 +160,14 @@ pub const RowExchange = struct {
 
 /// Side length of a block large enough to report under the default mask.
 pub const block_size = std.math.sqrt(regions.min_region_pixels);
+
 /// Computes a coverage sample over white paper.
 pub fn inkShade(ink: u8, coverage: u16) Pixel {
     const tone: u8 = @intCast(255 - @as(u16, 255 - ink) * coverage / 4);
     return .{ tone, tone, tone, 255 };
 }
 
-/// Builds a procedural regression pattern.
+/// Paints an antialiased diagonal at the given horizontal offset.
 pub fn diagonal(shift: usize) !Canvas {
     const png = try Canvas.square();
     const samples = 8;
@@ -199,12 +189,7 @@ pub fn diagonal(shift: usize) !Canvas {
     return png;
 }
 
-/// Builds a procedural regression pattern.
-pub fn int(n: usize) isize {
-    return @intCast(n);
-}
-
-/// Builds a procedural regression pattern.
+/// Paints distinct repeating bands in the selected column span.
 pub fn paintBands(canvas: Canvas, x: usize, width: usize) void {
     var top: usize = 0;
     while (top + 7 <= canvas.view.height) : (top += 7) {
@@ -213,9 +198,9 @@ pub fn paintBands(canvas: Canvas, x: usize, width: usize) void {
     }
 }
 
-/// Builds a procedural regression pattern.
+/// Paints a page with optional stationary chrome and added or missing lines.
 pub fn auditPage(canvas: Canvas, chrome: bool, insertion: ?usize, deletion: ?usize, rows_count: usize) void {
-    @memset(canvas.pixels, inkShade(255, 4));
+    @memset(canvas.pixels, white);
     const height = canvas.view.height;
     var y: usize = if (chrome) 44 else 8;
     for (0..25) |i| {
@@ -235,7 +220,7 @@ pub fn auditPage(canvas: Canvas, chrome: bool, insertion: ?usize, deletion: ?usi
     }
 }
 
-/// Builds a procedural regression pattern.
+/// Paints a list of cards with an optional insertion.
 pub fn fillCardList(canvas: Canvas, inserted: ?usize) void {
     for (0..13) |index| {
         const content = if (inserted) |at| if (index == at) 90 else index - @intFromBool(index > at) else index;
@@ -243,7 +228,7 @@ pub fn fillCardList(canvas: Canvas, inserted: ?usize) void {
     }
 }
 
-/// Builds a procedural regression pattern.
+/// Paints the edge and label of a single card.
 pub fn paintCard(canvas: Canvas, x: usize, y: usize, width: usize, height: usize, seed: usize) void {
     const edge: Pixel = .{ 180, 183, 189, 255 };
     const visible = @min(height, canvas.view.height - y);
@@ -254,7 +239,7 @@ pub fn paintCard(canvas: Canvas, x: usize, y: usize, width: usize, height: usize
     if (visible >= 17) canvas.line(x + 12, x + 86, y + 8, seed, 40);
 }
 
-/// Builds a procedural regression pattern.
+/// Paints the outline of the rounded panel fixture.
 pub fn strokeRounded(canvas: Canvas, top: usize, radius: usize) void {
     const left = 220;
     const width = 540;
@@ -268,91 +253,14 @@ pub fn strokeRounded(canvas: Canvas, top: usize, radius: usize) void {
     };
 }
 
-/// Checks that a reported region of the requested kind covers a test point.
-pub fn hasRegion(found: []const values.Region, side: values.Side, x: usize, y: usize, kind: ?values.Kind) bool {
-    const px: f64 = @floatFromInt(x);
-    const py: f64 = @floatFromInt(y);
-    for (found) |region| {
-        if (kind != null and kind != region.kind) continue;
-        const box = (if (side == .before) region.before else region.after) orelse continue;
-        if (box.x <= px and box.right() > px and box.y <= py and box.bottom() > py) return true;
-    }
-    return false;
-}
-
-/// Finds a two-sided mark that excludes the body of a nearby edit.
-pub fn hasSeparateMark(found: []const values.Region, x: usize, y: usize, body_x: usize, body_y: usize) bool {
-    if (!hasRegion(found, .after, body_x, body_y, null)) return false;
-    for (found, 0..) |_, index| {
-        const mark = found[index..][0..1];
-        if (hasRegion(mark, .before, x, y, null) and hasRegion(mark, .after, x, y, null) and
-            !hasRegion(mark, .after, body_x, body_y, null)) return true;
-    }
-    return false;
-}
-
-/// Adds the normal report padding to an expected test box.
-pub fn paddedBox(x: usize, y: usize, w: usize, h: usize) values.Box {
-    const region_padding = regions.padding.count();
-    return values.Box.fromPixels(x - region_padding, y - region_padding, w + 2 * region_padding, h + 2 * region_padding);
-}
-
-/// Checks region geometry, kind and report numbering in order.
-pub fn checkRegions(actual: []const values.Region, expected: []const values.Region) !void {
-    try std.testing.expectEqual(expected.len, actual.len);
-    for (actual, expected, 1..) |got, want, number| {
-        try std.testing.expectEqual(want.before, got.before);
-        try std.testing.expectEqual(want.after, got.after);
-        try std.testing.expectEqual(number, got.number);
-        try std.testing.expectEqual(if (want.before == null) values.Kind.inserted else if (want.after == null) values.Kind.removed else values.Kind.changed, got.kind);
-    }
-}
-
-/// Checks that an edit is reported within the expected width.
-pub fn expectEditAt(before: Canvas, after: Canvas, x: usize, y: usize, max_box_width: usize) !void {
-    const result = try compareCanvases(before, after, 1);
-    defer result.deinit(std.testing.allocator);
-    for (result.regions) |region| {
-        const box = region.after orelse continue;
-        if (box.x <= @as(f64, @floatFromInt(x)) and box.right() > @as(f64, @floatFromInt(x)) and
-            box.y <= @as(f64, @floatFromInt(y)) and box.bottom() > @as(f64, @floatFromInt(y)))
-        {
-            try std.testing.expect(box.width <= @as(f64, @floatFromInt(max_box_width)));
-            return;
-        }
-    }
-    return error.MissingEdit;
-}
-
-/// Compares two procedural canvases at the supplied scale.
-pub fn compareCanvases(before: Canvas, after: Canvas, scale: f64) diff.CompareError!diff.Comparison {
-    return diff.compare(std.testing.allocator, before.view, after.view, .{ .scale = .{ .factor = scale } });
-}
-
-/// Checks all reported regions against the expected boxes.
-pub fn check(before: Canvas, after: Canvas, scale: f64, expected: []const values.Region) !void {
-    const actual = try compareCanvases(before, after, scale);
-    defer actual.deinit(std.testing.allocator);
-    try checkRegions(actual.regions, expected);
-}
-
-/// Checks an insertion and its matching deletion when reversed.
-pub fn checkInsertion(before: Canvas, after: Canvas, expected: values.Box) !void {
-    try check(before, after, 1, &.{.{ .after = expected }});
-    try check(after, before, 1, &.{.{ .before = expected }});
-}
-
-/// Checks the number of reported regions.
-pub fn count(before: Canvas, after: Canvas, expected: usize) !void {
-    const actual = try compareCanvases(before, after, 1);
-    defer actual.deinit(std.testing.allocator);
-    try std.testing.expectEqual(expected, actual.regions.len);
-}
-
 fn insideRounded(x: usize, y: usize, width: usize, height: usize, radius: usize) bool {
     const dx = radius -| @min(x, width - 1 - x);
     const dy = radius -| @min(y, height - 1 - y);
     return dx * dx + dy * dy <= radius * radius;
+}
+
+fn int(n: usize) isize {
+    return @intCast(n);
 }
 
 test {

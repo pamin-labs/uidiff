@@ -375,7 +375,7 @@ test "a taller button excludes unchanged card borders on unpaired rows" {
     const allocator = std.testing.allocator;
     const width = 360;
     const height = 280;
-    const sample = @import("test_support.zig");
+    const sample = @import("../testing/canvas.zig");
     const before = try sample.Canvas.init(width, height);
     defer before.deinit();
     const after = try sample.Canvas.init(width, height);

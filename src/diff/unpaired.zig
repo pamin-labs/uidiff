@@ -156,7 +156,7 @@ fn hasEqualRun(expected: []const Pixel, image: Image, bounds: columns.Span, y: u
 }
 
 test "an interior blank run is ignored only if the layout retains its length" {
-    const sample = @import("test_support.zig");
+    const sample = @import("../testing/canvas.zig");
     const before = try sample.Canvas.init(64, 80);
     defer before.deinit();
     const after = try sample.Canvas.init(64, 80);
@@ -174,7 +174,7 @@ test "an interior blank run is ignored only if the layout retains its length" {
 }
 
 test "blank space above a fixed input bar does not inherit unrelated sidebar paint" {
-    const sample = @import("test_support.zig");
+    const sample = @import("../testing/canvas.zig");
     const before = try sample.Canvas.init(144, 180);
     defer before.deinit();
     const after = try sample.Canvas.init(144, 180);
@@ -196,7 +196,7 @@ test "blank space above a fixed input bar does not inherit unrelated sidebar pai
 }
 
 test "an equal unpaired bottom margin does not produce a removal" {
-    const sample = @import("test_support.zig");
+    const sample = @import("../testing/canvas.zig");
     for ([_]Pixel{ @splat(255), .{ 18, 18, 22, 255 } }) |color| {
         const before = try sample.Canvas.init(64, 40);
         defer before.deinit();

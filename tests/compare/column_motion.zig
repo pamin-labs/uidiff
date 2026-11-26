@@ -1,13 +1,12 @@
 //! End-to-end alignment of independent column lanes and strides.
 
 const std = @import("std");
-const diff = @import("diff_scenarios");
-const sample = diff.test_support;
-const values = sample.values;
-const Box = values.Box;
-const Pixel = values.Pixel;
-const Kind = values.Kind;
-const region_padding = diff.region_padding;
+const uidiff = @import("uidiff");
+const sample = uidiff.testing;
+const Box = uidiff.Box;
+const Pixel = uidiff.Pixel;
+const Kind = uidiff.Kind;
+const region_padding = uidiff.region_padding;
 const min_region_pixels = sample.min_region_pixels;
 
 fn sidebarPage() !sample.Canvas {
@@ -68,7 +67,7 @@ test "a blank sidebar group keeps a new mark stationary beside inserted cards" {
     for ([_][2]usize{ .{ 60, 92 }, .{ 130, 122 }, .{ 160, 142 }, .{ 130, 205 }, .{ 160, 390 } }) |position| {
         const mark_x, const mark_y = position;
         @memcpy(after.pixels, before.pixels);
-        after.fill(180, 0, 420, 500, @splat(255));
+        after.fill(180, 0, 420, 500, sample.white);
         sample.fillCardList(after, 3);
         after.fill(mark_x, mark_y, 17, 17, .{ 200, 40, 40, 255 });
 
@@ -109,7 +108,7 @@ test "stationary sidebar with a small colour difference does not prevent a 606-p
     for (0..height) |y| after.row(y)[2][1] = 254;
     for (at..height) |y| {
         if (y < at + shift) {
-            @memset(after.row(y)[20..], .{ 255, 255, 255, 255 });
+            @memset(after.row(y)[20..], sample.white);
         } else @memcpy(after.row(y)[20..], before.row(y - shift)[20..]);
     }
     after.red(35, 90, 40, 40, 90);
@@ -220,7 +219,7 @@ test "sparse marks and real extensions survive independent column alignment" {
         const reverse = try sample.compareCanvases(after, before, 1);
         defer reverse.deinit(std.testing.allocator);
         try std.testing.expectEqual(m[2] * m[3] >= min_region_pixels, sample.hasRegion(reverse.regions, .before, m[0], m[1], .removed));
-        after.fill(m[0], m[1], m[2], m[3], @splat(255));
+        after.fill(m[0], m[1], m[2], m[3], sample.white);
     }
 }
 

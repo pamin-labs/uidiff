@@ -1,13 +1,12 @@
 //! End-to-end grouping, padding, report order and region budgets.
 
 const std = @import("std");
-const diff = @import("diff_scenarios");
-const sample = diff.test_support;
-const values = sample.values;
-const Box = values.Box;
-const Kind = values.Kind;
-const region_padding = diff.region_padding;
-const max_regions = diff.max_regions;
+const uidiff = @import("uidiff");
+const sample = uidiff.testing;
+const Box = uidiff.Box;
+const Kind = uidiff.Kind;
+const region_padding = uidiff.region_padding;
+const max_regions = uidiff.max_regions;
 const test_gap = sample.merge_gap.count();
 
 test "one line of text joins its changed runs across word space" {
