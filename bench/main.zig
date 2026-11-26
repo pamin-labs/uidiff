@@ -96,8 +96,8 @@ fn measureStages(io: Io, clock: Io.Clock, allocator: std.mem.Allocator, before_p
         cmp_time.* = elapsed(compare_start, io);
     }
 
-    // The --annotate stage, in its own rounds so its large buffers do not
-    // disturb the stages above: render and encode through the CLI's row source.
+    // Time the serial sheet API in separate rounds so its buffers do not
+    // disturb the stages above. Measure CLI concurrency through --annotate.
     var before = try uidiff.decode(allocator, before_bytes);
     defer before.deinit();
     var after = try uidiff.decode(allocator, after_bytes);
