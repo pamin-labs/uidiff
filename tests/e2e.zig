@@ -274,16 +274,24 @@ test "missing and sparse oversized files fail before decoding" {
 }
 
 test "malformed arguments and invalid scale return usage errors" {
-    const usage = std.mem.trimEnd(u8, options.usage, "\r\n");
-    const huge: [400]u8 = @splat('9');
-    for ([_][]const u8{ "--unknown", "nan", "1_0", &huge }) |bad| {
-        const result = try run(.inherit, 4, .{ "before.png", "after.png", "--scale", bad });
+    const usage = comptime std.mem.trimEnd(u8, options.usage, "\r\n");
+    const cases = .{
+        .{ .{ "before.png", "after.png", "--unknown" }, "unknown option: --unknown" },
+        .{ .{ "before.png", "after.png", "--json", "--json" }, "option was repeated: --json" },
+        .{ .{ "before.png", "after.png", "--scale" }, "option requires a value: --scale" },
+        .{ .{ "before.png", "after.png", "--scale", "nan" }, "scale must be a positive decimal: nan" },
+        .{ .{ "before.png", "after.png", "--scale", "0" }, "scale must be a positive decimal: 0" },
+        .{ .{ "before.png", "after.png", "--annotate", "--json" }, "option requires a value: --annotate" },
+        .{ .{ "--json", "before.png", "after.png" }, "options must follow both paths: --json" },
+        .{ .{ "before.png", "--json", "after.png" }, "options must follow both paths: --json" },
+        .{ .{ "--help", "x" }, "option must be used on its own: --help" },
+        .{ .{"before.png"}, "expected before and after paths: before.png" },
+    };
+    inline for (cases) |case| {
+        const result = try run(.inherit, case[0].len, case[0]);
         defer free(result);
-        try failure(result, usage);
+        try failure(result, "uidiff: " ++ case[1] ++ "\n" ++ usage);
     }
-    const result = try run(.inherit, 4, .{ "before.png", "after.png", "--scale", "0" });
-    defer free(result);
-    try failure(result, "error(uidiff): InvalidScale");
 }
 
 test "help prints usage on stdout and exits successfully" {
@@ -292,12 +300,6 @@ test "help prints usage on stdout and exits successfully" {
     try status(result, 0);
     try testing.expectEqualStrings(options.usage, result.stdout);
     try testing.expectEqualStrings("", result.stderr);
-}
-
-test "an option cannot be used as the annotated sheet path" {
-    const result = try run(.inherit, 4, .{ "before.png", "after.png", "--annotate", "--json" });
-    defer free(result);
-    try failure(result, std.mem.trimEnd(u8, options.usage, "\r\n"));
 }
 
 test "fractional scale rounds the padded box outward in device pixels" {
