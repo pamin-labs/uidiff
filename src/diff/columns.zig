@@ -131,6 +131,7 @@ pub fn spanRows(before: Image, after: Image, bounds: Span, top: usize, bottom: u
         const a = before.rowSegment(y, bounds.left, width);
         const b = after.rowSegment(y, bounds.left, width);
         var x: usize = 0;
+        while (x + pixel.block_pixels <= left and pixel.sameBlock(a[x..][0..pixel.block_pixels], b[x..][0..pixel.block_pixels])) x += pixel.block_pixels;
         while (x + lanes <= left and equalBlock(a[x..][0..lanes], b[x..][0..lanes])) x += lanes;
         while (x < left) : (x += 1) {
             if (!pixel.same(a[x], b[x])) {
@@ -141,6 +142,7 @@ pub fn spanRows(before: Image, after: Image, bounds: Span, top: usize, bottom: u
         }
         if (right == 0) continue;
         x = width;
+        while (x - right >= pixel.block_pixels and pixel.sameBlock(a[x - pixel.block_pixels ..][0..pixel.block_pixels], b[x - pixel.block_pixels ..][0..pixel.block_pixels])) x -= pixel.block_pixels;
         while (x - right >= lanes and equalBlock(a[x - lanes ..][0..lanes], b[x - lanes ..][0..lanes])) x -= lanes;
         while (x > right) {
             x -= 1;
