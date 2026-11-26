@@ -161,8 +161,8 @@ pub fn inflateRows(bytes: []const u8, comptime output_bytes: usize, output: *[ou
     const cmf, const flg = first.data[0..2].*;
     if (cmf & 15 != zlib.Z_DEFLATED or cmf >> 4 > 7 or flg & 32 != 0 or (@as(u16, cmf) * 256 + flg) % 31 != 0) return false;
     var stream: zlib.zng_stream = std.mem.zeroes(zlib.zng_stream);
-    stream.zalloc = inflateAlloc;
-    stream.zfree = inflateFree;
+    stream.zalloc = zalloc;
+    stream.zfree = zfree;
     switch (zlib.zng_inflateInit2(&stream, -(@as(c_int, cmf >> 4) + 8))) {
         zlib.Z_OK => {},
         zlib.Z_MEM_ERROR => return memory.failure(),
@@ -220,27 +220,23 @@ fn endStream(stream: *zlib.zng_stream) void {
     std.debug.assert(status == zlib.Z_OK or status == zlib.Z_DATA_ERROR);
 }
 
-fn inflateAlloc(_: ?*anyopaque, items: c_uint, size: c_uint) callconv(.c) ?*anyopaque {
-    return memory.uidiff_codec_malloc(std.math.mul(usize, items, size) catch return null);
-}
-
-fn inflateFree(_: ?*anyopaque, block: ?*anyopaque) callconv(.c) void {
-    memory.uidiff_codec_free(block);
-}
 fn zalloc(context: ?*anyopaque, items: c_uint, size: c_uint) callconv(.c) ?*anyopaque {
-    // initStream supplies a pointer to an allocator that outlives the stream.
-    const allocator: *const Allocator = @ptrCast(@alignCast(context));
     const bytes = std.math.mul(usize, items, size) catch return null;
+    // Inflate has no context and charges the active decoder budget. Deflate
+    // supplies an allocator pointer that stays valid until deflateEnd.
+    const owner = context orelse return memory.uidiff_codec_malloc(bytes);
+    const allocator: *const Allocator = @ptrCast(@alignCast(owner));
     const block = memory.allocBlock(allocator.*, bytes) orelse return null;
     if (builtin.mode == .debug) @memset(block, undefined);
     return block.ptr;
 }
 
-fn zfree(
-    _: ?*anyopaque,
-    address: ?*anyopaque,
-) callconv(.c) void {
-    memory.freeBlock(address);
+fn zfree(context: ?*anyopaque, address: ?*anyopaque) callconv(.c) void {
+    if (context == null) {
+        memory.uidiff_codec_free(address);
+    } else {
+        memory.freeBlock(address);
+    }
 }
 
 test "strip checksums describe the uncompressed bytes in stream order" {
