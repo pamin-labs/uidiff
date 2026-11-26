@@ -19,6 +19,8 @@ Follow the public pamin-labs/skills engineering rules in [core](.agents/skills/p
 
 ## Layout
 
+Zig source files use snake_case identifiers as basenames. `tests/order.zig` checks that a direct Zig file import binds to its basename without `.zig`. Named build modules and declarations selected from an import keep their own names.
+
 - `src/root.zig` exposes the public library. It imports only module roots, the files beside each layer directory.
 - `src/testing.zig` is the private `uidiff_testing` module created for repository test runners. It exposes procedural RGBA canvases and painters, assertions over public comparison results, and bounded RGBA inputs for fuzzing.
 - `src/value.zig` and `src/value/` hold shared values and the image and memory bounds. Value modules depend only on other values and the standard library.

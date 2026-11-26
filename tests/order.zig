@@ -1,17 +1,22 @@
 //! Checks each Zig file's declaration order: imports, fields, types, constants,
 //! init and deinit, public functions, private functions, then tests, with
-//! every type declared before another type uses it.
+//! every type declared before another type uses it and file imports named
+//! after their basenames.
 const std = @import("std");
 const sources = @import("sources.zig");
 const testing = std.testing;
+const Allocator = std.mem.Allocator;
 const Ast = std.zig.Ast;
 const Source = sources.Source;
 
 /// Declaration kinds in the order a container lists them.
 const Kind = enum(u8) { import, field, type, constant, lifecycle, public_function, private_function, @"test" };
 
-/// Out-of-order declarations, or an import before std.
-const OrderError = error{ OutOfOrder, TypeUsedBeforeDeclared, StdNotFirst };
+/// Declaration-order or file-import naming failures.
+const OrderError = error{ OutOfOrder, TypeUsedBeforeDeclared, StdNotFirst, ImportNameMismatch, InvalidImportBasename };
+
+/// Also carries failures decoding the import literal.
+const CheckError = OrderError || std.zig.string_literal.ParseError;
 
 /// Records the first violation found, for the failure message.
 const Finding = struct { line: usize = 0, name: []const u8 = "" };
@@ -73,8 +78,37 @@ fn importTarget(tree: *const Ast, node: Ast.Node.Index) ?[]const u8 {
     const init = decl.ast.init_node.unwrap() orelse return null;
     var buffer: [2]Ast.Node.Index = undefined;
     const params = tree.builtinCallParams(&buffer, init) orelse return null;
-    if (!std.mem.eql(u8, tree.tokenSlice(tree.nodeMainToken(init)), "@import") or params.len != 1) return null;
+    if (!std.mem.eql(u8, tree.tokenSlice(tree.nodeMainToken(init)), "@import") or params.len != 1 or
+        tree.nodeTag(params[0]) != .string_literal) return null;
     return tree.tokenSlice(tree.nodeMainToken(params[0]));
+}
+
+fn checkImportNames(allocator: Allocator, tree: *const Ast, finding: *Finding) CheckError!void {
+    // Walk the AST so local imports in tests and functions are covered too.
+    for (0..tree.nodes.len) |i| {
+        const node: Ast.Node.Index = @fromBackingInt(@intCast(i));
+        const literal = importTarget(tree, node) orelse continue;
+        const name_token = tree.fullVarDecl(node).?.ast.mut_token + 1;
+        const name = tree.tokenSlice(name_token);
+        errdefer finding.* = .{ .line = tree.tokenLocation(0, name_token).line + 1, .name = name };
+        const path = try std.zig.string_literal.parseAlloc(allocator, literal);
+        defer allocator.free(path);
+        if (!sources.isZig(path)) continue;
+        const basename = std.fs.path.basenamePosix(path);
+        const stem = basename[0 .. basename.len - ".zig".len];
+        if (!snakeCaseIdentifier(stem)) return error.InvalidImportBasename;
+        if (!std.mem.eql(u8, name, stem)) return error.ImportNameMismatch;
+    }
+}
+
+fn snakeCaseIdentifier(name: []const u8) bool {
+    if (name.len == 0 or !std.ascii.isLower(name[0])) return false;
+    var words = std.mem.splitScalar(u8, name, '_');
+    while (words.next()) |word| {
+        if (word.len == 0) return false;
+        for (word) |c| if (!std.ascii.isLower(c) and !std.ascii.isDigit(c)) return false;
+    }
+    return true;
 }
 
 fn checkContainer(tree: *const Ast, members: []const Ast.Node.Index, finding: *Finding) OrderError!void {
@@ -119,11 +153,29 @@ fn checkNested(tree: *const Ast, member: Ast.Node.Index, finding: *Finding) Orde
     try checkContainer(tree, container.ast.members, finding);
 }
 
-fn checkText(text: [:0]const u8) OrderError!void {
-    var source = sources.fromText(testing.allocator, "case.zig", testing.allocator.dupeSentinel(u8, text, 0) catch unreachable) catch unreachable;
-    defer source.deinit(testing.allocator);
+fn checkText(text: [:0]const u8) !void {
+    const allocator = testing.allocator;
+    var source = parsed: {
+        const copy = try allocator.dupeSentinel(u8, text, 0);
+        errdefer allocator.free(copy);
+        break :parsed try sources.fromText(allocator, "case.zig", copy);
+    };
+    defer source.deinit(allocator);
     var finding: Finding = .{};
-    try checkContainer(&source.tree, source.tree.rootDecls(), &finding);
+    try checkDeclarations(allocator, &source.tree, &finding);
+}
+
+fn checkDeclarations(allocator: Allocator, tree: *const Ast, finding: *Finding) CheckError!void {
+    try checkImportNames(allocator, tree, finding);
+    try checkContainer(tree, tree.rootDecls(), finding);
+}
+
+fn checkSource(allocator: Allocator, source: *const Source, comptime check: fn (Allocator, *const Ast, *Finding) CheckError!void) CheckError!void {
+    var finding: Finding = .{};
+    check(allocator, &source.tree, &finding) catch |err| {
+        std.debug.print("{s}:{d}: {t} {s}\n", .{ source.path, finding.line, err, finding.name });
+        return err;
+    };
 }
 
 test "every Zig file declares in order" {
@@ -135,12 +187,11 @@ test "every Zig file declares in order" {
         if (!sources.isZig(path)) continue;
         var source = try sources.parse(io, allocator, path);
         defer source.deinit(allocator);
-        var finding: Finding = .{};
-        checkContainer(&source.tree, source.tree.rootDecls(), &finding) catch |err| {
-            std.debug.print("{s}:{d}: {t} {s}\n", .{ path, finding.line, err, finding.name });
-            return err;
-        };
+        try checkSource(allocator, &source, checkDeclarations);
     }
+    var build = try sources.parse(io, allocator, "build.zig");
+    defer build.deinit(allocator);
+    try checkSource(allocator, &build, checkImportNames);
 }
 
 test "the order check rejects each kind of misplacement" {
@@ -155,7 +206,13 @@ test "the order check rejects each kind of misplacement" {
     try testing.expectError(error.OutOfOrder, checkText("const Box = struct {\n    const max = 1;\n    const Inner = struct {};\n};\n"));
     try testing.expectError(error.TypeUsedBeforeDeclared, checkText("const A = struct { b: B };\nconst B = struct {};\n"));
     try testing.expectError(error.StdNotFirst, checkText("const a = @import(\"a.zig\");\nconst std = @import(\"std\");\n"));
+    try testing.expectError(error.ImportNameMismatch, checkText("const alias = @import(\"dir/file.zig\");\n"));
+    try testing.expectError(error.ImportNameMismatch, checkText("test { const alias = @import(\"dir/file.zig\"); _ = alias; }\n"));
+    try testing.expectError(error.ImportNameMismatch, checkText("const alias = @import(\"dir/file\\x2ezig\");\n"));
+    try testing.expectError(error.InvalidImportBasename, checkText("const File = @import(\"dir/File.zig\");\n"));
     try checkText("const a = @import(\"a.zig\");\nconst b = @import(\"b.zig\");\n");
+    try checkText("const Member = @import(\"dir/file.zig\").Member;\n");
+    try checkText("const file = @import(\"dir/\\x66ile.zig\");\n");
     try checkText("const std = @import(\"std\");\nconst a = @import(\"a.zig\");\nconst B = struct {};\nconst A = struct { b: B, c: a.C };\nconst max = 1;\nfn init() void {}\npub fn g() void {}\nexport fn h() void {}\nfn f() void {}\ntest {}\n");
 }
 
