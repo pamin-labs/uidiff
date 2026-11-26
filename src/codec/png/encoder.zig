@@ -269,10 +269,10 @@ fn preferredFilter(row: []const u8, above: []const u8) png_format.Filter {
             middle == std.mem.readInt(u32, above[x..][0..pixel], .little)) continue;
         for (0..3) |c| {
             const i = x + c;
-            const left = row[i - pixel];
-            const top = above[i];
-            const corner = above[i - pixel];
-            const px = row[i];
+            const left: i16 = row[i - pixel];
+            const top: i16 = above[i];
+            const corner: i16 = above[i - pixel];
+            const px: i16 = row[i];
             const p = png_format.paeth(left, top, corner);
             up += @intFromBool(px != top);
             sub += @intFromBool(px != left);
@@ -303,10 +303,10 @@ fn filterPaeth(out: []u8, current: []const u8, above: []const u8) void {
         out[i..][0..half].* = @as(Bytes, current[i..][0..half].*) -% @as(Bytes, @intCast(predictor));
     }
     while (i < out.len) : (i += 1) {
-        const a = current[i - pixel];
-        const b = above[i];
-        const c = above[i - pixel];
-        out[i] = current[i] -% png_format.paeth(a, b, c);
+        const a: i16 = current[i - pixel];
+        const b: i16 = above[i];
+        const c: i16 = above[i - pixel];
+        out[i] = current[i] -% @as(u8, @intCast(png_format.paeth(a, b, c)));
     }
 }
 
@@ -335,11 +335,11 @@ test "each emitted chunk carries the PNG checksum" {
     var out: Writer.Allocating = .init(allocator);
     defer out.deinit();
     try write(allocator, .{ .width = 2, .height = 1, .pixels = &pixels }, &out.writer);
-    var chunks: png_format.Chunks = .{ .bytes = out.written() };
-    while (chunks.next()) |chunk| {
-        try std.testing.expectEqual(std.hash.Crc32.hash(chunk.tag_and_data), chunk.checksum);
+    var chunks: png_format.Chunks = .{ .remaining = out.written()[png_format.signature.len..] };
+    while (chunks.nextChecksums()) |checksums| {
+        try std.testing.expectEqual(checksums.computed, checksums.stored);
     }
-    try std.testing.expectEqual(out.written().len, chunks.offset);
+    try std.testing.expectEqual(0, chunks.remaining.len);
 }
 
 test "encoding releases each allocation on failure" {

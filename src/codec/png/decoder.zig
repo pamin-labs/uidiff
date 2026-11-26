@@ -70,7 +70,7 @@ const PngFixture = struct {
                     .sub => left,
                     .up => above,
                     .average => @intCast((@as(u16, left) + above) / 2),
-                    .paeth => png_format.paeth(left, above, diagonal),
+                    .paeth => @intCast(png_format.paeth(left, above, diagonal)),
                     .none => 0,
                 };
                 out.* = raw[at] -% predicted;
@@ -80,7 +80,7 @@ const PngFixture = struct {
 
     /// Borrows the compressed bytes from an IDAT chunk.
     fn firstIdat(idat: []const u8) []const u8 {
-        var chunks: png_format.Chunks = .{ .bytes = idat, .offset = 0 };
+        var chunks: png_format.Chunks = .{ .remaining = idat };
         const chunk = chunks.next() orelse unreachable; // The test just wrote this chunk.
         std.debug.assert(std.mem.eql(u8, &chunk.kind, "IDAT"));
         return chunk.data;

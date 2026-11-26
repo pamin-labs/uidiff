@@ -172,20 +172,23 @@ pub fn decode(bytes: []const u8, size: values.Size) memory.Error!?[]values.Pixel
 
 fn collectChunks(bytes: []const u8, profile: Profile, palette: *[256]values.Pixel) ?Chunks {
     if (format.header_end > bytes.len) return null;
-    var chunks: format.Chunks = .{ .bytes = bytes, .offset = format.header_end };
+    var chunks: format.Chunks = .{ .remaining = bytes[format.header_end..] };
     var range: ?Range = null;
     var palette_len: usize = 0;
     var has_alpha = false;
+    var start = format.header_end;
     while (chunks.next()) |chunk| {
+        // Each successful iterator step advances within the original bytes.
+        const end = bytes.len -% chunks.remaining.len;
         const size = chunk.data.len;
         const kind = chunk.kind;
         switch (@as(u32, @bitCast(kind))) {
             @as(u32, @bitCast(@as([4]u8, "IDAT".*))) => {
                 if (profile == .indexed and palette_len == 0) return null;
                 if (range) |prior| {
-                    if (prior.end != chunk.offset) return null;
-                    range = .{ .first = prior.first, .end = chunk.end };
-                } else range = .{ .first = chunk.offset, .end = chunk.end };
+                    if (prior.end != start) return null;
+                    range = .{ .first = prior.first, .end = end };
+                } else range = .{ .first = start, .end = end };
             },
             @as(u32, @bitCast(@as([4]u8, "IEND".*))) => {
                 if (size != 0) return null;
@@ -209,6 +212,7 @@ fn collectChunks(bytes: []const u8, profile: Profile, palette: *[256]values.Pixe
             @as(u32, @bitCast(@as([4]u8, "acTL".*))) => return null,
             else => if (kind[0] & 32 == 0) return null,
         }
+        start = end;
     }
     return null;
 }

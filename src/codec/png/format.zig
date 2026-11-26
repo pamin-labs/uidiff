@@ -1,38 +1,35 @@
 //! PNG headers, chunk framing, and scanline filter definitions.
 const std = @import("std");
 
-/// A framed PNG chunk, including the bytes covered by its stored CRC.
+/// The tag and payload of a complete PNG chunk.
 pub const Chunk = struct {
-    offset: usize,
-    end: usize,
     kind: [4]u8,
     data: []const u8,
-    tag_and_data: []const u8,
-    checksum: u32,
 };
 
-/// Walks chunks from offset up to the end of bytes. A truncated chunk
-/// leaves offset unchanged, so callers can distinguish it from exhaustion.
+/// Walks a PNG chunk stream. A partial chunk leaves the remainder intact.
 pub const Chunks = struct {
-    bytes: []const u8,
-    offset: usize = signature.len,
+    remaining: []const u8,
 
-    pub fn next(self: *Chunks) ?Chunk {
-        const start = self.offset;
-        const rest = self.bytes[start..];
-        if (rest.len < chunk_overhead) return null;
-        const length = readU32(rest, 0);
-        if (length > rest.len - chunk_overhead) return null;
-        const checksum_offset = chunk_prefix + @as(usize, length);
-        const end = start + checksum_offset + @sizeOf(u32);
-        self.offset = end;
+    pub inline fn next(self: *Chunks) ?Chunk {
+        const bytes = self.remaining;
+        if (bytes.len < chunk_overhead) return null;
+        const length: usize = readU32(bytes, 0);
+        if (length > bytes.len - chunk_overhead) return null;
+        const payload = bytes[chunk_prefix..];
+        // The length check leaves room for the stored checksum.
+        self.remaining = payload[length +% @sizeOf(u32) ..];
+        return .{ .kind = bytes[@sizeOf(u32)..chunk_prefix].*, .data = payload[0..length] };
+    }
+
+    /// Advances like next and checks the CRC on the chunk it consumed.
+    pub fn nextChecksums(self: *Chunks) ?struct { computed: u32, stored: u32 } {
+        const bytes = self.remaining;
+        _ = self.next() orelse return null;
+        const checksum_offset = bytes.len - self.remaining.len - @sizeOf(u32);
         return .{
-            .offset = start,
-            .end = end,
-            .kind = rest[@sizeOf(u32)..chunk_prefix].*,
-            .data = rest[chunk_prefix..checksum_offset],
-            .tag_and_data = rest[@sizeOf(u32)..checksum_offset],
-            .checksum = readU32(rest, checksum_offset),
+            .computed = std.hash.Crc32.hash(bytes[@sizeOf(u32)..checksum_offset]),
+            .stored = readU32(bytes, checksum_offset),
         };
     }
 };
@@ -79,11 +76,11 @@ pub fn writeHeader(comptime writeChunk: anytype, out: *std.Io.Writer, width: u32
     try writeChunk(out, header_type, &header);
 }
 
-/// Chooses the nearest of three neighbouring 8-bit samples.
-pub fn paeth(a: u8, b: u8, c: u8) u8 {
-    const left = @abs(@as(i16, b) - c);
-    const top = @abs(@as(i16, a) - c);
-    const corner = @abs(@as(i16, a) + b - c - c);
+/// Chooses the nearest of three neighbouring 8-bit samples widened to i16.
+pub fn paeth(a: i16, b: i16, c: i16) i16 {
+    const left = @abs(b - c);
+    const top = @abs(a - c);
+    const corner = @abs(a + b - c - c);
     return if (left <= @min(top, corner)) a else if (top <= corner) b else c;
 }
 

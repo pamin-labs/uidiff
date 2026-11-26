@@ -99,11 +99,11 @@ test "an annotated sheet is written atomically beside a normal report" {
     const bytes = try tmp.dir.readFileAlloc(testing.io, "sheet.png", allocator, .limited(uidiff.max_encoded_bytes));
     defer allocator.free(bytes);
     try testing.expect(std.mem.startsWith(u8, bytes, png_format.signature));
-    var chunks: png_format.Chunks = .{ .bytes = bytes };
-    while (chunks.next()) |chunk| {
-        try testing.expectEqual(std.hash.Crc32.hash(chunk.tag_and_data), chunk.checksum);
+    var chunks: png_format.Chunks = .{ .remaining = bytes[png_format.signature.len..] };
+    while (chunks.nextChecksums()) |checksums| {
+        try testing.expectEqual(checksums.computed, checksums.stored);
     }
-    try testing.expectEqual(bytes.len, chunks.offset);
+    try testing.expectEqual(0, chunks.remaining.len);
     var sheet = try uidiff.decode(allocator, bytes);
     defer sheet.deinit();
     var source = try uidiff.decodeFile(testing.io, allocator, before);

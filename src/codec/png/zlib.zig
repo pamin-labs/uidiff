@@ -155,7 +155,7 @@ pub fn inflateRows(bytes: []const u8, comptime output_bytes: usize, output: *[ou
     const Sink = @TypeOf(rows.*);
     if (!@hasDecl(Sink, "consume") or !@hasDecl(Sink, "complete"))
         @compileError("a PNG row sink must provide consume(bytes) and complete()");
-    var chunks: format.Chunks = .{ .bytes = bytes, .offset = 0 };
+    var chunks: format.Chunks = .{ .remaining = bytes };
     const first = chunks.next() orelse return false;
     if (first.data.len < 2) return false;
     const cmf, const flg = first.data[0..2].*;
@@ -168,18 +168,17 @@ pub fn inflateRows(bytes: []const u8, comptime output_bytes: usize, output: *[ou
         zlib.Z_MEM_ERROR => return memory.failure(),
         else => return false,
     }
-    const success = consumeIdats(bytes, output_bytes, output, rows, &stream);
+    const success = consumeIdats(&chunks, first.data, output_bytes, output, rows, &stream);
     const closed = zlib.zng_inflateEnd(&stream) == zlib.Z_OK;
     return (try success) and closed;
 }
 
-fn consumeIdats(bytes: []const u8, comptime output_bytes: usize, output: *[output_bytes]u8, rows: anytype, stream: *zlib.zng_stream) memory.Error!bool {
-    var chunks: format.Chunks = .{ .bytes = bytes, .offset = 0 };
-    while (chunks.next()) |idat| {
-        const src = idat.data;
+fn consumeIdats(chunks: *format.Chunks, first: []const u8, comptime output_bytes: usize, output: *[output_bytes]u8, rows: anytype, stream: *zlib.zng_stream) memory.Error!bool {
+    var src = first;
+    var head: usize = 2;
+    while (true) {
         const available = src.len;
-        const head: usize = if (idat.offset == 0) 2 else 0;
-        const tail: usize = if (idat.end == bytes.len) 4 else 0;
+        const tail: usize = if (chunks.remaining.len == 0) 4 else 0;
         if (available < head + tail) return false;
         stream.next_in = src[head..].ptr;
         // The chunk length originates in a validated u32 PNG length.
@@ -198,8 +197,10 @@ fn consumeIdats(bytes: []const u8, comptime output_bytes: usize, output: *[outpu
             if (stream.avail_out != 0 and stream.avail_in == 0) break;
             if (status == zlib.Z_BUF_ERROR) return false;
         }
+        const next = chunks.next() orelse return false;
+        src = next.data;
+        head = 0;
     }
-    return false;
 }
 
 fn initStream(stream: *zlib.zng_stream, allocator: *Allocator, window: c_int) EncodeError!void {
