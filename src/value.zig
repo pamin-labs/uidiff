@@ -1,7 +1,7 @@
 //! Shared data types and image bounds.
 const std = @import("std");
 const image = @import("value/image.zig");
-const memory = @import("value/memory.zig");
+const unfilled = @import("value/unfilled.zig");
 const region = @import("value/region.zig");
 const scale = @import("value/scale.zig");
 
@@ -41,13 +41,13 @@ pub const max_encoded_bytes = image.max_encoded_bytes;
 pub const max_decode_bytes = image.max_decode_bytes;
 
 /// Allocates storage that its owner will fully initialize.
-pub const allocUnfilled = memory.allocUnfilled;
+pub const allocUnfilled = unfilled.allocUnfilled;
 /// Releases storage obtained from allocUnfilled.
-pub const freeUnfilled = memory.freeUnfilled;
+pub const freeUnfilled = unfilled.freeUnfilled;
 
 test {
     std.testing.refAllDecls(image);
-    std.testing.refAllDecls(memory);
+    std.testing.refAllDecls(unfilled);
     std.testing.refAllDecls(region);
     std.testing.refAllDecls(scale);
 }

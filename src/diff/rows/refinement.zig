@@ -1,12 +1,12 @@
 //! Refines provisional bands around compact elements and mixed shifts.
 
 const std = @import("std");
-const band_model = @import("band.zig");
+const band = @import("band.zig");
 const insertion = @import("insertion.zig");
-const paint = @import("paint.zig");
-const values = @import("../../value.zig");
-const pixel_ops = @import("../pixel.zig");
-const Image = values.Image;
+const recolour = @import("recolour.zig");
+const value = @import("../../value.zig");
+const pixel = @import("../pixel.zig");
+const Image = value.Image;
 
 const PixelSamples = struct {
     appearance: usize = 0,
@@ -32,22 +32,22 @@ const min_mixed_anchor = 4;
 pub const max_replacement_rows = 64;
 
 /// Places a one-sided element at the best boundary among equivalent row matches.
-pub fn refineElements(before: band_model.Keys, after: band_model.Keys, limits: band_model.Limits, bands: []band_model.Band) void {
+pub fn refineElements(before: band.Keys, after: band.Keys, limits: band.Limits, bands: []band.Band) void {
     const images = limits.images orelse return;
     if (bands.len < 2) return;
     recoverGrowingEdits(limits, bands);
     refineMixedPaths(limits, bands);
-    for (bands[0 .. bands.len - 1], bands[1..]) |*band, next| {
-        if (band.mode != .regular or @min(band.removed, band.added) != 0) continue;
-        const inserted = band.added != 0;
-        const count = @max(band.removed, band.added);
+    for (bands[0 .. bands.len - 1], bands[1..]) |*row_band, next| {
+        if (row_band.mode != .regular or @min(row_band.removed, row_band.added) != 0) continue;
+        const inserted = row_band.added != 0;
+        const count = @max(row_band.removed, row_band.added);
         if (count <= 2 * limits.scroll or @min(next.removed, next.added) < count / 2) continue;
-        if (next.before != band.before + band.removed or next.after != band.after + band.added) continue;
+        if (next.before != row_band.before + row_band.removed or next.after != row_band.after + row_band.added) continue;
         const short = if (inserted) before else after;
         const long = if (inserted) after else before;
         const image = images[@intFromBool(inserted)];
-        const original = if (inserted) band.after else band.before;
-        const aligned = if (inserted) band.before else band.after;
+        const original = if (inserted) row_band.after else row_band.before;
+        const aligned = if (inserted) row_band.before else row_band.after;
         var distance: usize = 0;
         const max_distance = @min(aligned, original, count, insertion.max_panel_shift);
         while (distance < max_distance) : (distance += 1) {
@@ -56,45 +56,45 @@ pub fn refineElements(before: band_model.Keys, after: band_model.Keys, limits: b
             if (key != long[y] or key != long[y + count]) break;
         }
         const best = compactElement(image, original - distance, original, count, limits);
-        band.before -= original - best;
-        band.after -= original - best;
-        band.mode = .element;
+        row_band.before -= original - best;
+        row_band.after -= original - best;
+        row_band.mode = .element;
     }
 }
 
 // Growth fixes the net offset. A locally edited head of the moved list can
 // be paired against the new row instead, because it lost its exact row hashes.
-fn recoverGrowingEdits(limits: band_model.Limits, bands: []band_model.Band) void {
+fn recoverGrowingEdits(limits: band.Limits, bands: []band.Band) void {
     const images = limits.images orelse return;
     const growth = images[1].height -| images[0].height;
     if (growth <= limits.scroll) return;
-    for (bands[0 .. bands.len - 1], 0..) |*band, index| {
+    for (bands[0 .. bands.len - 1], 0..) |*row_band, index| {
         const next = &bands[index + 1];
-        const count = band.removed;
-        if (count == 0 or count > growth or band.added != count + growth or band.mode != .regular) continue;
-        if (next.before != band.before + count or next.after != band.after + band.added or
+        const count = row_band.removed;
+        if (count == 0 or count > growth or row_band.added != count + growth or row_band.mode != .regular) continue;
+        if (next.before != row_band.before + count or next.after != row_band.after + row_band.added or
             next.removed != next.added or next.removed < growth) continue;
-        if (!prefersGrowthOffset(images, limits, band.*, growth)) continue;
-        next.* = .{ .before = band.before, .after = band.after + growth, .removed = next.removed + count, .added = next.added + count };
-        band.removed = 0;
-        band.added = growth;
+        if (!prefersGrowthOffset(images, limits, row_band.*, growth)) continue;
+        next.* = .{ .before = row_band.before, .after = row_band.after + growth, .removed = next.removed + count, .added = next.added + count };
+        row_band.removed = 0;
+        row_band.added = growth;
     }
 }
 
-fn prefersGrowthOffset(images: [2]Image, limits: band_model.Limits, band: band_model.Band, growth: usize) bool {
+fn prefersGrowthOffset(images: [2]Image, limits: band.Limits, row_band: band.Band, growth: usize) bool {
     const totals = sampleBand(.colour, images[0], images[1], limits, .{
-        .before = band.before,
-        .after = band.after,
-        .count = band.removed,
+        .before = row_band.before,
+        .after = row_band.after,
+        .count = row_band.removed,
         .shift = growth,
     }, &.{});
     return totals.positional >= min_sample_support and
-        paint.paint_density_denominator * totals.shifted <= paint.paint_density_numerator * totals.positional;
+        recolour.paint_density_denominator * totals.shifted <= recolour.paint_density_numerator * totals.positional;
 }
 
 // Equivalent repeated rows can match at several boundaries. Prefer the
 // smallest enclosure that covers the changed content.
-fn compactElement(image: Image, first: usize, last: usize, count: usize, limits: band_model.Limits) usize {
+fn compactElement(image: Image, first: usize, last: usize, count: usize, limits: band.Limits) usize {
     if (first == last) return last;
     var best = last;
     var best_top = image.height;
@@ -105,10 +105,10 @@ fn compactElement(image: Image, first: usize, last: usize, count: usize, limits:
     for (first..last + 1) |y| {
         const bottom = y + count;
         while (end < bottom) : (end += 1) {
-            if (!paint.flatPaint(image, end, end + 1, limits.left, limits.width)) bottom_ink = end + 1;
+            if (!recolour.flatPaint(image, end, end + 1, limits.left, limits.width)) bottom_ink = end + 1;
         }
         top = @max(y, top);
-        while (top < bottom_ink and paint.flatPaint(image, top, top + 1, limits.left, limits.width)) : (top += 1) {}
+        while (top < bottom_ink and recolour.flatPaint(image, top, top + 1, limits.left, limits.width)) : (top += 1) {}
         if (bottom_ink <= top) continue;
         const height = bottom_ink - top;
         if (height < best_height or (height == best_height and top <= best_top)) {
@@ -123,7 +123,7 @@ fn compactElement(image: Image, first: usize, last: usize, count: usize, limits:
 // An opposite one-sided gap can be the tail of a recoloured element
 // that lost its row anchors. Only repack it when the following match
 // supports the final displacement and the foreground silhouette agrees.
-fn refineMixedPaths(limits: band_model.Limits, bands: []band_model.Band) void {
+fn refineMixedPaths(limits: band.Limits, bands: []band.Band) void {
     if (bands.len < 3) return;
     for (0..bands.len - 2) |i| {
         const first = bands[i];
@@ -132,7 +132,7 @@ fn refineMixedPaths(limits: band_model.Limits, bands: []band_model.Band) void {
         if (first.mode != .regular or second.mode != .regular or @min(first.removed, first.added) < min_mixed_anchor) continue;
         if (second.before != next.before -| second.removed or second.after != next.after -| second.added) continue;
         if (@min(next.removed, next.added) < min_mixed_anchor) continue;
-        const gap: band_model.Band = .{
+        const gap: band.Band = .{
             .before = first.before,
             .after = first.after,
             .removed = next.before - first.before,
@@ -155,7 +155,7 @@ fn refineMixedPaths(limits: band_model.Limits, bands: []band_model.Band) void {
 // A recoloured element can lose all of its row hashes. Prefer the offset
 // that preserves its foreground silhouette when the surrounding hashes
 // already establish a shift.
-fn shapeKeepsOffset(limits: band_model.Limits, gap: band_model.Band) bool {
+fn shapeKeepsOffset(limits: band.Limits, gap: band.Band) bool {
     const images = limits.images orelse return false;
     if (@min(gap.before, gap.after) == 0) return false;
     const count = @min(gap.removed, gap.added);
@@ -168,7 +168,7 @@ fn shapeKeepsOffset(limits: band_model.Limits, gap: band_model.Band) bool {
     const long_y = if (inserted) gap.after else gap.before;
     const backdrop = short.rowSegment(short_y - 1, limits.left, limits.width);
     const opposite = long.rowSegment(long_y - 1, limits.left, limits.width);
-    if (!pixel_ops.sameRun(backdrop, opposite)) return false;
+    if (!pixel.sameRun(backdrop, opposite)) return false;
 
     const totals = sampleBand(.silhouette, short, long, limits, .{
         .before = short_y,
@@ -179,26 +179,26 @@ fn shapeKeepsOffset(limits: band_model.Limits, gap: band_model.Band) bool {
     return totals.appearance >= min_sample_support and totals.positional >= min_sample_support and totals.shifted == 0;
 }
 
-fn sampleBand(comptime mode: enum { colour, silhouette }, before: Image, after: Image, limits: band_model.Limits, band: PixelBand, backdrop: []const values.Pixel) PixelSamples {
+fn sampleBand(comptime mode: enum { colour, silhouette }, before: Image, after: Image, limits: band.Limits, row_band: PixelBand, backdrop: []const value.Pixel) PixelSamples {
     const columns_target = if (mode == .colour) colour_sample_columns else silhouette_sample_columns;
     const x_step = @max(1, limits.width / columns_target);
-    const y_step = @max(1, band.count / sample_rows);
+    const y_step = @max(1, row_band.count / sample_rows);
     var totals: PixelSamples = .{};
     var y: usize = 0;
-    while (y < band.count) : (y += y_step) {
-        const old = before.rowSegment(band.before + y, limits.left, limits.width);
-        const same = after.rowSegment(band.after + y, limits.left, limits.width);
-        const moved = after.rowSegment(band.after + band.shift + y, limits.left, limits.width);
+    while (y < row_band.count) : (y += y_step) {
+        const old = before.rowSegment(row_band.before + y, limits.left, limits.width);
+        const same = after.rowSegment(row_band.after + y, limits.left, limits.width);
+        const moved = after.rowSegment(row_band.after + row_band.shift + y, limits.left, limits.width);
         var x: usize = 0;
         while (x < limits.width) : (x += x_step) {
             if (mode == .colour) {
-                totals.positional += @intFromBool(!pixel_ops.same(old[x], same[x]));
-                totals.shifted += @intFromBool(!pixel_ops.same(old[x], moved[x]));
+                totals.positional += @intFromBool(!pixel.same(old[x], same[x]));
+                totals.shifted += @intFromBool(!pixel.same(old[x], moved[x]));
             } else {
-                const ink = !pixel_ops.same(old[x], backdrop[x]);
+                const ink = !pixel.same(old[x], backdrop[x]);
                 totals.appearance += @intFromBool(ink);
-                totals.positional += @intFromBool(ink != !pixel_ops.same(same[x], backdrop[x]));
-                totals.shifted += @intFromBool(ink != !pixel_ops.same(moved[x], backdrop[x]));
+                totals.positional += @intFromBool(ink != !pixel.same(same[x], backdrop[x]));
+                totals.shifted += @intFromBool(ink != !pixel.same(moved[x], backdrop[x]));
             }
         }
     }
@@ -206,7 +206,7 @@ fn sampleBand(comptime mode: enum { colour, silhouette }, before: Image, after: 
 }
 
 test "growth pairs an edited row head with its displaced body" {
-    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
+    const canvas = @import("uidiff_test_canvas").Painters(value.Image);
     const before = try canvas.Canvas.init(200, 180);
     defer before.deinit();
     const after = try canvas.Canvas.init(200, 220);
@@ -220,9 +220,9 @@ test "growth pairs an edited row head with its displaced body" {
     after.fill(100, 114, 16, 12, canvas.inkShade(115, 4));
     var old: [180]u64 = undefined;
     var new: [220]u64 = undefined;
-    band_model.keys(before.view, 0, 200, &old);
-    band_model.keys(after.view, 0, 200, &new);
-    var bands = [_]band_model.Band{
+    band.keys(before.view, 0, 200, &old);
+    band.keys(after.view, 0, 200, &new);
+    var bands = [_]band.Band{
         .{ .before = 0, .after = 0, .removed = 70, .added = 70 },
         .{ .before = 70, .after = 70, .removed = 32, .added = 72 },
         .{ .before = 102, .after = 142, .removed = 78, .added = 78 },
@@ -234,7 +234,7 @@ test "growth pairs an edited row head with its displaced body" {
 }
 
 test "an inserted row precedes the moved recolour in an ambiguous alignment" {
-    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
+    const canvas = @import("uidiff_test_canvas").Painters(value.Image);
     const before = try canvas.Canvas.init(120, 160);
     defer before.deinit();
     const after = try canvas.Canvas.init(120, 160);
@@ -246,11 +246,11 @@ test "an inserted row precedes the moved recolour in an ambiguous alignment" {
     after.copyRows(110, before, 90, 130);
     var old_keys: [160]u64 = undefined;
     var new_keys: [160]u64 = undefined;
-    band_model.keys(before.view, 0, 120, &old_keys);
-    band_model.keys(after.view, 0, 120, &new_keys);
+    band.keys(before.view, 0, 120, &old_keys);
+    band.keys(after.view, 0, 120, &new_keys);
     // The recolour changes its row hashes. The initial alignment consumes
     // part of its old silhouette as a positional edit, then catches up.
-    var bands = [_]band_model.Band{
+    var bands = [_]band.Band{
         .{ .before = 20, .after = 20, .removed = 62, .added = 16 },
         .{ .before = 90, .after = 40, .removed = 0, .added = 70 },
         .{ .before = 90, .after = 110, .removed = 12, .added = 12 },

@@ -1,7 +1,7 @@
 //! Bounded linear-space Myers search over row hashes.
 
 const std = @import("std");
-const band_model = @import("band.zig");
+const band = @import("band.zig");
 
 const Coordinate = struct { x: u32 = 0, y: u32 = 0 };
 
@@ -12,12 +12,12 @@ const SearchResult = struct { edits: usize, middle: Coordinate };
 
 /// A pair of key sequences with their common prefix removed.
 pub const Problem = struct {
-    a: band_model.Keys,
-    b: band_model.Keys,
+    a: band.Keys,
+    b: band.Keys,
     prefix: usize,
 
     /// Removes the common prefix before starting alignment.
-    pub fn init(before: band_model.Keys, after: band_model.Keys) Problem {
+    pub fn init(before: band.Keys, after: band.Keys) Problem {
         var prefix: usize = 0;
         while (prefix < @min(before.len, after.len) and before[prefix] == after[prefix]) : (prefix += 1) {}
         return .{ .a = before[prefix..], .b = after[prefix..], .prefix = prefix };
@@ -32,13 +32,13 @@ pub const Problem = struct {
     }
 
     /// Writes the exact row matches for a known edit distance.
-    pub fn matches(self: Problem, edits: usize, frontier: []Diagonal, out: []band_model.Match) ?[]const band_model.Match {
+    pub fn matches(self: Problem, edits: usize, frontier: []Diagonal, out: []band.Match) ?[]const band.Match {
         const len = self.prefix + (self.a.len + self.b.len - edits) / 2;
         if (!self.recover(edits, frontier, out[0..len], 0, 0)) return null;
         return out[0..len];
     }
 
-    fn recover(self: Problem, edits: usize, frontier: []Diagonal, out: []band_model.Match, old_y: usize, new_y: usize) bool {
+    fn recover(self: Problem, edits: usize, frontier: []Diagonal, out: []band.Match, old_y: usize, new_y: usize) bool {
         for (out[0..self.prefix], 0..) |*m, row| m.* = .{ .before = old_y + row, .after = new_y + row };
         const tail = out[self.prefix..];
         if (tail.len == 0) return true;
@@ -61,7 +61,7 @@ pub const Problem = struct {
             Problem.init(self.a[x..], self.b[y..]).recover(edits - half, frontier, tail[first_len..], a + x, b + y);
     }
 
-    fn oneDirection(self: Problem, out: ?[]band_model.Match, old_y: usize, new_y: usize) bool {
+    fn oneDirection(self: Problem, out: ?[]band.Match, old_y: usize, new_y: usize) bool {
         const insertions = self.a.len < self.b.len;
         const short = if (insertions) self.a else self.b;
         const long = if (insertions) self.b else self.a;
@@ -92,7 +92,7 @@ comptime {
     std.debug.assert(max_edits <= 1 << (max_recovery_frames - 1));
 }
 
-fn search(comptime track_middle: bool, a: band_model.Keys, b: band_model.Keys, budget: usize, half: usize, frontier: []Diagonal) ?SearchResult {
+fn search(comptime track_middle: bool, a: band.Keys, b: band.Keys, budget: usize, half: usize, frontier: []Diagonal) ?SearchResult {
     const center = frontier.len / 2;
     frontier[center] = .{ .x = 0 };
     for (1..budget + 1) |d| {
@@ -152,7 +152,7 @@ test "linear frontier recovers shortest matches through repeated rows" {
             const problem = Problem.init(&before, &after);
             try std.testing.expectEqual(if (edits <= rows) @as(?usize, edits) else null, problem.distance(rows, &frontier));
             if (edits > rows) continue;
-            var output: [rows]band_model.Match = undefined;
+            var output: [rows]band.Match = undefined;
             const matches = problem.matches(edits, &frontier, &output) orelse return error.NoMatches;
             try std.testing.expectEqual(lcs[rows][rows], matches.len);
             for (matches, 0..) |match, i| {

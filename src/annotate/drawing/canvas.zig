@@ -1,12 +1,12 @@
 //! Rasterizes paint and bitmap text one sheet row at a time.
 const std = @import("std");
-const values = @import("../value.zig");
-const geometry = @import("geometry.zig");
-const font = @import("text.zig");
+const value = @import("../../value.zig");
+const geometry = @import("../geometry.zig");
+const text = @import("text.zig");
 const Rect = geometry.Rect;
-const Pixel = values.Pixel;
-const Face = font.Face;
-const glyph = font.glyph;
+const Pixel = value.Pixel;
+const Face = text.Face;
+const glyph = text.glyph;
 
 /// A row being drawn and its absolute sheet coordinate.
 pub const Line = struct {
@@ -35,7 +35,7 @@ pub const Line = struct {
         } else self.fill(outer[0], outer[1], color);
     }
 
-    /// Paints the visible part of a report label on this row.
+    /// Paints the visible part of a sheet label on this row.
     pub noinline fn text(self: Line, x: usize, top: usize, label: []const u8, face: Face, size: usize, color: Pixel) void {
         if (self.y < top or self.y - top >= face.height(size)) return;
         const em = face.em();

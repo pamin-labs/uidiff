@@ -1,45 +1,46 @@
 //! Paints badge faces, outlines and leaders onto one sheet row.
 
 const std = @import("std");
+const drawing = @import("../drawing.zig");
 const routing = @import("routing.zig");
-const values = @import("../../value.zig");
+const value = @import("../../value.zig");
 const geometry = @import("../geometry.zig");
-const canvas = @import("../canvas.zig");
-const focus_layout = @import("../focus.zig");
-const palette = @import("../palette.zig");
+const canvas = drawing.canvas;
+const focus = @import("../focus.zig");
+const palette = drawing.palette;
 const Rect = geometry.Rect;
-const Layout = geometry.Layout;
+const PaneLayout = geometry.PaneLayout;
 const Line = canvas.Line;
 const roundSpan = canvas.roundSpan;
-const Detail = focus_layout.Detail;
-const Badge = focus_layout.Badge;
+const Detail = focus.Detail;
+const Badge = focus.Badge;
 const white = palette.white;
 const tint = palette.tint;
-const Pixel = values.Pixel;
+const Pixel = value.Pixel;
 
 /// Width of the badge border at the base sheet scale.
 pub const badge_ring = 3;
 
 /// Draws the outward halo and assigned badge on one sheet row.
-pub noinline fn drawMark(line: Line, box: ?Rect, route: Badge, detail: Detail, ui: Layout) void {
+pub noinline fn drawMark(line: Line, box: ?Rect, route: Badge, detail: Detail, pane_layout: PaneLayout) void {
     const rect = box orelse return;
     if (route == .linked) drawLeader(line, rect, route.linked, tint(detail.region.kind));
     const width = 2;
     const halo = 2;
     const frame = rect.outset(3);
     if (line.y >= frame.y -| halo and line.y < frame.y + frame.h + halo) {
-        const r = ui.px(6);
+        const r = pane_layout.px(6);
         strokeOutside(line, frame.outset(halo), r + halo, halo, white, rect);
         strokeOutside(line, frame, r, width, tint(detail.region.kind), rect);
     }
-    if (route.position()) |where| badge(line, where, detail.region.kind, detail.number.bytes(), ui);
+    if (route.position()) |where| badge(line, where, detail.region.kind, detail.number.bytes(), pane_layout);
 }
 
 /// Paints the visible row of a numbered badge.
-pub noinline fn badge(line: Line, bounds: Rect, kind: values.Kind, number: []const u8, ui: Layout) void {
+pub noinline fn badge(line: Line, bounds: Rect, kind: value.Kind, number: []const u8, pane_layout: PaneLayout) void {
     if (!bounds.containsRow(line.y)) return;
     const outer = bounds.w / 2;
-    const ring = @min(ui.px(badge_ring), outer / 3);
+    const ring = @min(pane_layout.px(badge_ring), outer / 3);
     const inner = bounds.inset(ring);
     line.rounded(bounds, outer, white);
     line.rounded(inner, outer - ring, tint(kind));

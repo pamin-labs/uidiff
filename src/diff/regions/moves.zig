@@ -1,20 +1,20 @@
 //! Retains visible moves outside reported edits.
 
 const std = @import("std");
-const pending = @import("candidate.zig");
-const values = @import("../../value.zig");
-const Scale = values.Scale;
-const Box = values.Box;
-const Region = values.Region;
+const candidate = @import("candidate.zig");
+const value = @import("../../value.zig");
+const Scale = value.Scale;
+const Box = value.Box;
+const Region = value.Region;
 
-const min_move_height = values.CssPx.init(4);
+const min_move_height = value.CssPx.init(4);
 /// Maximum displacement treated as a short scroll.
-pub const scroll_shift = values.CssPx.init(2);
+pub const scroll_shift = value.CssPx.init(2);
 
 /// Compacts moves to visible runs outside the reported edits.
-pub fn keepMoves(moves: []values.Move, edits: []const Region, scale: values.Scale, scroll_tolerance: f64) usize {
+pub fn keepMoves(moves: []value.Move, edits: []const Region, scale: value.Scale, scroll_tolerance: f64) usize {
     const minimum = scale.devicePixels(min_move_height);
-    const slack = scale.devicePixels(pending.padding);
+    const slack = scale.devicePixels(candidate.padding);
     var len: usize = 0;
     for (moves) |move| {
         if (@as(f64, @floatFromInt(move.before.height)) < minimum) continue;
@@ -26,7 +26,7 @@ pub fn keepMoves(moves: []values.Move, edits: []const Region, scale: values.Scal
     return len;
 }
 
-fn insideEdit(move: values.Move, edits: []const Region, slack: f64, short_shift: bool) bool {
+fn insideEdit(move: value.Move, edits: []const Region, slack: f64, short_shift: bool) bool {
     for (edits) |edit| {
         const before = edit.before orelse continue;
         const after = edit.after orelse continue;
@@ -36,7 +36,7 @@ fn insideEdit(move: values.Move, edits: []const Region, slack: f64, short_shift:
     return false;
 }
 
-fn containsMove(box: Box, rows: values.RowRange, move: values.Move, slack: f64, short_shift: bool) bool {
+fn containsMove(box: Box, rows: value.RowRange, move: value.Move, slack: f64, short_shift: bool) bool {
     const top: f64 = @floatFromInt(rows.y);
     const bottom: f64 = @floatFromInt(rows.y + rows.height);
     const left: f64 = @floatFromInt(move.x.count());
@@ -54,7 +54,7 @@ fn containsMove(box: Box, rows: values.RowRange, move: values.Move, slack: f64, 
 test {
     const box = Box.fromPixels(6, 16, 58, 42);
     const edits = [_]Region{.{ .number = 1, .kind = .changed, .before = box, .after = box }};
-    var moves = [_]values.Move{
+    var moves = [_]value.Move{
         .{ .before = .{ .y = 27, .height = 10 }, .after = .{ .y = 34, .height = 10 }, .x = .init(10), .width = .init(50) },
         .{ .before = .{ .y = 61, .height = 3 }, .after = .{ .y = 70, .height = 3 }, .x = .init(10), .width = .init(50) },
         .{ .before = .{ .y = 62, .height = 10 }, .after = .{ .y = 73, .height = 10 }, .x = .init(10), .width = .init(50) },

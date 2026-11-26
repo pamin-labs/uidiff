@@ -1,14 +1,14 @@
 //! Detects, reads and decodes bounded PNG, JPEG, or WebP inputs, and encodes PNG.
 const std = @import("std");
-const values = @import("value.zig");
+const value = @import("value.zig");
 const webp = @import("codec/webp.zig");
 const jpeg = @import("codec/jpeg.zig");
 const png = @import("codec/png.zig");
 const memory = @import("codec_memory");
 const Allocator = std.mem.Allocator;
-const Image = values.Image;
-const Pixel = values.Pixel;
-const Size = values.Size;
+const Image = value.Image;
+const Pixel = value.Pixel;
+const Size = value.Size;
 const Io = std.Io;
 
 /// Writes a valid image as PNG.
@@ -20,7 +20,7 @@ pub const encodePngRowsWithIo = png.writeRowsWithIo;
 /// Allocation, invalid image or output failures while encoding.
 pub const EncodeError = png.EncodeError;
 /// The largest encoded input file or byte stream accepted, in bytes.
-pub const max_encoded_bytes = values.max_encoded_bytes;
+pub const max_encoded_bytes = value.max_encoded_bytes;
 
 const Format = std.meta.FieldEnum(@TypeOf(formats));
 
@@ -84,7 +84,7 @@ pub const FileInput = struct {
     /// Decodes any supported profile from this handle. The caller owns the pixels.
     pub fn decode(self: FileInput, io: Io, allocator: Allocator, cap: usize) (ReadError || DecodeError)!Decoded {
         const bytes = try readEncoded(io, allocator, self.file, self.length);
-        defer values.freeUnfilled(u8, allocator, bytes);
+        defer value.freeUnfilled(u8, allocator, bytes);
         return decodeCapped(allocator, bytes, cap);
     }
 };
@@ -96,7 +96,7 @@ const probe_prefix_bytes = 4096;
 /// Checks the encoded size, image dimensions and decode budget before
 /// allocating pixels. The caller owns the result.
 pub fn decode(allocator: Allocator, bytes: []const u8) DecodeError!Decoded {
-    return decodeCapped(allocator, bytes, values.max_decode_bytes);
+    return decodeCapped(allocator, bytes, value.max_decode_bytes);
 }
 
 /// Decodes bytes with a caller-supplied cap no higher than the default.
@@ -116,7 +116,7 @@ pub fn decodeCapped(allocator: Allocator, bytes: []const u8, cap: usize) DecodeE
 
 /// Reads a file of at most max_encoded_bytes and decodes it. The caller owns the result.
 pub fn decodeFile(io: Io, allocator: Allocator, path: []const u8) (ReadError || DecodeError)!Decoded {
-    return decodeFileCapped(io, allocator, path, values.max_decode_bytes);
+    return decodeFileCapped(io, allocator, path, value.max_decode_bytes);
 }
 
 /// Reads an input file and decodes it with a caller-supplied cap.
@@ -141,7 +141,7 @@ pub fn probeFile(io: Io, allocator: Allocator, path: []const u8, cap: usize) (Re
         if (err != error.InvalidImage or header.len == length) return err;
     }
     const bytes = try readEncoded(io, allocator, input.file, length);
-    defer values.freeUnfilled(u8, allocator, bytes);
+    defer value.freeUnfilled(u8, allocator, bytes);
     return probeSize(allocator, bytes, cap);
 }
 
@@ -167,7 +167,7 @@ fn probeSize(allocator: Allocator, bytes: []const u8, cap: usize) DecodeError!Si
 }
 
 noinline fn probeFormat(comptime probe: anytype, allocator: Allocator, bytes: []const u8, cap: usize) DecodeError!Probed(probe) {
-    const limit = @min(cap, values.max_decode_bytes);
+    const limit = @min(cap, value.max_decode_bytes);
     const header = try probe(allocator, bytes, limit);
     _ = try pixelCount(header.size);
     return .{ .header = header, .limit = limit };
@@ -189,8 +189,8 @@ fn encodedLength(io: Io, file: Io.File) ReadError!usize {
 
 fn readEncoded(io: Io, allocator: Allocator, file: Io.File, length: usize) ReadError![]u8 {
     // A successful positional read initializes the entire buffer before it escapes.
-    const bytes = try values.allocUnfilled(u8, allocator, length);
-    errdefer values.freeUnfilled(u8, allocator, bytes);
+    const bytes = try value.allocUnfilled(u8, allocator, length);
+    errdefer value.freeUnfilled(u8, allocator, bytes);
     try readBytes(io, file, bytes);
     return bytes;
 }
@@ -250,7 +250,7 @@ test "header preflight handles JPEG metadata beyond its initial read" {
     try tmp.dir.writeFile(io, .{ .sub_path = "header.jpg", .data = &bytes });
     const path = try tmp.dir.realPathFileAlloc(io, "header.jpg", allocator);
     defer allocator.free(path);
-    try std.testing.expectEqual(Size{ .width = 2, .height = 1 }, try probeFile(io, allocator, path, values.max_decode_bytes));
+    try std.testing.expectEqual(Size{ .width = 2, .height = 1 }, try probeFile(io, allocator, path, value.max_decode_bytes));
 }
 
 test "reading a file releases each allocation on failure" {

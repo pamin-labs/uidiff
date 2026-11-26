@@ -1,18 +1,18 @@
 //! Pending deltas and operations on the candidate list.
 
 const std = @import("std");
-const values = @import("../../value.zig");
-const Box = values.Box;
-const Region = values.Region;
+const value = @import("../../value.zig");
+const Box = value.Box;
+const Region = value.Region;
 
 /// A pending region and the number of changed pixels supporting it.
 pub const Candidate = struct { region: Region, pixels: usize };
 
 /// Initial merging distance in CSS pixels.
-pub const merge_gap = values.CssPx.init(12);
+pub const merge_gap = value.CssPx.init(12);
 
 /// Space added around each reported box, in CSS pixels.
-pub const padding = values.CssPx.init(4);
+pub const padding = value.CssPx.init(4);
 
 /// The most regions a comparison reports; nearby ones merge to fit.
 pub const max_regions = 8;

@@ -1,9 +1,10 @@
 //! Paired focus crops and their layout.
 const std = @import("std");
-const copy = @import("copy.zig");
-const values = @import("../value.zig");
+const drawing = @import("drawing.zig");
+const copy = drawing.copy;
+const value = @import("../value.zig");
 const geometry = @import("geometry.zig");
-const text = @import("text.zig");
+const text = drawing.text;
 const crops = @import("crops.zig");
 const Rect = geometry.Rect;
 const SourceRect = geometry.SourceRect;
@@ -14,8 +15,8 @@ const mapMark = geometry.mapMark;
 const Text = text.Text;
 const Crop = crops.Crop;
 const Zoom = crops.Zoom;
-const Region = values.Region;
-const Size = values.Size;
+const Region = value.Region;
+const Size = value.Size;
 
 /// A grouped pair of source windows and their planned sheet crops.
 pub const Focus = struct {
@@ -41,7 +42,7 @@ pub const Badge = union(enum) {
     }
 };
 
-/// Layout of one numbered region in the overview and detail rows.
+/// One numbered region's crops, marks and badges in the overview and detail rows.
 pub const Detail = struct {
     region: Region,
     before: ?Crop,
@@ -90,7 +91,7 @@ pub fn focusColumn(side: usize) usize {
 /// Groups overlapping source windows and lays out the focus rows.
 pub fn layoutFocus(details: []Detail, focuses: []Focus, sizes: [2]Size, start: usize) error{SheetTooLarge}!usize {
     // Find connected crop windows on either side. Keep the first region's
-    // position in the report when merging a group.
+    // position in the sheet when merging a group.
     for (focuses, 0..) |focus, i| {
         for (focuses[0..i], 0..) |prior, j| {
             if (!windowsOverlap(focus.windows, prior.windows)) continue;
@@ -113,7 +114,7 @@ pub fn layoutFocus(details: []Detail, focuses: []Focus, sizes: [2]Size, start: u
         var zoom: Zoom = .{ .numerator = 1 };
         for (focus.windows) |window| {
             const from = window orelse continue;
-            zoom = zoom.fit(from, .{ .width = focus_slot_width, .height = values.max_extent });
+            zoom = zoom.fit(from, .{ .width = focus_slot_width, .height = value.max_extent });
         }
         for (focus.windows, &focus.crops, &focus.captions, [2][]const u8{ copy.before, copy.after }, 0..) |window, *patch, *caption, name, side| {
             const from = window orelse {
@@ -130,11 +131,11 @@ pub fn layoutFocus(details: []Detail, focuses: []Focus, sizes: [2]Size, start: u
         }
         focus.height = focus_caption_height + height;
         top += focus.height + detail_gap;
-        if (top > values.max_extent) return error.SheetTooLarge;
+        if (top > value.max_extent) return error.SheetTooLarge;
     }
     for (details) |*detail| {
         const patches = focuses[detail.focus].crops;
-        for (patches, sizes, &detail.focus_marks, [2]values.Side{ .before, .after }) |maybe_patch, size, *mark, side| {
+        for (patches, sizes, &detail.focus_marks, [2]value.Side{ .before, .after }) |maybe_patch, size, *mark, side| {
             const patch = maybe_patch orelse continue;
             const source = rectAtSize(size, detail.region.boxOn(side)) orelse continue;
             mark.* = mapMark(source, patch.from, patch.to);

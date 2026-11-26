@@ -2,16 +2,16 @@
 
 const std = @import("std");
 const bounds = @import("bounds.zig");
-const values = @import("../../value.zig");
+const value = @import("../../value.zig");
 const pixel = @import("../pixel.zig");
-const Box = values.Box;
-const Region = values.Region;
-const Image = values.Image;
+const Box = value.Box;
+const Region = value.Region;
+const Image = value.Image;
 
 const line_overlap = 0.7;
 
 /// Maximum CSS height used when joining parts of a line.
-pub const line_height = values.CssPx.init(48);
+pub const line_height = value.CssPx.init(48);
 
 const line_gap_factor = 3;
 

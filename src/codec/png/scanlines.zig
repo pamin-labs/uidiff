@@ -1,7 +1,7 @@
 //! Reconstructs bounded noninterlaced 8-bit PNG scanlines with zlib-ng.
 const std = @import("std");
 const builtin = @import("builtin");
-const values = @import("../../value.zig");
+const value = @import("../../value.zig");
 const format = @import("png_format");
 const memory = @import("codec_memory");
 const zlib = @import("zlib.zig");
@@ -29,16 +29,16 @@ pub const Profile = enum(u8) {
 
 const Chunks = struct {
     idat: Range,
-    palette: []const values.Pixel,
+    palette: []const value.Pixel,
 };
 
 const Samples = struct {
     current: []u8,
     previous: []u8,
-    colour: union(enum) { gray, indexed: []const values.Pixel },
+    colour: union(enum) { gray, indexed: []const value.Pixel },
 
     fn expand(self: *const Samples, dst: []u8) bool {
-        const pixels = std.mem.bytesAsSlice(values.Pixel, dst);
+        const pixels = std.mem.bytesAsSlice(value.Pixel, dst);
         switch (self.colour) {
             .gray => for (pixels, self.current) |*out, gray| {
                 out.* = .{ gray, gray, gray, 255 };
@@ -110,7 +110,7 @@ const Rows = struct {
     }
 };
 
-const channels = @sizeOf(values.Pixel);
+const channels = @sizeOf(value.Pixel);
 const rgb_channels = 3;
 const vector_bytes = 16;
 const block_bytes = vector_bytes;
@@ -128,9 +128,9 @@ pub fn streamingProfile(bytes: []const u8) ?Profile {
 
 /// Decodes a validated size into codec-budget-owned pixels, or returns null
 /// if the legacy decoder should try.
-pub fn decode(bytes: []const u8, size: values.Size) memory.Error!?[]values.Pixel {
+pub fn decode(bytes: []const u8, size: value.Size) memory.Error!?[]value.Pixel {
     const profile = streamingProfile(bytes) orelse return null;
-    var palette: [256]values.Pixel = undefined;
+    var palette: [256]value.Pixel = undefined;
     // Outlining keeps the chunk walk out of the file decoder. On Zig 0.17.1
     // it saves 128 executable bytes on aarch64-linux-musl and 512 on
     // aarch64-windows versus automatic inlining. Re-measure on a Zig upgrade.
@@ -170,10 +170,10 @@ pub fn decode(bytes: []const u8, size: values.Size) memory.Error!?[]values.Pixel
     };
     if (!try zlib.inflateRows(bytes[chunks.idat.first..chunks.idat.end], inflate_bytes, scratch[0..inflate_bytes], &rows)) return null;
     keep = true;
-    return std.mem.bytesAsSlice(values.Pixel, pixels);
+    return std.mem.bytesAsSlice(value.Pixel, pixels);
 }
 
-fn collectChunks(bytes: []const u8, profile: Profile, palette: *[256]values.Pixel) ?Chunks {
+fn collectChunks(bytes: []const u8, profile: Profile, palette: *[256]value.Pixel) ?Chunks {
     if (format.header_end > bytes.len) return null;
     var chunks: format.Chunks = .{ .remaining = bytes[format.header_end..] };
     var range: ?Range = null;
@@ -365,7 +365,7 @@ fn expandRgb(dst: []u8, src: []const u8) void {
             0, 1, 2, -1, 3, 4, 5, -1, 6, 7, 8, -1, 9, 10, 11, -1,
         });
     }
-    for (std.mem.bytesAsSlice(values.Pixel, dst[rgb_end..]), std.mem.bytesAsSlice([rgb_channels]u8, src[end..])) |*out, raw| {
+    for (std.mem.bytesAsSlice(value.Pixel, dst[rgb_end..]), std.mem.bytesAsSlice([rgb_channels]u8, src[end..])) |*out, raw| {
         out.* = raw ++ [1]u8{0};
     }
 }
@@ -374,7 +374,7 @@ fn setOpaque(dst: []u8) void {
     const alpha = repeatSample(channels, .{ 0, 0, 0, 255 });
     const end = dst.len - dst.len % block_bytes;
     for (blocks(dst[0..end])) |*out| out.* = @as(Block, out.*) | alpha;
-    for (std.mem.bytesAsSlice(values.Pixel, dst[end..])) |*out| out[3] = 255;
+    for (std.mem.bytesAsSlice(value.Pixel, dst[end..])) |*out| out[3] = 255;
 }
 
 test {

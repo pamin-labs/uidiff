@@ -2,13 +2,13 @@
 //! caller's allocator and are charged against a budget sized from the header.
 const std = @import("std");
 const c = @import("stb_c");
-const values = @import("../../value.zig");
+const value = @import("../../value.zig");
 const png_format = @import("png_format");
 const memory = @import("codec_memory");
 const types = @import("../types.zig");
 const Allocator = std.mem.Allocator;
-const Pixel = values.Pixel;
-const Size = values.Size;
+const Pixel = value.Pixel;
+const Size = value.Size;
 
 /// Malformed bytes, a decode past its memory budget, or an allocation failure.
 pub const DecodeError = memory.Error;
@@ -113,7 +113,7 @@ fn oversizedPng(bytes: []const u8) bool {
 }
 
 test "a truncated PNG header is rejected" {
-    try std.testing.expectError(error.InvalidImage, probe(std.testing.allocator, "\x89PNG\r\n\x1a\n", values.max_decode_bytes));
+    try std.testing.expectError(error.InvalidImage, probe(std.testing.allocator, "\x89PNG\r\n\x1a\n", value.max_decode_bytes));
 }
 
 test "PNG headers outside the image limits report ImageTooLarge" {
@@ -128,18 +128,18 @@ test "PNG headers outside the image limits report ImageTooLarge" {
         var header = (png_format.header_prefix ++ dimensions ++
             [_]u8{ png_format.sample_depth, @backingInt(png_format.Colour.rgba), 0, 0, 0 }).*;
         png_format.writeDimensions(header[png_format.dimensions_offset..][0..png_format.dimensions_bytes], case.width, case.height);
-        try std.testing.expectError(case.expected, probe(std.testing.allocator, &header, values.max_decode_bytes));
+        try std.testing.expectError(case.expected, probe(std.testing.allocator, &header, value.max_decode_bytes));
     }
 }
 
 test "the largest 8-bit images fit the decode budget and a 16-bit one does not" {
-    const tall: Size = .{ .width = values.max_pixels / values.max_extent, .height = values.max_extent };
+    const tall: Size = .{ .width = value.max_pixels / value.max_extent, .height = value.max_extent };
     // A width just past a block boundary pads the most.
-    const padded: Size = .{ .width = 4097, .height = values.max_pixels / 4097 };
+    const padded: Size = .{ .width = 4097, .height = value.max_pixels / 4097 };
     for ([_]Size{ tall, padded }) |largest| {
         try std.testing.expect(largest.pixelCount() != null);
-        try std.testing.expect(budget(.{ .size = largest, .sample_bytes = 1 }, values.max_encoded_bytes, values.max_decode_bytes) != null);
-        try std.testing.expectEqual(@as(?usize, null), budget(.{ .size = largest, .sample_bytes = 2 }, 0, values.max_decode_bytes));
+        try std.testing.expect(budget(.{ .size = largest, .sample_bytes = 1 }, value.max_encoded_bytes, value.max_decode_bytes) != null);
+        try std.testing.expectEqual(@as(?usize, null), budget(.{ .size = largest, .sample_bytes = 2 }, 0, value.max_decode_bytes));
     }
 }
 

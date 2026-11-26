@@ -1,18 +1,19 @@
 //! Routes badge leaders around existing marks and screenshot ink.
 
 const std = @import("std");
-const values = @import("../../value.zig");
-const placement = @import("../placement.zig");
+const drawing = @import("../drawing.zig");
+const value = @import("../../value.zig");
+const placement = @import("placement.zig");
 const geometry = @import("../geometry.zig");
-const canvas = @import("../canvas.zig");
-const focus_layout = @import("../focus.zig");
-const palette = @import("../palette.zig");
+const canvas = drawing.canvas;
+const focus = @import("../focus.zig");
+const palette = drawing.palette;
 const Rect = geometry.Rect;
 const roundSpan = canvas.roundSpan;
-const Badge = focus_layout.Badge;
+const Badge = focus.Badge;
 const white = palette.white;
-const Pixel = values.Pixel;
-const Image = values.Image;
+const Pixel = value.Pixel;
+const Image = value.Image;
 const Crop = @import("../crops.zig").Crop;
 
 /// Sheet-space endpoints of the visible connection to a mark.

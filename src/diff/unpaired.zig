@@ -1,25 +1,25 @@
 //! Compares rows aligned to a gap and suppresses unchanged background.
 const std = @import("std");
-const values = @import("../value.zig");
-const change_mask = @import("mask.zig");
+const value = @import("../value.zig");
+const mask = @import("mask.zig");
 const columns = @import("columns.zig");
 const pixel = @import("pixel.zig");
 const regions = @import("regions.zig");
 const yiq = @import("yiq.zig");
-const Box = values.Box;
+const Box = value.Box;
 const Collector = regions.Collector;
-const Image = values.Image;
-const Pixel = values.Pixel;
+const Image = value.Image;
+const Pixel = value.Pixel;
 const Raster = yiq.Raster;
 const Scope = columns.Scope;
 
 /// Rows one side has and the other does not.
-pub const Rows = struct { side: values.Side, y: usize, count: usize, background: ?[]const Pixel = null, element: bool = false, opposite: ?usize = null };
+pub const Rows = struct { side: value.Side, y: usize, count: usize, background: ?[]const Pixel = null, element: bool = false, opposite: ?usize = null };
 
 const min_bar_rows = 2;
 
 /// Collects changes for rows aligned to a gap.
-pub fn collect(collector: *Collector, scope: Scope, scratch: change_mask.Scratch, rows: Rows) void {
+pub fn collect(collector: *Collector, scope: Scope, scratch: mask.Scratch, rows: Rows) void {
     if (rows.count == 0) return;
     const source = if (rows.side == .before) scope.before else scope.after;
     const left = scope.span.left;
@@ -51,13 +51,13 @@ pub fn collect(collector: *Collector, scope: Scope, scratch: change_mask.Scratch
             b.background = .{ .row = source.row(y - 1) };
         }
     }
-    const mask = scratch.cells[0 .. width * rows.count];
+    const mask_cells = scratch.cells[0 .. width * rows.count];
     const at: regions.Placement = .{
         .left = left,
         .rows = if (rows.side == .before) .{ .before = y } else .{ .after = y },
     };
-    if (yiq.mask(a, b, 0, rows.count, mask)) {
-        const cells: change_mask.Mask = .{ .cells = mask, .width = width };
+    if (yiq.writeMask(a, b, 0, rows.count, mask_cells)) {
+        const cells: mask.Mask = .{ .cells = mask_cells, .width = width };
         if (rows.element) {
             if (regions.groupElement(collector, cells, at)) return;
         } else if (regions.group(collector, cells, scratch.seeds, at) != .empty) return;
@@ -156,7 +156,7 @@ fn hasEqualRun(expected: []const Pixel, image: Image, bounds: columns.Span, y: u
 }
 
 test "an interior blank run is ignored only if the layout retains its length" {
-    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
+    const canvas = @import("uidiff_test_canvas").Painters(value.Image);
     const before = try canvas.Canvas.init(64, 80);
     defer before.deinit();
     const after = try canvas.Canvas.init(64, 80);
@@ -174,7 +174,7 @@ test "an interior blank run is ignored only if the layout retains its length" {
 }
 
 test "blank space above a fixed input bar does not inherit unrelated sidebar paint" {
-    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
+    const canvas = @import("uidiff_test_canvas").Painters(value.Image);
     const before = try canvas.Canvas.init(144, 180);
     defer before.deinit();
     const after = try canvas.Canvas.init(144, 180);
@@ -189,14 +189,14 @@ test "blank space above a fixed input bar does not inherit unrelated sidebar pai
     const scope: Scope = .{ .before = before.view, .after = after.view, .span = .{ .left = 24, .width = 96 }, .bounds = .{ .left = 0, .width = 144 } };
     var boxes: [2]regions.Candidate = undefined;
     var collector: Collector = .{ .boxes = &boxes, .gap_px = 0, .max_gap_px = 144 };
-    var mask: [96 * 20]change_mask.Cell = undefined;
+    var mask_cells: [96 * 20]mask.Cell = undefined;
     var seeds: [20]u32 = undefined;
-    collect(&collector, scope, .{ .cells = &mask, .seeds = &seeds }, .{ .side = .before, .y = 110, .count = 20, .opposite = 130 });
+    collect(&collector, scope, .{ .cells = &mask_cells, .seeds = &seeds }, .{ .side = .before, .y = 110, .count = 20, .opposite = 130 });
     try std.testing.expectEqual(@as(usize, 0), collector.len);
 }
 
 test "an equal unpaired bottom margin does not produce a removal" {
-    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
+    const canvas = @import("uidiff_test_canvas").Painters(value.Image);
     for ([_]Pixel{ @splat(255), .{ 18, 18, 22, 255 } }) |color| {
         const before = try canvas.Canvas.init(64, 40);
         defer before.deinit();
@@ -213,13 +213,13 @@ test "an equal unpaired bottom margin does not produce a removal" {
         };
         var boxes: [2]regions.Candidate = undefined;
         var collector: Collector = .{ .boxes = &boxes, .gap_px = 0, .max_gap_px = 64 };
-        var mask: [64 * 6]change_mask.Cell = undefined;
+        var mask_cells: [64 * 6]mask.Cell = undefined;
         var seeds: [6]u32 = undefined;
         const margin: Rows = .{ .side = .before, .y = 34, .count = 6, .opposite = 44 };
-        collect(&collector, scope, .{ .cells = &mask, .seeds = &seeds }, margin);
+        collect(&collector, scope, .{ .cells = &mask_cells, .seeds = &seeds }, margin);
         try std.testing.expectEqual(@as(usize, 0), collector.len);
         @memset(after.pixels, .{ 96, 67, 77, 255 });
-        collect(&collector, scope, .{ .cells = &mask, .seeds = &seeds }, margin);
+        collect(&collector, scope, .{ .cells = &mask_cells, .seeds = &seeds }, margin);
         try std.testing.expectEqual(@as(usize, 1), collector.len);
     }
 }

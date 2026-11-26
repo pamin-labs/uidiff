@@ -1,7 +1,7 @@
-//! Colors and labels for the report.
+//! Colors and labels for the sheet.
 const std = @import("std");
-const values = @import("../value.zig");
-const Pixel = values.Pixel;
+const value = @import("../../value.zig");
+const Pixel = value.Pixel;
 
 /// Sheet background color.
 pub const page: Pixel = .{ 244, 244, 245, 255 };
@@ -37,7 +37,7 @@ pub const remove_band: Pixel = .{ 242, 172, 172, 255 };
 pub const blue: Pixel = .{ 29, 78, 216, 255 };
 
 /// Returns the legend mask bit for a region kind.
-pub fn kindBit(kind: values.Kind) u8 {
+pub fn kindBit(kind: value.Kind) u8 {
     return switch (kind) {
         .inserted => 1,
         .removed => 2,
@@ -45,16 +45,16 @@ pub fn kindBit(kind: values.Kind) u8 {
     };
 }
 
-/// Returns the report label for a region kind.
-pub fn kindName(kind: values.Kind) []const u8 {
+/// Returns the sheet label for a region kind.
+pub fn kindName(kind: value.Kind) []const u8 {
     return switch (kind) {
         .inserted, .removed, .changed => @tagName(kind),
-        _ => @tagName(values.Kind.changed),
+        _ => @tagName(value.Kind.changed),
     };
 }
 
 /// Returns the mark color for a region kind.
-pub fn tint(kind: values.Kind) Pixel {
+pub fn tint(kind: value.Kind) Pixel {
     return switch (kind) {
         .inserted => .{ 22, 163, 74, 255 },
         .removed => .{ 220, 38, 38, 255 },

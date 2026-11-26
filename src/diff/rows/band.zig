@@ -1,8 +1,8 @@
 //! Matched rows, comparison bands, and alignment bounds.
 
 const std = @import("std");
-const values = @import("../../value.zig");
-const Image = values.Image;
+const value = @import("../../value.zig");
+const Image = value.Image;
 
 /// A pair of row ranges, with any surplus treated as one-sided.
 pub const Band = struct {
@@ -61,11 +61,11 @@ pub fn keys(source: Image, left: usize, width: usize, output: []u64) void {
 }
 
 test "row hashes use the validated stride on one-pixel and final cropped rows" {
-    const one = [_]values.Pixel{.{ 21, 22, 23, 255 }};
+    const one = [_]value.Pixel{.{ 21, 22, 23, 255 }};
     var key: [1]u64 = undefined;
     keys(.{ .width = 1, .height = 1, .pixels = &one }, 0, 1, &key);
     try std.testing.expectEqual(std.hash.Wyhash.hash(0, std.mem.sliceAsBytes(&one)), key[0]);
-    var data: [10]values.Pixel = undefined;
+    var data: [10]value.Pixel = undefined;
     for (&data, 0..) |*pixel, i| pixel.* = .{ @intCast(i), 0, 0, 255 };
     var hashes: [2]u64 = undefined;
     keys(.{ .width = 5, .height = 2, .pixels = &data }, 2, 3, &hashes);

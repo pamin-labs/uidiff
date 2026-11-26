@@ -3,10 +3,10 @@ const std = @import("std");
 const c = @import("webp_c");
 const memory = @import("codec_memory");
 const types = @import("types.zig");
-const values = @import("../value.zig");
+const value = @import("../value.zig");
 const Allocator = std.mem.Allocator;
-const Pixel = values.Pixel;
-const Size = values.Size;
+const Pixel = value.Pixel;
+const Size = value.Size;
 const Header = types.Header;
 
 /// Malformed or unsupported input, an exceeded budget, or a failed allocation.
@@ -35,7 +35,7 @@ pub fn decode(allocator: Allocator, bytes: []const u8, header: Header, cap: usiz
 /// Frees the caller-owned WebP output buffer.
 pub fn release(allocator: Allocator, pixels: []const Pixel) void {
     // The const view still owns the mutable decoder allocation.
-    values.freeUnfilled(Pixel, allocator, pixels);
+    value.freeUnfilled(Pixel, allocator, pixels);
 }
 
 /// Decodes RGBA8 pixels of a probed size. Assumes size.pixelCount() is not
@@ -45,7 +45,7 @@ fn load(allocator: Allocator, bytes: []const u8, size: Size, cap: usize) DecodeE
     const output_bytes = count * @sizeOf(Pixel);
     if (output_bytes > cap) return error.ImageTooLarge;
     // WebPDecodeRGBAInto writes every byte on success. Failure releases the block before it escapes.
-    const pixels = try values.allocUnfilled(Pixel, allocator, count);
+    const pixels = try value.allocUnfilled(Pixel, allocator, count);
     const out = std.mem.sliceAsBytes(pixels);
     errdefer release(allocator, pixels);
     // The stride is at most the pixel cap's row width in bytes, which fits c_int.
@@ -58,7 +58,7 @@ fn load(allocator: Allocator, bytes: []const u8, size: Size, cap: usize) DecodeE
 }
 
 /// Returns dimensions without decoding the pixels.
-fn dimensions(bytes: []const u8) (values.Image.Invalid || error{UnsupportedImageFormat})!Size {
+fn dimensions(bytes: []const u8) (value.Image.Invalid || error{UnsupportedImageFormat})!Size {
     var features: c.WebPBitstreamFeatures = undefined;
     if (c.WebPGetFeatures(bytes.ptr, bytes.len, &features) != c.VP8_STATUS_OK) return error.InvalidImage;
     if (features.has_animation != 0) return error.UnsupportedImageFormat;
@@ -72,7 +72,7 @@ test "a RIFF header without a WebP image is rejected" {
 test "the animated WebP flag is rejected as unsupported" {
     const animated = "RIFF\x16\x00\x00\x00WEBP" ++
         "VP8X\x0a\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00";
-    try std.testing.expectError(error.UnsupportedImageFormat, probe(std.testing.allocator, animated, values.max_decode_bytes));
+    try std.testing.expectError(error.UnsupportedImageFormat, probe(std.testing.allocator, animated, value.max_decode_bytes));
 }
 
 test {

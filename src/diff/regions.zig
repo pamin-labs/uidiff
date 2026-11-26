@@ -1,9 +1,9 @@
 //! Collects and classifies the change regions produced by comparison.
 
 const std = @import("std");
-const values = @import("../value.zig");
+const value = @import("../value.zig");
 const Allocator = std.mem.Allocator;
-const Image = values.Image;
+const Image = value.Image;
 const candidate = @import("regions/candidate.zig");
 const grouping = @import("regions/grouping.zig");
 const swaps = @import("regions/swaps.zig");
@@ -42,7 +42,7 @@ pub const group = grouping.group;
 /// Reports the full extent of one aligned inserted or removed row band.
 pub const groupElement = grouping.groupElement;
 /// Resolves collected evidence into owned, numbered regions and updates the retained moves.
-pub fn resolve(allocator: Allocator, collector: *Collector, movement: *std.ArrayList(values.Move), before: Image, after: Image, scale: values.Scale, scroll_tolerance_px: f64) Allocator.Error![]values.Region {
+pub fn resolve(allocator: Allocator, collector: *Collector, movement: *std.ArrayList(value.Move), before: Image, after: Image, scale: value.Scale, scroll_tolerance_px: f64) Allocator.Error![]value.Region {
     const retained = collector.retain();
     const storage = retained.buffer;
     var count = retained.count;
@@ -62,7 +62,7 @@ pub fn resolve(allocator: Allocator, collector: *Collector, movement: *std.Array
             count = 2;
         }
     }
-    const out = try allocator.alloc(values.Region, count);
+    const out = try allocator.alloc(value.Region, count);
     for (out, storage[0..count]) |*region, box| region.* = box.region;
     if (movement.items.len != 0) movement.shrinkRetainingCapacity(moves.keepMoves(movement.items, out, scale, scroll_tolerance_px));
     if (out.len == 1 and movement.items.len == 0) overlay.classifyOverlay(&out[0], before, after, scale);

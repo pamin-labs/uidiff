@@ -1,21 +1,21 @@
 //! Collects and merges connected components from a pixel mask.
 
 const std = @import("std");
-const change_mask = @import("../mask.zig");
-const Cell = change_mask.Cell;
-const Mask = change_mask.Mask;
-const pending = @import("candidate.zig");
-const values = @import("../../value.zig");
-const Size = values.Size;
-const Box = values.Box;
-const Region = values.Region;
+const mask = @import("../mask.zig");
+const Cell = mask.Cell;
+const Mask = mask.Mask;
+const candidate = @import("candidate.zig");
+const value = @import("../../value.zig");
+const Size = value.Size;
+const Box = value.Box;
+const Region = value.Region;
 
 /// Whether a band's mask contributed pixels and met the reporting minimum.
 pub const GroupResult = enum { empty, sparse, kept };
 
 /// Accumulates nearby boxes in caller-provided scratch space.
 pub const Collector = struct {
-    boxes: []pending.Candidate,
+    boxes: []candidate.Candidate,
     len: usize = 0,
     /// Current merging distance in device pixels.
     gap_px: f64,
@@ -26,7 +26,7 @@ pub const Collector = struct {
     expanding: bool = false,
 
     /// Initializes collection over caller-owned storage and validated image dimensions.
-    pub fn init(storage: []pending.Candidate, before: Size, after: Size, gap_px: f64, max_gap_px: f64) Collector {
+    pub fn init(storage: []candidate.Candidate, before: Size, after: Size, gap_px: f64, max_gap_px: f64) Collector {
         return .{ .boxes = storage, .gap_px = gap_px, .max_gap_px = max_gap_px, .min_pixels = minPixels(before, after) };
     }
 
@@ -41,7 +41,7 @@ pub const Collector = struct {
     }
 
     /// Adds a box present exclusively on one side of the comparison.
-    pub fn addOn(self: *Collector, side: values.Side, box: Box) void {
+    pub fn addOn(self: *Collector, side: value.Side, box: Box) void {
         self.add(switch (side) {
             .before => .{ .before = box },
             .after => .{ .after = box },
@@ -59,7 +59,7 @@ pub const Collector = struct {
     }
 
     /// Compacts the candidates and lends their storage to the resolution pass.
-    pub fn retain(self: *Collector) struct { buffer: []pending.Candidate, count: usize } {
+    pub fn retain(self: *Collector) struct { buffer: []candidate.Candidate, count: usize } {
         self.growGap();
         return .{ .buffer = self.boxes, .count = self.len };
     }
@@ -67,7 +67,7 @@ pub const Collector = struct {
     /// Merges nearby evidence, discards noise, and bounds the output count.
     fn growGap(self: *Collector) void {
         self.discardSparse();
-        while (self.len > pending.max_regions) self.expand();
+        while (self.len > candidate.max_regions) self.expand();
     }
 
     fn addPixels(self: *Collector, region: Region, pixels: usize) bool {
@@ -97,8 +97,8 @@ pub const Collector = struct {
         return (1 + (size.width - 1) / (gap_px + 1)) * (1 + (size.height - 1) / (gap_px + 1));
     }
 
-    fn absorb(self: *Collector, candidate: pending.Candidate) pending.Candidate {
-        var box = candidate;
+    fn absorb(self: *Collector, incoming: candidate.Candidate) candidate.Candidate {
+        var box = incoming;
         var i: usize = 0;
         while (i < self.len) {
             const other = self.boxes[i];
@@ -110,11 +110,11 @@ pub const Collector = struct {
             const supported_gap = if (box.pixels < self.min_pixels or other.pixels < self.min_pixels) @min(self.gap_px, evidence_gap) else self.gap_px;
             const gap_px = if (!same_kind and !self.expanding) @min(supported_gap, self.gap_px / 2) else supported_gap;
             if (nearby(box.region.before, other.region.before, gap_px) or nearby(box.region.after, other.region.after, gap_px)) {
-                box.region.before = pending.unite(box.region.before, other.region.before);
-                box.region.after = pending.unite(box.region.after, other.region.after);
+                box.region.before = candidate.unite(box.region.before, other.region.before);
+                box.region.after = candidate.unite(box.region.after, other.region.after);
                 box.pixels = @min(self.min_pixels, box.pixels + other.pixels);
                 self.len -= 1;
-                std.mem.copyForwards(pending.Candidate, self.boxes[i..self.len], self.boxes[i + 1 .. self.len + 1]);
+                std.mem.copyForwards(candidate.Candidate, self.boxes[i..self.len], self.boxes[i + 1 .. self.len + 1]);
                 i = 0;
             } else i += 1;
         }
@@ -159,8 +159,8 @@ pub const Placement = struct {
     }
 };
 
-/// Rows of a mask, inclusive.
-const RowRange = struct { first: usize, last: usize };
+/// Inclusive endpoints of a row or column span in the fill.
+const InclusiveSpan = struct { first: usize, last: usize };
 
 /// A scanline flood fill whose seed stack is bounded. Queued pixels are
 /// marked in the mask, so a seed that does not fit is found again by
@@ -170,7 +170,7 @@ const Fill = struct {
     seeds: []u32,
     len: usize = 0,
     /// Rows holding queued pixels that did not fit in seeds.
-    pending: ?RowRange = null,
+    pending: ?InclusiveSpan = null,
 
     fn push(self: *Fill, index: usize) void {
         self.mask.cells[index] = .queued;
@@ -210,7 +210,7 @@ const Fill = struct {
 
     /// Clears the run holding index and queues the runs touching it above and
     /// below. Returns the run's columns, or null when it was already cleared.
-    fn run(self: *Fill, index: usize) ?RowRange {
+    fn run(self: *Fill, index: usize) ?InclusiveSpan {
         const cells = self.mask.cells;
         if (cells[index] == .clear) return null;
         const width = self.mask.width;
@@ -253,24 +253,24 @@ pub const max_fill_seeds = 64 * 1024;
 
 /// Adds eight-connected components to the collector. Sparse components can
 /// reach the reporting minimum together. Asserts seeds is not empty.
-pub fn group(collector: *Collector, mask: Mask, seeds: []u32, at: Placement) GroupResult {
+pub fn group(collector: *Collector, change_cells: Mask, seeds: []u32, at: Placement) GroupResult {
     std.debug.assert(seeds.len > 0);
-    if (at.stationary()) discardUnsupported(mask, collector.min_pixels);
+    if (at.stationary()) discardUnsupported(change_cells, collector.min_pixels);
     var result: GroupResult = .empty;
-    var fill: Fill = .{ .mask = mask, .seeds = seeds };
+    var fill: Fill = .{ .mask = change_cells, .seeds = seeds };
     var next: usize = 0;
     // Between fills a cell is zero or changed, never queued.
-    while (change_mask.nextCell(mask.cells, next, .changed)) |start| {
+    while (mask.nextCell(change_cells.cells, next, .changed)) |start| {
         next = start + 1;
         fill.push(start);
         var count: usize = 0;
-        var min_x = mask.width;
+        var min_x = change_cells.width;
         var max_x: usize = 0;
-        var min_y = mask.cells.len / mask.width;
+        var min_y = change_cells.cells.len / change_cells.width;
         var max_y: usize = 0;
         while (fill.pop()) |index| {
             const columns = fill.run(index) orelse continue;
-            const y = index / mask.width;
+            const y = index / change_cells.width;
             count += columns.last + 1 - columns.first;
             min_x = @min(min_x, columns.first);
             max_x = @max(max_x, columns.last + 1);
@@ -288,15 +288,15 @@ pub fn group(collector: *Collector, mask: Mask, seeds: []u32, at: Placement) Gro
 }
 
 /// Reports the full extent of one aligned inserted or removed row band.
-pub fn groupElement(collector: *Collector, mask: Mask, at: Placement) bool {
-    var left = mask.width;
+pub fn groupElement(collector: *Collector, change_cells: Mask, at: Placement) bool {
+    var left = change_cells.width;
     var right: usize = 0;
-    var top = mask.cells.len / mask.width;
+    var top = change_cells.cells.len / change_cells.width;
     var bottom: usize = 0;
     var count: usize = 0;
     for (0..top) |y| {
-        const row = mask.cells[y * mask.width ..][0..mask.width];
-        const first = change_mask.nextCell(row, 0, .changed) orelse continue;
+        const row = change_cells.cells[y * change_cells.width ..][0..change_cells.width];
+        const first = mask.nextCell(row, 0, .changed) orelse continue;
         const last = std.mem.lastIndexOfScalar(u8, std.mem.sliceAsBytes(row[first..]), @backingInt(Cell.changed)) orelse 0;
         left = @min(left, first);
         right = @max(right, first + last + 1);
@@ -318,9 +318,9 @@ fn minPixels(before: Size, after: Size) usize {
     return if (smallest <= single_pixel_area) 1 else min_region_pixels;
 }
 
-fn discardUnsupported(mask: Mask, minimum: usize) void {
+fn discardUnsupported(change_cells: Mask, minimum: usize) void {
     var start: usize = 0;
-    while (change_mask.nextCell(mask.cells, start, .needs_support)) |index| {
+    while (mask.nextCell(change_cells.cells, start, .needs_support)) |index| {
         start = index + 1;
         var seen: [min_region_pixels]usize = undefined;
         seen[0] = index;
@@ -329,16 +329,16 @@ fn discardUnsupported(mask: Mask, minimum: usize) void {
         var supported = len >= minimum;
         while (read < len and !supported) : (read += 1) {
             const p = seen[read];
-            const x = p % mask.width;
+            const x = p % change_cells.width;
             const adjacent = [_]?usize{
                 if (x > 0) p - 1 else null,
-                if (x + 1 < mask.width) p + 1 else null,
-                if (p >= mask.width) p - mask.width else null,
-                if (p + mask.width < mask.cells.len) p + mask.width else null,
+                if (x + 1 < change_cells.width) p + 1 else null,
+                if (p >= change_cells.width) p - change_cells.width else null,
+                if (p + change_cells.width < change_cells.cells.len) p + change_cells.width else null,
             };
             for (adjacent) |maybe_q| {
                 const q = maybe_q orelse continue;
-                const state = mask.cells[q];
+                const state = change_cells.cells[q];
                 if (state == .changed) {
                     supported = true;
                     break;
@@ -352,7 +352,7 @@ fn discardUnsupported(mask: Mask, minimum: usize) void {
                 }
             }
         }
-        for (seen[0..len]) |p| mask.cells[p] = if (supported) .changed else .clear;
+        for (seen[0..len]) |p| change_cells.cells[p] = if (supported) .changed else .clear;
     }
 }
 
@@ -363,7 +363,7 @@ fn nearby(a: ?Box, b: ?Box, gap_px: f64) bool {
         p.y <= q.bottom() + gap_px and q.y <= p.bottom() + gap_px;
 }
 
-fn widen(range: ?RowRange, more: RowRange) RowRange {
+fn widen(range: ?InclusiveSpan, more: InclusiveSpan) InclusiveSpan {
     const known = range orelse return more;
     return .{ .first = @min(known.first, more.first), .last = @max(known.last, more.last) };
 }
@@ -375,8 +375,8 @@ fn translated(box: Box, top: usize) Box {
 }
 
 test "a gap between an insertion and a recolour separates their boxes" {
-    var boxes: [4]pending.Candidate = undefined;
-    var collector: Collector = .{ .boxes = &boxes, .gap_px = @floatFromInt(pending.merge_gap.count()), .max_gap_px = 100 };
+    var boxes: [4]candidate.Candidate = undefined;
+    var collector: Collector = .{ .boxes = &boxes, .gap_px = @floatFromInt(candidate.merge_gap.count()), .max_gap_px = 100 };
     const insertion = Box.fromPixels(10, 10, 30, 10);
     const recolour = Box.fromPixels(12, 32, 26, 5);
     collector.add(.{ .after = insertion });
@@ -386,8 +386,8 @@ test "a gap between an insertion and a recolour separates their boxes" {
 }
 
 test "a full pending buffer expands and accepts another distinct box" {
-    var storage: [max_pending_regions]pending.Candidate = undefined;
-    var collector: Collector = .{ .boxes = &storage, .gap_px = @floatFromInt(pending.merge_gap.count()), .max_gap_px = 65_536 };
+    var storage: [max_pending_regions]candidate.Candidate = undefined;
+    var collector: Collector = .{ .boxes = &storage, .gap_px = @floatFromInt(candidate.merge_gap.count()), .max_gap_px = 65_536 };
     for (0..storage.len + 1) |i| collector.add(.{ .after = Box.fromPixels(i * 15, 0, 1, 1) });
     collector.growGap();
     try std.testing.expectEqual(@as(usize, 1), collector.len);
@@ -407,7 +407,7 @@ test "a serpentine larger than the seed stack is one component" {
             if (x % 2 == 0) cells[y * width + x] = .changed;
         }
     }
-    var storage: [4]pending.Candidate = undefined;
+    var storage: [4]candidate.Candidate = undefined;
     var collector: Collector = .{ .boxes = &storage, .gap_px = 0, .max_gap_px = width };
     var seeds: [2]u32 = undefined;
     try std.testing.expectEqual(GroupResult.kept, group(&collector, .{ .cells = &cells, .width = width }, &seeds, .{ .left = 3, .rows = .{ .before = 5 } }));

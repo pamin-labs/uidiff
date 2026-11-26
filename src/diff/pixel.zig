@@ -1,7 +1,7 @@
 //! Pixel equality and the SIMD lane count shared by the column and colour scans.
 const std = @import("std");
-const values = @import("../value.zig");
-const Pixel = values.Pixel;
+const value = @import("../value.zig");
+const Pixel = value.Pixel;
 
 /// Pixels compared per vector step: the target's widest vector of 32-bit
 /// words (4 on SSE2 and NEON, 8 with AVX2). Without SIMD registers the

@@ -1,24 +1,24 @@
 //! Recognizes byte-exact row exchanges.
 
 const std = @import("std");
-const pending = @import("candidate.zig");
+const candidate = @import("candidate.zig");
 const bounds = @import("bounds.zig");
-const values = @import("../../value.zig");
+const value = @import("../../value.zig");
 const pixel = @import("../pixel.zig");
-const Box = values.Box;
-const Image = values.Image;
+const Box = value.Box;
+const Image = value.Image;
 
-const max_swap_pitch = values.CssPx.init(128);
+const max_swap_pitch = value.CssPx.init(128);
 
 /// Puts a byte-exact exchange of two adjacent row bands into one delta.
-pub fn mergeSwap(boxes: []pending.Candidate, moves: []const values.Move, before: Image, after: Image, scale: values.Scale) ?usize {
+pub fn mergeSwap(boxes: []candidate.Candidate, moves: []const value.Move, before: Image, after: Image, scale: value.Scale) ?usize {
     if (before.width != after.width or before.height != after.height) return null;
     if (moves.len == 1 and boxes.len == 2) return reciprocalMove(boxes, moves[0], before, after);
-    if (moves.len != 0 or boxes.len < 3 or boxes.len > pending.max_regions) return null;
+    if (moves.len != 0 or boxes.len < 3 or boxes.len > candidate.max_regions) return null;
     return positionalSwap(boxes, before, after, scale.devicePixels(max_swap_pitch));
 }
 
-fn reciprocalMove(boxes: []pending.Candidate, move: values.Move, before: Image, after: Image) ?usize {
+fn reciprocalMove(boxes: []candidate.Candidate, move: value.Move, before: Image, after: Image) ?usize {
     const old, const new = if (boxes[0].region.before != null)
         .{ boxes[0].region, boxes[1].region }
     else
@@ -34,17 +34,17 @@ fn reciprocalMove(boxes: []pending.Candidate, move: values.Move, before: Image, 
     const cover = Box.fromPixels(x, upper, right - x, 2 * pitch);
     if (cover.overlap(removed) != removed.width * removed.height or cover.overlap(inserted) != inserted.width * inserted.height) return null;
     if (right > before.width or upper + 2 * pitch > before.height or !exchangedRows(before, after, cover, pitch, pitch)) return null;
-    return pending.collapse(boxes, cover);
+    return candidate.collapse(boxes, cover);
 }
 
-fn positionalSwap(boxes: []pending.Candidate, before: Image, after: Image, max_pitch: f64) ?usize {
-    var storage: [pending.max_regions]Box = undefined;
-    const stationary = pending.stationaryBoxes(boxes, &storage) orelse return null;
+fn positionalSwap(boxes: []candidate.Candidate, before: Image, after: Image, max_pitch: f64) ?usize {
+    var storage: [candidate.max_regions]Box = undefined;
+    const stationary = candidate.stationaryBoxes(boxes, &storage) orelse return null;
     var top = stationary[0];
     var whole = top;
     for (stationary[1..]) |box| {
         if (box.y < top.y) top = box;
-        whole = pending.unite(whole, box).?;
+        whole = candidate.unite(whole, box).?;
     }
     for (stationary) |opposite| {
         const pitch = opposite.y - top.y;
@@ -54,7 +54,7 @@ fn positionalSwap(boxes: []pending.Candidate, before: Image, after: Image, max_p
         const rows = whole.height - pitch;
         if (!inSwapBands(stationary, top.y, opposite.y, rows)) continue;
         if (!exchangedRows(before, after, whole, step, bounds.deviceIndex(rows))) continue;
-        return pending.collapse(boxes, whole);
+        return candidate.collapse(boxes, whole);
     }
     return null;
 }
@@ -80,7 +80,7 @@ fn exchangedRows(before: Image, after: Image, bands: Box, pitch: usize, rows: us
 }
 
 test "reciprocal row moves are grouped only when both rows exchange intact" {
-    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
+    const canvas = @import("uidiff_test_canvas").Painters(value.Image);
     const pair = try canvas.RowExchange.init();
     defer pair.deinit();
     const before, const after = .{ pair.before, pair.after };
@@ -90,11 +90,11 @@ test "reciprocal row moves are grouped only when both rows exchange intact" {
     pair.exchange();
     const removed = Box.fromPixels(18, upper + 6, 200, 18);
     const inserted = Box.fromPixels(18, upper + pitch + 6, 200, 18);
-    const candidates = [_]pending.Candidate{
+    const candidates = [_]candidate.Candidate{
         .{ .region = .{ .before = removed }, .pixels = 8 },
         .{ .region = .{ .after = inserted }, .pixels = 8 },
     };
-    const move: values.Move = .{
+    const move: value.Move = .{
         .before = .{ .y = upper + pitch, .height = pitch },
         .after = .{ .y = upper, .height = pitch },
         .x = .init(18),
@@ -110,7 +110,7 @@ test "reciprocal row moves are grouped only when both rows exchange intact" {
 }
 
 test "audit: a count edit between the exchanged rows remains a separate change" {
-    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
+    const canvas = @import("uidiff_test_canvas").Painters(value.Image);
     const before = try canvas.Canvas.init(256, 160);
     defer before.deinit();
     const after = try canvas.Canvas.init(256, 160);
@@ -126,8 +126,8 @@ test "audit: a count edit between the exchanged rows remains a separate change" 
         Box.fromPixels(94, 80, 51, 14),
         Box.fromPixels(24, 120, 136, 14),
     };
-    var candidates: [boxes.len]pending.Candidate = undefined;
-    for (boxes, &candidates) |box, *candidate| candidate.* = .{
+    var candidates: [boxes.len]candidate.Candidate = undefined;
+    for (boxes, &candidates) |box, *entry| entry.* = .{
         .region = .{ .before = box, .after = box },
         .pixels = 8,
     };

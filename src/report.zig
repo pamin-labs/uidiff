@@ -1,12 +1,12 @@
 //! The versioned JSON report of a comparison, shared by the CLI and its consumers.
 const std = @import("std");
-const values = @import("value.zig");
+const value = @import("value.zig");
 
 /// Version-one coordinates in device pixels.
 pub const Box = struct { x: f64, y: f64, width: f64, height: f64 };
 
 /// Version-one region. An absent side is serialized as null.
-pub const Region = struct { number: usize, kind: values.Kind, before: ?Box, after: ?Box };
+pub const Region = struct { number: usize, kind: value.Kind, before: ?Box, after: ?Box };
 
 /// Version-one row start and length in source device pixels.
 pub const RowRange = struct { y: usize, height: usize };
@@ -18,7 +18,7 @@ pub const Move = struct {
     x: usize,
     width: usize,
 
-    fn convert(move: values.Move) Move {
+    fn convert(move: value.Move) Move {
         return .{
             .before = .{ .y = move.before.y, .height = move.before.height },
             .after = .{ .y = move.after.y, .height = move.after.height },
@@ -40,27 +40,27 @@ const PixelBox = struct {
     width: usize,
     height: usize,
 
-    fn validate(box: ?values.Box) error{InvalidRegionBox}!void {
+    fn validate(box: ?value.Box) error{InvalidRegionBox}!void {
         const b = box orelse return;
         const geometry: @Vector(4, f64) = .{ b.x, b.y, b.width, b.height };
         if (!@reduce(.And, geometry >= @as(@Vector(4, f64), @splat(0))) or
-            !@reduce(.And, geometry <= @as(@Vector(4, f64), @splat(values.max_extent))) or
+            !@reduce(.And, geometry <= @as(@Vector(4, f64), @splat(value.max_extent))) or
             !@reduce(.And, @floor(geometry) == geometry)) return error.InvalidRegionBox;
     }
 
-    fn fromValidated(box: ?values.Box) ?PixelBox {
+    fn fromValidated(box: ?value.Box) ?PixelBox {
         const b = box orelse return null;
         return .{ .x = @intFromFloat(b.x), .y = @intFromFloat(b.y), .width = @intFromFloat(b.width), .height = @intFromFloat(b.height) };
     }
 };
 
-const PixelRegion = struct { number: usize, kind: values.Kind, before: ?PixelBox, after: ?PixelBox };
+const PixelRegion = struct { number: usize, kind: value.Kind, before: ?PixelBox, after: ?PixelBox };
 
 /// Schema version emitted with each report.
 pub const version: u32 = 1;
 
 /// Writes a comparison's rounded boxes without linking float formatting.
-pub fn writeWholePixels(output: *std.Io.Writer, regions: []const values.Region, canvas: values.Size, moves: []const values.Move) PixelWriteError!void {
+pub fn writeWholePixels(output: *std.Io.Writer, regions: []const value.Region, canvas: value.Size, moves: []const value.Move) PixelWriteError!void {
     // Keep invalid geometry from producing a partial report.
     for (regions) |region| {
         try PixelBox.validate(region.before);
@@ -97,7 +97,7 @@ pub fn writeWholePixels(output: *std.Io.Writer, regions: []const values.Region, 
 
 test "version one writes inserted geometry and a null before box" {
     const allocator = std.testing.allocator;
-    const after = values.Box.fromPixels(11, 20, 28, 14);
+    const after = value.Box.fromPixels(11, 20, 28, 14);
     var output = std.Io.Writer.Allocating.init(allocator);
     defer output.deinit();
     try writeWholePixels(&output.writer, &.{.{ .number = 1, .kind = .inserted, .after = after }}, .{ .width = 64, .height = 64 }, &.{});
@@ -115,10 +115,10 @@ test "whole-pixel reports reject fractional geometry before writing" {
     const allocator = std.testing.allocator;
     var rounded: std.Io.Writer.Allocating = .init(allocator);
     defer rounded.deinit();
-    var box = values.Box.fromPixels(15, 28, 41, 6);
+    var box = value.Box.fromPixels(15, 28, 41, 6);
     box.x += 0.5;
-    const edits = [_]values.Region{.{ .number = 1, .kind = .inserted, .after = box }};
-    const canvas: values.Size = .{ .width = 90, .height = 60 };
+    const edits = [_]value.Region{.{ .number = 1, .kind = .inserted, .after = box }};
+    const canvas: value.Size = .{ .width = 90, .height = 60 };
     try std.testing.expectError(error.InvalidRegionBox, writeWholePixels(&rounded.writer, &edits, canvas, &.{}));
     try std.testing.expectEqual(@as(usize, 0), rounded.written().len);
 }

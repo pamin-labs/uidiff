@@ -1,16 +1,16 @@
 //! Joins clipped and fully visible corners along continuous outlines.
 
 const std = @import("std");
-const pending = @import("candidate.zig");
+const candidate = @import("candidate.zig");
 const bounds = @import("bounds.zig");
 const scrim = @import("scrim.zig");
 const text_lines = @import("text_lines.zig");
-const values = @import("../../value.zig");
+const value = @import("../../value.zig");
 const pixel = @import("../pixel.zig");
-const Scale = values.Scale;
-const Box = values.Box;
-const Region = values.Region;
-const Image = values.Image;
+const Scale = value.Scale;
+const Box = value.Box;
+const Region = value.Region;
+const Image = value.Image;
 
 const RailDirection = struct { axis: bounds.RailAxis, exterior: bounds.RailEnd };
 
@@ -25,31 +25,31 @@ const corner_join_rounding = 2;
 
 const corner_join_reach_px = 4;
 
-const max_corner_rail = values.CssPx.init(2048);
+const max_corner_rail = value.CssPx.init(2048);
 
 /// Groups stationary corner changes when the unchanged straight edges connect them.
-pub noinline fn mergeCorners(boxes: []pending.Candidate, before: Image, after: Image, scale: values.Scale) usize {
+pub noinline fn mergeCorners(boxes: []candidate.Candidate, before: Image, after: Image, scale: value.Scale) usize {
     var len = boxes.len;
     const limit = scale.devicePixels(text_lines.line_height);
     const max_rail = scale.devicePixels(max_corner_rail);
-    if (len == 2 and croppedCorners(boxes, before, after, limit, scale.devicePixels(pending.padding), max_rail)) return pending.join(boxes, len, 0, 1);
+    if (len == 2 and croppedCorners(boxes, before, after, limit, scale.devicePixels(candidate.padding), max_rail)) return candidate.join(boxes, len, 0, 1);
     var i: usize = 0;
     while (i + outline_corners <= len) : (i += 1) {
         const first = corner(boxes[i].region, limit) orelse continue;
         if (outlineCorners(boxes[i + 1 .. len], before, after, first, limit, max_rail)) |others| {
             // The indexes are relative to the suffix and sorted largest first.
-            for (others) |j| len = pending.join(boxes, len, i, i + 1 + j);
+            for (others) |j| len = candidate.join(boxes, len, i, i + 1 + j);
         }
     }
     return len;
 }
 
 fn corner(region: Region, limit: f64) ?Box {
-    const box = pending.stationaryBox(region) orelse return null;
+    const box = candidate.stationaryBox(region) orelse return null;
     return if (@max(box.width, box.height) <= limit) box else null;
 }
 
-fn outlineCorners(boxes: []const pending.Candidate, before: Image, after: Image, top: Box, limit: f64, max_rail: f64) ?[3]usize {
+fn outlineCorners(boxes: []const candidate.Candidate, before: Image, after: Image, top: Box, limit: f64, max_rail: f64) ?[3]usize {
     for (boxes, 0..) |tr, j| {
         const right = corner(tr.region, limit) orelse continue;
         if (right.x <= top.right() or !sameRange(top.y, top.bottom(), right.y, right.bottom())) continue;
@@ -70,7 +70,7 @@ fn outlineCorners(boxes: []const pending.Candidate, before: Image, after: Image,
     return null;
 }
 
-fn croppedCorners(boxes: []const pending.Candidate, before: Image, after: Image, limit: f64, clip_slack: f64, max_rail: f64) bool {
+fn croppedCorners(boxes: []const candidate.Candidate, before: Image, after: Image, limit: f64, clip_slack: f64, max_rail: f64) bool {
     if (before.height != after.height or before.width != after.width) return false;
     const a = corner(boxes[0].region, limit) orelse return false;
     const b = corner(boxes[1].region, limit) orelse return false;
@@ -145,7 +145,7 @@ fn rail(before: Image, after: Image, start: Box, end: Box, direction: RailDirect
     return false;
 }
 
-fn railTurns(image: Image, corner_box: Box, y: usize, ink: values.Pixel, side: enum { left, right }, exterior: bounds.RailEnd) bool {
+fn railTurns(image: Image, corner_box: Box, y: usize, ink: value.Pixel, side: enum { left, right }, exterior: bounds.RailEnd) bool {
     const left: usize = bounds.deviceIndex(corner_box.x);
     const right: usize = bounds.deviceIndex(corner_box.right());
     const outside = switch (side) {
@@ -171,13 +171,13 @@ fn sameRange(a: f64, b: f64, c: f64, d: f64) bool {
     return @min(b, d) - @max(a, c) >= corner_overlap * @max(b - a, d - c);
 }
 
-fn hasInk(row: []const values.Pixel, ink: values.Pixel) bool {
+fn hasInk(row: []const value.Pixel, ink: value.Pixel) bool {
     for (row) |p| if (pixel.same(p, ink)) return true;
     return false;
 }
 
 test "four corners follow a continuous outline even when its straight edges differ in color" {
-    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
+    const canvas = @import("uidiff_test_canvas").Painters(value.Image);
     const before = try canvas.Canvas.init(250, 150);
     defer before.deinit();
     const after = try canvas.Canvas.init(250, 150);
@@ -188,7 +188,7 @@ test "four corners follow a continuous outline even when its straight edges diff
         Box.fromPixels(32, 116, 14, 14),
         Box.fromPixels(202, 116, 14, 14),
     };
-    var edits: [boxes.len]pending.Candidate = undefined;
+    var edits: [boxes.len]candidate.Candidate = undefined;
     for ([_]canvas.Canvas{ before, after }) |image| {
         image.fill(32, 28, 184, 3, .{ 60, 90, 150, 255 });
         image.fill(32, 124, 184, 3, .{ 120, 90, 62, 255 });
@@ -215,14 +215,14 @@ test "four corners follow a continuous outline even when its straight edges diff
 }
 
 test "viewport clipped corners join only across a continuous straight edge" {
-    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
+    const canvas = @import("uidiff_test_canvas").Painters(value.Image);
     const before = try canvas.Canvas.init(250, 64);
     defer before.deinit();
     const after = try canvas.Canvas.init(250, 64);
     defer after.deinit();
     const a = Box.fromPixels(32, 45, 14, 19);
     const b = Box.fromPixels(202, 45, 14, 19);
-    const edits = [_]pending.Candidate{
+    const edits = [_]candidate.Candidate{
         .{ .region = .{ .before = a, .after = a }, .pixels = 8 },
         .{ .region = .{ .before = b, .after = b }, .pixels = 8 },
     };
@@ -242,7 +242,7 @@ test "viewport clipped corners join only across a continuous straight edge" {
 }
 
 test "audit: unrelated bottom-clipped labels on one footer stay separate" {
-    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
+    const canvas = @import("uidiff_test_canvas").Painters(value.Image);
     const before = try canvas.Canvas.init(280, 90);
     defer before.deinit();
     const after = try canvas.Canvas.init(280, 90);
@@ -254,7 +254,7 @@ test "audit: unrelated bottom-clipped labels on one footer stay separate" {
     }
     const a = Box.fromPixels(24, 73, 46, 17);
     const b = Box.fromPixels(204, 73, 46, 17);
-    const edits = [_]pending.Candidate{
+    const edits = [_]candidate.Candidate{
         .{ .region = .{ .before = a, .after = a }, .pixels = 8 },
         .{ .region = .{ .before = b, .after = b }, .pixels = 8 },
     };
@@ -264,12 +264,12 @@ test "audit: unrelated bottom-clipped labels on one footer stay separate" {
 }
 
 test "round 25 audit: glyph stems below a divider do not close the corners" {
-    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
+    const canvas = @import("uidiff_test_canvas").Painters(value.Image);
     const before = try canvas.Canvas.init(280, 90);
     defer before.deinit();
     const after = try canvas.Canvas.init(280, 90);
     defer after.deinit();
-    const ink: values.Pixel = .{ 51, 51, 51, 255 };
+    const ink: value.Pixel = .{ 51, 51, 51, 255 };
     for ([_]canvas.Canvas{ before, after }) |image| {
         image.fill(24, 73, 226, 1, ink);
         image.fill(26, 80, 2, 5, ink);
@@ -279,7 +279,7 @@ test "round 25 audit: glyph stems below a divider do not close the corners" {
     after.fill(239, 82, 6, 5, ink);
     const a = Box.fromPixels(24, 73, 46, 17);
     const b = Box.fromPixels(204, 73, 46, 17);
-    var edits = [_]pending.Candidate{
+    var edits = [_]candidate.Candidate{
         .{ .region = .{ .before = a, .after = a }, .pixels = 8 },
         .{ .region = .{ .before = b, .after = b }, .pixels = 8 },
     };
@@ -287,7 +287,7 @@ test "round 25 audit: glyph stems below a divider do not close the corners" {
 }
 
 test "corner rail reach follows logical scale at double density" {
-    const canvas = @import("uidiff_test_canvas").Painters(values.Image);
+    const canvas = @import("uidiff_test_canvas").Painters(value.Image);
     const image = try canvas.Canvas.init(2700, 54);
     defer image.deinit();
     const ink = canvas.inkShade(63, 4);
@@ -296,7 +296,7 @@ test "corner rail reach follows logical scale at double density" {
     image.fill(2613, 39, 1, 13, ink);
     const a = Box.fromPixels(20, 36, 16, 18);
     const b = Box.fromPixels(2600, 36, 16, 18);
-    var edits = [_]pending.Candidate{
+    var edits = [_]candidate.Candidate{
         .{ .region = .{ .before = a, .after = a }, .pixels = 8 },
         .{ .region = .{ .before = b, .after = b }, .pixels = 8 },
     };

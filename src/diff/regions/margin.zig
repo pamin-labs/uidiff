@@ -1,19 +1,19 @@
 //! Recovers distinct colour edits embedded in dimmed margins.
 
 const std = @import("std");
-const pending = @import("candidate.zig");
+const candidate = @import("candidate.zig");
 const bounds = @import("bounds.zig");
 const grouping = @import("grouping.zig");
 const scrim = @import("scrim.zig");
-const values = @import("../../value.zig");
+const value = @import("../../value.zig");
 const pixel = @import("../pixel.zig");
-const Box = values.Box;
-const Region = values.Region;
-const Image = values.Image;
+const Box = value.Box;
+const Region = value.Region;
+const Image = value.Image;
 
-const shade_margin_width = values.CssPx.init(64);
+const shade_margin_width = value.CssPx.init(64);
 
-const shade_margin_height = values.CssPx.init(12);
+const shade_margin_height = value.CssPx.init(12);
 
 const shade_mark_width_divisor = 4;
 
@@ -24,9 +24,9 @@ const shade_mark_residual: f32 = 6;
 
 /// Finds a separate colour edit embedded in a flat dimmed margin. The enclosing
 /// region remains available to account for the rest of the changed pixels.
-pub fn shadeMarginEdit(region: Region, before: Image, after: Image, scale: values.Scale) ?pending.Candidate {
+pub fn shadeMarginEdit(region: Region, before: Image, after: Image, scale: value.Scale) ?candidate.Candidate {
     if (before.width != after.width or before.height != after.height) return null;
-    const box = pending.stationaryBox(region) orelse return null;
+    const box = candidate.stationaryBox(region) orelse return null;
     const viewport = Box.fromPixels(0, 0, before.width, before.height);
     if (std.meta.eql(box, viewport) or box.width < scale.devicePixels(shade_margin_width)) return null;
     const area = bounds.PixelRect.fromBox(box);
@@ -34,7 +34,7 @@ pub fn shadeMarginEdit(region: Region, before: Image, after: Image, scale: value
     return shadeMargin(before, after, area, extent, .start) orelse shadeMargin(before, after, area, extent, .end);
 }
 
-fn shadeMargin(before: Image, after: Image, area: bounds.PixelRect, extent: usize, edge: bounds.RailEnd) ?pending.Candidate {
+fn shadeMargin(before: Image, after: Image, area: bounds.PixelRect, extent: usize, edge: bounds.RailEnd) ?candidate.Candidate {
     const width = area.right - area.left;
     const center = area.left + width / 2;
     const max_mark_width = width / shade_mark_width_divisor;
@@ -90,12 +90,12 @@ fn shadeMargin(before: Image, after: Image, area: bounds.PixelRect, extent: usiz
 test "faint shadow variation at the margin is not a separate colour edit" {
     const width = 96;
     const height = 24;
-    const base: values.Pixel = .{ 22, 25, 33, 255 };
-    const shade: values.Pixel = .{ 19, 21, 28, 255 };
-    const near_corner: values.Pixel = .{ 22, 24, 32, 255 };
-    const fill: values.Pixel = .{ 45, 50, 62, 255 };
-    const old: [width * height]values.Pixel = @splat(base);
-    var new: [width * height]values.Pixel = @splat(shade);
+    const base: value.Pixel = .{ 22, 25, 33, 255 };
+    const shade: value.Pixel = .{ 19, 21, 28, 255 };
+    const near_corner: value.Pixel = .{ 22, 24, 32, 255 };
+    const fill: value.Pixel = .{ 45, 50, 62, 255 };
+    const old: [width * height]value.Pixel = @splat(base);
+    var new: [width * height]value.Pixel = @splat(shade);
     @memset(new[width * 4 ..][0 .. width * 16], fill);
     for (0..4) |y| @memset(new[y * width ..][0..8], near_corner);
     const before: Image = .{ .pixels = &old, .width = width, .height = height };

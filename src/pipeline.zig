@@ -2,7 +2,7 @@
 //! the annotated sheet, replacing its file only once the sheet is complete.
 const std = @import("std");
 const builtin = @import("builtin");
-const values = @import("value.zig");
+const value = @import("value.zig");
 const codec = @import("codec.zig");
 const diff = @import("diff.zig");
 const annotate = @import("annotate.zig");
@@ -11,8 +11,8 @@ const Allocator = std.mem.Allocator;
 
 /// Configures the comparison and limits each file decode.
 pub const Options = struct {
-    scale: values.Scale = .one,
-    max_decode_bytes: usize = values.max_decode_bytes,
+    scale: value.Scale = .one,
+    max_decode_bytes: usize = value.max_decode_bytes,
 
     /// Returns the settings used by the pixel comparison.
     pub fn comparison(self: Options) diff.Options {
@@ -108,7 +108,7 @@ pub fn compareFiles(io: Io, allocator: Allocator, paths: Paths, options: Options
     if (paths.annotate) |path| {
         // A file may have changed since its header was checked.
         diagnostics.path = path;
-        _ = try annotate.reportSize(pair.before.image.size(), pair.after.image.size());
+        _ = try annotate.minimumSheetSize(pair.before.image.size(), pair.after.image.size());
     }
     diagnostics.path = null;
     const result = try diff.compareChecked(allocator, pair.before.image, pair.after.image, checked);
@@ -122,12 +122,12 @@ pub fn compareFiles(io: Io, allocator: Allocator, paths: Paths, options: Options
 }
 
 /// Streams a comparison sheet as PNG into a caller-supplied writer.
-pub fn encodeComparisonSheet(allocator: Allocator, before: values.Image, after: values.Image, result: diff.Comparison, output: *Io.Writer) EncodeSheetError!void {
+pub fn encodeComparisonSheet(allocator: Allocator, before: value.Image, after: value.Image, result: diff.Comparison, output: *Io.Writer) EncodeSheetError!void {
     return encodeSheet(null, allocator, before, after, result, output);
 }
 
-fn encodeSheet(io: ?Io, allocator: Allocator, before: values.Image, after: values.Image, result: diff.Comparison, output: *Io.Writer) EncodeSheetError!void {
-    const sheet = try annotate.ReportRows.init(allocator, before, after, result.regions, result.moves);
+fn encodeSheet(io: ?Io, allocator: Allocator, before: value.Image, after: value.Image, result: diff.Comparison, output: *Io.Writer) EncodeSheetError!void {
+    const sheet = try annotate.SheetRows.init(allocator, before, after, result.regions, result.moves);
     defer sheet.deinit(allocator);
     try codec.encodePngRowsWithIo(io, allocator, sheet.size(), sheet, output);
 }
@@ -176,10 +176,10 @@ fn preflightSheet(io: Io, allocator: Allocator, paths: Paths, sheet_path: []cons
     diagnostics.path = paths.after;
     const after = try codec.probeFile(io, allocator, paths.after, cap);
     diagnostics.path = sheet_path;
-    _ = try annotate.reportSize(before, after);
+    _ = try annotate.minimumSheetSize(before, after);
 }
 
-fn writeSheet(io: Io, allocator: Allocator, path: []const u8, before: values.Image, after: values.Image, result: diff.Comparison) WriteError!void {
+fn writeSheet(io: Io, allocator: Allocator, path: []const u8, before: value.Image, after: value.Image, result: diff.Comparison) WriteError!void {
     var file = try Io.Dir.cwd().createFileAtomic(io, path, .{ .replace = true });
     defer file.deinit(io);
     const buffer = try allocator.alloc(u8, write_buffer_bytes);
@@ -252,7 +252,7 @@ test "overlapped decodes preserve PNG and JPEG errors and results" {
 
     const before_name = "before.capture";
     const after_name = "after.capture";
-    const pixels: [16]values.Pixel = @splat(.{ 100, 120, 80, 160 });
+    const pixels: [16]value.Pixel = @splat(.{ 100, 120, 80, 160 });
     var output: Io.Writer.Allocating = .init(allocator);
     defer output.deinit();
     try codec.encodePng(allocator, .{ .width = 4, .height = 4, .pixels = &pixels }, &output.writer);

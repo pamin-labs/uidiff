@@ -17,11 +17,11 @@
 // THIS SOFTWARE.
 
 const std = @import("std");
-const values = @import("../value.zig");
+const value = @import("../value.zig");
 const pixel = @import("pixel.zig");
-const change_mask = @import("mask.zig");
-const Image = values.Image;
-const Pixel = values.Pixel;
+const mask = @import("mask.zig");
+const Image = value.Image;
+const Pixel = value.Pixel;
 const lanes = pixel.lanes;
 const same = pixel.same;
 
@@ -99,7 +99,7 @@ const Point = struct { x: usize, y: usize };
 const EdgePolicy = enum { normal, stationary };
 const LaneBits = @Int(.unsigned, lanes);
 const PixelBlock = [lanes]Pixel;
-const MaskBlock = [lanes]change_mask.Cell;
+const MaskBlock = [lanes]mask.Cell;
 const ColorLanes = @Vector(lanes, f32);
 
 const threshold = 0.01;
@@ -112,7 +112,7 @@ const blend_rounding = 2;
 const min_recoloured_stroke = 9;
 
 /// Writes one byte per pixel for the requested rows and reports whether any changed.
-pub fn mask(before: Raster, after: Raster, top: usize, rows: usize, out: []change_mask.Cell) bool {
+pub fn writeMask(before: Raster, after: Raster, top: usize, rows: usize, out: []mask.Cell) bool {
     const a = SampledRaster.init(before);
     const b = SampledRaster.init(after);
     var found = false;
@@ -156,11 +156,11 @@ pub fn mask(before: Raster, after: Raster, top: usize, rows: usize, out: []chang
 
 /// Removes local redistributions of coverage from aligned moved rows.
 /// Retains the full extent of a uniform stroke recolour with a flagged pixel.
-pub fn clearMovedCoverage(before: Raster, after: Raster, top: usize, cells: []change_mask.Cell) void {
+pub fn clearMovedCoverage(before: Raster, after: Raster, top: usize, cells: []mask.Cell) void {
     const a = SampledRaster.init(before);
     const b = SampledRaster.init(after);
     var start: usize = 0;
-    while (change_mask.nextCell(cells, start, .changed)) |index| {
+    while (mask.nextCell(cells, start, .changed)) |index| {
         const x = index % a.width;
         const y = top + index / a.width;
         start = index + 1;
@@ -224,7 +224,7 @@ fn laneBits(mask_: @Vector(lanes, bool)) LaneBits {
 }
 
 // Keep the sparse walk out of the hot mask and share it between classifiers.
-noinline fn writeChangedLanes(a: SampledRaster, b: SampledRaster, x: usize, y: usize, policy: EdgePolicy, classify: *const @TypeOf(markChange), bits: LaneBits, output: *[lanes]change_mask.Cell) bool {
+noinline fn writeChangedLanes(a: SampledRaster, b: SampledRaster, x: usize, y: usize, policy: EdgePolicy, classify: *const @TypeOf(markChange), bits: LaneBits, output: *[lanes]mask.Cell) bool {
     @branchHint(.cold);
     output.* = @splat(.clear);
     var remaining = bits;
@@ -387,7 +387,7 @@ fn channel(comptime n: usize, pixels: @Vector(n, u32), comptime index: usize) @V
     return @floatFromInt(channelInt(n, pixels, index));
 }
 
-fn scalarChange(a: SampledRaster, b: SampledRaster, x: usize, y: usize, policy: EdgePolicy) change_mask.Cell {
+fn scalarChange(a: SampledRaster, b: SampledRaster, x: usize, y: usize, policy: EdgePolicy) mask.Cell {
     // The mask loop bounds x and y to both rasters and their validated pixel count.
 
     const byte_offset = ((a.top + y) * a.image.width + a.left + x) * @sizeOf(Pixel);
@@ -395,7 +395,7 @@ fn scalarChange(a: SampledRaster, b: SampledRaster, x: usize, y: usize, policy: 
     return markChange(a, b, x, y, policy);
 }
 
-fn markChange(a: SampledRaster, b: SampledRaster, x: usize, y: usize, policy: EdgePolicy) change_mask.Cell {
+fn markChange(a: SampledRaster, b: SampledRaster, x: usize, y: usize, policy: EdgePolicy) mask.Cell {
     if (!realChange(a, b, x, y)) return .clear;
     if (policy == .stationary) {
         const old = a.at(x, y);
@@ -619,21 +619,21 @@ test "mask handles one pixel and a vector tail on the last cropped row" {
     var after = before;
     after[lanes + 1] = black;
     after[after.len - 1] = .{ 0, 0, 0, 128 };
-    var output: [lanes + 1]change_mask.Cell = undefined;
+    var output: [lanes + 1]mask.Cell = undefined;
     const left: Raster = .{ .image = .{ .width = lanes + 1, .height = 2, .pixels = &before }, .left = 0, .top = 0, .width = lanes + 1, .height = 2 };
     var right = left;
     right.image.pixels = &after;
-    try std.testing.expect(mask(left, right, 1, 1, &output));
+    try std.testing.expect(writeMask(left, right, 1, 1, &output));
     // The first pixel and the vector tail changed; every pixel between did not.
-    var expected: [lanes + 1]change_mask.Cell = @splat(.clear);
+    var expected: [lanes + 1]mask.Cell = @splat(.clear);
     expected[0] = .changed;
     expected[lanes] = .changed;
-    try std.testing.expectEqualSlices(change_mask.Cell, &expected, &output);
+    try std.testing.expectEqualSlices(mask.Cell, &expected, &output);
     const a: Raster = .{ .image = .{ .width = 1, .height = 1, .pixels = &.{white} }, .left = 0, .top = 0, .width = 1, .height = 1 };
     var b = a;
     b.image.pixels = &.{black};
-    try std.testing.expect(mask(a, b, 0, 1, output[0..1]));
-    try std.testing.expectEqual(change_mask.Cell.changed, output[0]);
+    try std.testing.expect(writeMask(a, b, 0, 1, output[0..1]));
+    try std.testing.expectEqual(mask.Cell.changed, output[0]);
 }
 
 test "moved coverage clears a balanced edge redraw and keeps a stroke weight edit" {
@@ -650,17 +650,17 @@ test "moved coverage clears a balanced edge redraw and keeps a stroke weight edi
     var old: [width * height]Pixel = @splat(background);
     for (0..height) |row| old[row * width + edge_x ..][0..3].* = .{ lower, ink, higher };
     const a: Raster = .{ .image = .{ .width = width, .height = height, .pixels = &old }, .left = 0, .top = 0, .width = width, .height = height };
-    for ([_]Pixel{ lower, higher }, [_]change_mask.Cell{ .clear, .changed }) |right_edge, expected| {
+    for ([_]Pixel{ lower, higher }, [_]mask.Cell{ .clear, .changed }) |right_edge, expected| {
         var new = old;
         for (0..height) |row| new[row * width + edge_x ..][0..3].* = .{ higher, ink, right_edge };
         var b = a;
         b.image.pixels = &new;
-        var cells: [width * height]change_mask.Cell = @splat(.clear);
+        var cells: [width * height]mask.Cell = @splat(.clear);
         cells[left] = .changed;
         cells[right] = if (same(higher, right_edge)) .clear else .changed;
         clearMovedCoverage(a, b, 0, &cells);
         try std.testing.expectEqual(expected, cells[left]);
-        try std.testing.expectEqual(change_mask.Cell.clear, cells[right]);
+        try std.testing.expectEqual(mask.Cell.clear, cells[right]);
     }
 }
 
@@ -733,12 +733,12 @@ test "repeated rows and repeated columns agree across vector blocks and the tail
     var b = a;
     b.image.pixels = &backdrop;
     b.background = .{ .row = backdrop[0..width] };
-    var rows: [pixels.len]change_mask.Cell = undefined;
-    try std.testing.expect(mask(a, b, 0, height, &rows));
+    var rows: [pixels.len]mask.Cell = undefined;
+    try std.testing.expect(writeMask(a, b, 0, height, &rows));
     b.background = .margin;
-    var columns: [pixels.len]change_mask.Cell = undefined;
-    try std.testing.expect(mask(a, b, 0, height, &columns));
-    try std.testing.expectEqualSlices(change_mask.Cell, &rows, &columns);
+    var columns: [pixels.len]mask.Cell = undefined;
+    try std.testing.expect(writeMask(a, b, 0, height, &columns));
+    try std.testing.expectEqualSlices(mask.Cell, &rows, &columns);
 }
 
 test "sibling count includes a clipped edge and repeats virtual backdrop columns" {

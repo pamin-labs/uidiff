@@ -1,13 +1,14 @@
-//! Alignment ribbons between the ordinary report panes.
+//! Alignment ribbons between the ordinary sheet panes.
 const std = @import("std");
-const copy = @import("copy.zig");
-const values = @import("../value.zig");
+const drawing = @import("drawing.zig");
+const copy = drawing.copy;
+const value = @import("../value.zig");
 const geometry = @import("geometry.zig");
-const text = @import("text.zig");
-const canvas = @import("canvas.zig");
+const text = drawing.text;
+const canvas = drawing.canvas;
 const focus = @import("focus.zig");
-const palette = @import("palette.zig");
-const Layout = geometry.Layout;
+const palette = drawing.palette;
+const PaneLayout = geometry.PaneLayout;
 const Rect = geometry.Rect;
 const pane_top = geometry.pane_top;
 const Text = text.Text;
@@ -20,10 +21,10 @@ const moved_band = palette.moved_band;
 const insert_band = palette.insert_band;
 const remove_band = palette.remove_band;
 const blue = palette.blue;
-const Move = values.Move;
-const Pixel = values.Pixel;
+const Move = value.Move;
+const Pixel = value.Pixel;
 
-const PreviewMove = struct { before: values.SheetRowRange, after: values.SheetRowRange };
+const PreviewMove = struct { before: value.SheetRowRange, after: value.SheetRowRange };
 
 /// One projected move, its label, and the optional inserted or removed wedge.
 pub const Ribbon = struct { move: PreviewMove, label: Text, wedge_top: ?usize };
@@ -34,12 +35,12 @@ pub fn displacement(move: Move) isize {
 }
 
 /// Projects a device move into sheet rows, dropping subpixel shifts.
-pub fn previewMove(move: Move, ui: Layout) ?PreviewMove {
-    const before_y = ui.position(move.before.y);
-    const after_y = ui.position(move.after.y);
+pub fn previewMove(move: Move, pane_layout: PaneLayout) ?PreviewMove {
+    const before_y = pane_layout.position(move.before.y);
+    const after_y = pane_layout.position(move.after.y);
     const height = @min(
-        ui.position(move.before.y + move.before.height) - before_y,
-        ui.position(move.after.y + move.after.height) - after_y,
+        pane_layout.position(move.before.y + move.before.height) - before_y,
+        pane_layout.position(move.after.y + move.after.height) - after_y,
     );
     if (height == 0 or before_y == after_y) return null;
     return .{
@@ -55,7 +56,7 @@ pub fn earlierRibbonEnd(_: void, a: Ribbon, b: Ribbon) bool {
 
 /// Finds the source row where the insert or removal meets the ribbon.
 pub fn wedgeTop(details: []const Detail, move: Move, down: bool) ?usize {
-    const kind: values.Kind = if (down) .inserted else .removed;
+    const kind: value.Kind = if (down) .inserted else .removed;
     const low = @min(move.before.y, move.after.y);
     const high = @max(move.before.y, move.after.y);
     const y0: f64 = @floatFromInt(low -| (high - low));
@@ -72,7 +73,7 @@ pub fn wedgeTop(details: []const Detail, move: Move, down: bool) ?usize {
 }
 
 /// Composites alignment ribbons for one row between the panes.
-pub fn drawGutter(line: Line, y: usize, ui: Layout, panes: [2]Rect, ribbons: []const Ribbon) void {
+pub fn drawGutter(line: Line, y: usize, pane_layout: PaneLayout, panes: [2]Rect, ribbons: []const Ribbon) void {
     const x = panes[0].right();
     const width = panes[1].x - x;
     line.fill(x, x + width, stationary);
@@ -98,7 +99,7 @@ pub fn drawGutter(line: Line, y: usize, ui: Layout, panes: [2]Rect, ribbons: []c
             ribbonSpan(line, x, edgeColumn(low - y, low - top, width), width, down, width, if (down) insert_band else remove_band);
         }
         // A single signed value leaves space on either side of the ribbon.
-        const body = ui.px(20);
+        const body = pane_layout.px(20);
         const line_h = Face.bold.height(body);
         if (m.before.height >= line_h) {
             const top = low + (delta + m.before.height - line_h) / 2;
@@ -107,10 +108,10 @@ pub fn drawGutter(line: Line, y: usize, ui: Layout, panes: [2]Rect, ribbons: []c
                 const last = edgeColumn(top - low + 1, delta, width);
                 const label = ribbon.label.bytes();
                 const needed = textWidth(.bold, body, label);
-                if (last >= first + needed + 2 * ui.px(8)) {
+                if (last >= first + needed + 2 * pane_layout.px(8)) {
                     const offset = if (down) first else width - last;
                     const label_x = x + offset + (last - first - needed) / 2;
-                    line.text(label_x, ui.px(pane_top) + top, label, .bold, body, blue);
+                    line.text(label_x, pane_layout.px(pane_top) + top, label, .bold, body, blue);
                 }
             }
         }
@@ -148,9 +149,9 @@ test {
 }
 
 test "a three-digit shift label leaves space at both gutter edges" {
-    const size = values.Size{ .width = 400, .height = 500 };
-    const ui = Layout.init(size, size);
-    const panes = ui.panes(size, size);
+    const size = value.Size{ .width = 400, .height = 500 };
+    const pane_layout = PaneLayout.init(size, size);
+    const panes = pane_layout.panes(size, size);
     const ribbons = [_]Ribbon{.{
         .move = .{ .before = .{ .y = 120, .height = 250 }, .after = .{ .y = 20, .height = 250 } },
         .label = try Text.format(copy.shift_format, .{-100}),
@@ -160,11 +161,11 @@ test "a three-digit shift label leaves space at both gutter edges" {
     var painted = false;
     for (20..370) |y| {
         @memset(&pixels, stationary);
-        drawGutter(.{ .pixels = &pixels, .y = ui.px(pane_top) + y }, y, ui, panes, &ribbons);
+        drawGutter(.{ .pixels = &pixels, .y = pane_layout.px(pane_top) + y }, y, pane_layout, panes, &ribbons);
         for (pixels, 0..) |pixel, x| {
             if (!std.meta.eql(pixel, blue)) continue;
             painted = true;
-            try std.testing.expect(x >= panes[0].right() + ui.px(8) and x < panes[1].x - ui.px(8));
+            try std.testing.expect(x >= panes[0].right() + pane_layout.px(8) and x < panes[1].x - pane_layout.px(8));
         }
     }
     try std.testing.expect(painted);
