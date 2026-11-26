@@ -1,6 +1,5 @@
 //! The byte-oriented comparison, report and annotation API.
 const std = @import("std");
-const builtin = @import("builtin");
 const values = @import("value.zig");
 const diff = @import("diff.zig");
 const codec = @import("codec.zig");
@@ -97,6 +96,7 @@ test "module roots expose their API" {
 }
 
 test "required test selection" {
+    const builtin = @import("builtin");
     const filter = @import("required_test_options").filter;
     if (filter.len == 0) return;
     for (builtin.test_functions) |entry| {

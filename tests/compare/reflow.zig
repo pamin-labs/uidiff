@@ -1,7 +1,6 @@
 //! End-to-end recognition of row, tab and card reflow.
 
 const std = @import("std");
-const uidiff = @import("uidiff");
 const uidiff_testing = @import("uidiff_testing");
 const expect = uidiff_testing.expect;
 const canvas = uidiff_testing.canvas;

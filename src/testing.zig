@@ -1,5 +1,4 @@
 //! Private helpers for uidiff's scenario and fuzz runners.
-const std = @import("std");
 const uidiff = @import("uidiff");
 
 /// Assertions over results from the comparison API.
