@@ -102,13 +102,35 @@ fn budget(header: Header, encoded_len: usize) ?usize {
 fn oversizedPng(bytes: []const u8) bool {
     if (bytes.len < png_format.header_bytes or !std.mem.startsWith(u8, bytes, png_format.header_prefix)) return false;
     const offset = png_format.dimensions_offset;
-    const width = std.mem.readInt(u32, bytes[offset..][0..4], .big);
-    const height = std.mem.readInt(u32, bytes[offset + 4 ..][0..4], .big);
-    return width != 0 and height != 0 and (width > values.max_extent or height > values.max_extent);
+    const width: u32 = std.mem.readInt(u32, bytes[offset..][0..4], .big);
+    const height: u32 = std.mem.readInt(u32, bytes[offset + 4 ..][0..4], .big);
+    if (width == 0 or height == 0) return false;
+    const size: Size = .{
+        .width = std.math.cast(usize, width) orelse return true,
+        .height = std.math.cast(usize, height) orelse return true,
+    };
+    return size.pixelCount() == null;
 }
 
 test "a truncated PNG header is rejected" {
     try std.testing.expectError(error.InvalidImage, probe(std.testing.allocator, "\x89PNG\r\n\x1a\n", values.max_decode_bytes));
+}
+
+test "PNG headers outside the image limits report ImageTooLarge" {
+    const cases = [_]struct { width: u32, height: u32, expected: DecodeError }{
+        .{ .width = 20_000, .height = 20_000, .expected = error.ImageTooLarge },
+        .{ .width = 17_000, .height = 17_000, .expected = error.ImageTooLarge },
+        .{ .width = std.math.maxInt(u32), .height = 1, .expected = error.ImageTooLarge },
+        .{ .width = 0, .height = 17_000, .expected = error.InvalidImage },
+    };
+    for (cases) |case| {
+        const dimensions: [8]u8 = @splat(0);
+        var header = (png_format.header_prefix ++ dimensions ++
+            [_]u8{ png_format.sample_depth, png_format.rgba_color, 0, 0, 0 }).*;
+        std.mem.writeInt(u32, header[png_format.dimensions_offset..][0..4], case.width, .big);
+        std.mem.writeInt(u32, header[png_format.dimensions_offset + 4 ..][0..4], case.height, .big);
+        try std.testing.expectError(case.expected, probe(std.testing.allocator, &header, values.max_decode_bytes));
+    }
 }
 
 test "the largest 8-bit images fit the decode budget and a 16-bit one does not" {
