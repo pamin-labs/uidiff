@@ -89,14 +89,14 @@ pub fn compareChecked(allocator: Allocator, before: Image, after: Image, options
     defer moves.deinit(allocator);
     if (changed.width != 0) {
         const scope: columns.Scope = .{ .before = before, .after = after, .span = changed, .bounds = .{ .left = 0, .width = overlap_width } };
-        try span.collect(allocator, &collector, &moves, scope, @intFromFloat(@min(max_gap_px, options.scale.devicePixels(rows.scroll_shift))));
+        try span.collect(allocator, &collector, &moves, scope, @intFromFloat(@min(max_gap_px, options.scale.devicePixels(regions.scroll_shift))));
     }
     if (before.width != after.width) {
         const old = before.width > after.width;
         const box = Box.fromPixels(overlap_width, 0, width - overlap_width, if (old) before.height else after.height);
         collector.addOn(if (old) .before else .after, box);
     }
-    const out = try regions.resolve(allocator, &collector, &moves, before, after, options.scale, options.scale.devicePixels(rows.scroll_shift));
+    const out = try regions.resolve(allocator, &collector, &moves, before, after, options.scale, options.scale.devicePixels(regions.scroll_shift));
     errdefer allocator.free(out);
     return .{ .regions = out, .moves = try moves.toOwnedSlice(allocator), .width = width, .height = height };
 }

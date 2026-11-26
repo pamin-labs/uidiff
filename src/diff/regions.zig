@@ -34,6 +34,8 @@ pub const max_regions = candidate.max_regions;
 /// Seeds the flood fill keeps at once (4 bytes each); more are found again by
 /// rescanning their rows, so memory stays fixed however large the mask.
 pub const max_fill_seeds = grouping.max_fill_seeds;
+/// Maximum displacement treated as a short scroll.
+pub const scroll_shift = moves.scroll_shift;
 /// Adds eight-connected components to the collector. Sparse components can
 /// reach the reporting minimum together. Asserts seeds is not empty.
 pub const group = grouping.group;

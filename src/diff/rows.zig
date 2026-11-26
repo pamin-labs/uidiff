@@ -44,9 +44,6 @@ pub const Workspace = struct {
     }
 };
 
-/// Maximum displacement treated as a short scroll.
-pub const scroll_shift = values.CssPx.init(2);
-
 /// Hashes each row of the column span. Asserts output.len equals the image
 /// height and left + width is at most its width.
 pub fn keys(source: Image, left: usize, width: usize, output: []u64) void {
