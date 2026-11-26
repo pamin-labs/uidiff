@@ -12,7 +12,7 @@ import zipfile
 
 from package import (
     CHECKSUMS, DOWNLOADS, FORMULA_ASSET, INSTALLERS, NOTICES, NPM_PACKAGE, PROGRAM, ROOT,
-    TARGETS, VERSION_PATTERN, digest, finalize, mirror, npm_packages, pack, version,
+    TARGETS, VERSION_PATTERN, digest, finalize, mirror, with_version, npm_packages, pack, version,
 )
 
 
@@ -100,8 +100,21 @@ def check_mirror(release, release_version, temp):
     assert [p.name for p in pre.iterdir()] == ["download"]
 
 
+def check_with_version():
+    zon = (ROOT / "build.zig.zon").read_text()
+    assert with_version(zon, "v1.2.3-rc.1").count('.version = "1.2.3-rc.1",') == 1
+    assert with_version(zon, version()) == zon
+    for bad in ("1.2", "v1.2.3 ", "1.2.3+build"):
+        try:
+            with_version(zon, bad)
+        except SystemExit:
+            continue
+        raise AssertionError(bad)
+
+
 def main():
     check_installers()
+    check_with_version()
     dist_os = {"Darwin": "macos", "Linux": "linux", "Windows": "windows"}[platform.system()]
     arch = {"x86_64": "x64", "amd64": "x64", "aarch64": "arm64", "arm64": "arm64"}[
         platform.machine().lower()

@@ -75,12 +75,26 @@ class Target:
 TARGETS = tuple(Target(zig) for zig in json.loads((ROOT / ".github/release-targets.json").read_text()))
 
 
+ZON_VERSION = rf'^    \.version = "({VERSION_PATTERN})",$'
+
+
 def version():
     zon = (ROOT / "build.zig.zon").read_text()
-    match = re.search(rf'^    \.version = "({VERSION_PATTERN})",$', zon, re.M)
+    match = re.search(ZON_VERSION, zon, re.M)
     if match is None:
         raise SystemExit("build.zig.zon: expected a release version")
     return match[1]
+
+
+def with_version(zon, requested):
+    """Return build.zig.zon text naming the requested version, given with or without a leading v."""
+    release_version = requested.removeprefix("v")
+    if re.fullmatch(VERSION_PATTERN, release_version) is None:
+        raise SystemExit(f"invalid version: {requested}")
+    updated, count = re.subn(ZON_VERSION, f'    .version = "{release_version}",', zon, count=1, flags=re.M)
+    if count != 1:
+        raise SystemExit("build.zig.zon: expected a release version")
+    return updated
 
 
 def digest(path):
@@ -226,6 +240,7 @@ def main():
     commands.add_parser("matrix")
     commands.add_parser("tap")
     commands.add_parser("version")
+    commands.add_parser("set-version").add_argument("version")
     for command in ("pack", "installer-fixture"):
         package = commands.add_parser(command)
         package.add_argument("target", choices=[target.zig for target in TARGETS])
@@ -239,6 +254,11 @@ def main():
     npm.add_argument("binaries", type=Path)
     npm.add_argument("output", type=Path)
     args = parser.parse_args()
+    if args.command == "set-version":
+        zon = ROOT / "build.zig.zon"
+        zon.write_text(with_version(zon.read_text(), args.version))
+        print(version())
+        return
     release_version = version()
 
     if args.command == "matrix":
