@@ -4,7 +4,7 @@ const builtin = @import("builtin");
 const values = @import("../../value.zig");
 const format = @import("png_format");
 const memory = @import("codec_memory");
-const zlib = @import("zlib_c");
+const zlib = @import("zlib.zig");
 
 const Filter = format.Filter;
 const Range = struct { first: usize, end: usize };
@@ -62,7 +62,11 @@ const Rows = struct {
     used: usize = 0,
     written: usize = 0,
 
-    fn consume(self: *Rows, output: []const u8) bool {
+    pub fn complete(self: *const Rows) bool {
+        return self.written == self.pixels.len and self.used == 0;
+    }
+
+    pub fn consume(self: *Rows, output: []const u8) bool {
         var raw = output;
         while (raw.len != 0) {
             if (self.used == 0 and raw.len >= self.partial.len) {
@@ -160,7 +164,7 @@ pub fn decode(bytes: []const u8, size: values.Size) memory.Error!?[]values.Pixel
         },
         .stride = stride,
     };
-    if (!try inflateRows(bytes, chunks.idat, scratch[0..inflate_bytes], &rows)) return null;
+    if (!try zlib.inflateRows(bytes[chunks.idat.first..chunks.idat.end], inflate_bytes, scratch[0..inflate_bytes], &rows)) return null;
     keep = true;
     return std.mem.bytesAsSlice(values.Pixel, pixels);
 }
@@ -206,64 +210,6 @@ fn collectChunks(bytes: []const u8, profile: Profile, palette: *[256]values.Pixe
         }
     }
     return null;
-}
-
-fn inflateRows(bytes: []const u8, range: Range, output: *[inflate_bytes]u8, rows: *Rows) memory.Error!bool {
-    // Match the legacy checksum policy, leaving unusual header/trailer splits
-    // to that decoder. The zlib header bounds the raw dictionary to 32 KiB.
-    var chunks: format.Chunks = .{ .bytes = bytes[0..range.end], .offset = range.first };
-    const first = chunks.next() orelse return false;
-    if (first.data.len < 2) return false;
-    const cmf, const flg = first.data[0..2].*;
-    if (cmf & 15 != zlib.Z_DEFLATED or cmf >> 4 > 7 or flg & 32 != 0 or (@as(u16, cmf) * 256 + flg) % 31 != 0) return false;
-    var stream: zlib.zng_stream = std.mem.zeroes(zlib.zng_stream);
-    stream.zalloc = zalloc;
-    stream.zfree = zfree;
-    switch (zlib.zng_inflateInit2(&stream, -(@as(c_int, cmf >> 4) + 8))) {
-        zlib.Z_OK => {},
-        zlib.Z_MEM_ERROR => return memory.failure(),
-        else => return false,
-    }
-    const success = consumeIdats(bytes, range, output, rows, &stream);
-    const closed = zlib.zng_inflateEnd(&stream) == zlib.Z_OK;
-    return (try success) and closed;
-}
-
-fn consumeIdats(bytes: []const u8, range: Range, output: *[inflate_bytes]u8, rows: *Rows, stream: *zlib.zng_stream) memory.Error!bool {
-    var chunks: format.Chunks = .{ .bytes = bytes[0..range.end], .offset = range.first };
-    while (chunks.next()) |chunk| {
-        const src = chunk.data;
-        const available = src.len;
-        const head: usize = if (chunk.offset == range.first) 2 else 0;
-        const tail: usize = if (chunk.end == range.end) 4 else 0;
-        if (available < head + tail) return false;
-        stream.next_in = src[head..].ptr;
-        // The chunk length originates in a validated u32 PNG length.
-        stream.avail_in = @intCast(available - head - tail);
-        while (true) {
-            stream.next_out = output;
-            stream.avail_out = inflate_bytes;
-            const status = zlib.zng_inflate(stream, zlib.Z_NO_FLUSH);
-            switch (status) {
-                zlib.Z_OK, zlib.Z_STREAM_END, zlib.Z_BUF_ERROR => {},
-                zlib.Z_MEM_ERROR => return memory.failure(),
-                else => return false,
-            }
-            if (!rows.consume(output[0 .. inflate_bytes - stream.avail_out])) return false;
-            if (status == zlib.Z_STREAM_END) return rows.written == rows.pixels.len and rows.used == 0;
-            if (stream.avail_out != 0 and stream.avail_in == 0) break;
-            if (status == zlib.Z_BUF_ERROR) return false;
-        }
-    }
-    return false;
-}
-
-fn zalloc(_: ?*anyopaque, items: c_uint, size: c_uint) callconv(.c) ?*anyopaque {
-    return memory.uidiff_codec_malloc(std.math.mul(usize, items, size) catch return null);
-}
-
-fn zfree(_: ?*anyopaque, block: ?*anyopaque) callconv(.c) void {
-    memory.uidiff_codec_free(block);
 }
 
 fn unfilter(comptime lanes: usize, dst: []u8, src: []const u8, above: ?[]const u8, filter: Filter) void {

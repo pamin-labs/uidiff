@@ -7,6 +7,7 @@ const memory = @import("codec_memory");
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
 const zlib = @import("zlib_c");
+const format = @import("png_format");
 const Image = values.Image;
 
 /// The uncompressed history carried into the next raw deflate strip.
@@ -146,6 +147,61 @@ pub fn chunk(output: *Writer, comptime kind: *const [4]u8, data: []const u8) Wri
     try output.writeInt(u32, checksum, .big);
 }
 
+/// Inflates contiguous IDAT chunks into a row sink with consume(bytes) and
+/// complete() methods. The caller has entered a decode allocation scope.
+pub fn inflateRows(bytes: []const u8, comptime output_bytes: usize, output: *[output_bytes]u8, rows: anytype) memory.Error!bool {
+    // Match the legacy checksum policy, leaving unusual header/trailer splits
+    // to that decoder. The zlib header bounds the raw dictionary to 32 KiB.
+    const Sink = @TypeOf(rows.*);
+    if (!@hasDecl(Sink, "consume") or !@hasDecl(Sink, "complete"))
+        @compileError("a PNG row sink must provide consume(bytes) and complete()");
+    var chunks: format.Chunks = .{ .bytes = bytes, .offset = 0 };
+    const first = chunks.next() orelse return false;
+    if (first.data.len < 2) return false;
+    const cmf, const flg = first.data[0..2].*;
+    if (cmf & 15 != zlib.Z_DEFLATED or cmf >> 4 > 7 or flg & 32 != 0 or (@as(u16, cmf) * 256 + flg) % 31 != 0) return false;
+    var stream: zlib.zng_stream = std.mem.zeroes(zlib.zng_stream);
+    stream.zalloc = inflateAlloc;
+    stream.zfree = inflateFree;
+    switch (zlib.zng_inflateInit2(&stream, -(@as(c_int, cmf >> 4) + 8))) {
+        zlib.Z_OK => {},
+        zlib.Z_MEM_ERROR => return memory.failure(),
+        else => return false,
+    }
+    const success = consumeIdats(bytes, output_bytes, output, rows, &stream);
+    const closed = zlib.zng_inflateEnd(&stream) == zlib.Z_OK;
+    return (try success) and closed;
+}
+
+fn consumeIdats(bytes: []const u8, comptime output_bytes: usize, output: *[output_bytes]u8, rows: anytype, stream: *zlib.zng_stream) memory.Error!bool {
+    var chunks: format.Chunks = .{ .bytes = bytes, .offset = 0 };
+    while (chunks.next()) |idat| {
+        const src = idat.data;
+        const available = src.len;
+        const head: usize = if (idat.offset == 0) 2 else 0;
+        const tail: usize = if (idat.end == bytes.len) 4 else 0;
+        if (available < head + tail) return false;
+        stream.next_in = src[head..].ptr;
+        // The chunk length originates in a validated u32 PNG length.
+        stream.avail_in = @intCast(available - head - tail);
+        while (true) {
+            stream.next_out = output;
+            stream.avail_out = output_bytes;
+            const status = zlib.zng_inflate(stream, zlib.Z_NO_FLUSH);
+            switch (status) {
+                zlib.Z_OK, zlib.Z_STREAM_END, zlib.Z_BUF_ERROR => {},
+                zlib.Z_MEM_ERROR => return memory.failure(),
+                else => return false,
+            }
+            if (!rows.consume(output[0 .. output_bytes - stream.avail_out])) return false;
+            if (status == zlib.Z_STREAM_END) return rows.complete();
+            if (stream.avail_out != 0 and stream.avail_in == 0) break;
+            if (status == zlib.Z_BUF_ERROR) return false;
+        }
+    }
+    return false;
+}
+
 fn initStream(stream: *zlib.zng_stream, allocator: *Allocator, window: c_int) EncodeError!void {
     stream.* = std.mem.zeroes(zlib.zng_stream);
     stream.zalloc = zalloc;
@@ -164,6 +220,13 @@ fn endStream(stream: *zlib.zng_stream) void {
     std.debug.assert(status == zlib.Z_OK or status == zlib.Z_DATA_ERROR);
 }
 
+fn inflateAlloc(_: ?*anyopaque, items: c_uint, size: c_uint) callconv(.c) ?*anyopaque {
+    return memory.uidiff_codec_malloc(std.math.mul(usize, items, size) catch return null);
+}
+
+fn inflateFree(_: ?*anyopaque, block: ?*anyopaque) callconv(.c) void {
+    memory.uidiff_codec_free(block);
+}
 fn zalloc(context: ?*anyopaque, items: c_uint, size: c_uint) callconv(.c) ?*anyopaque {
     // initStream supplies a pointer to an allocator that outlives the stream.
     const allocator: *const Allocator = @ptrCast(@alignCast(context));
