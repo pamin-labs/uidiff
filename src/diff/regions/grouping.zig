@@ -159,8 +159,8 @@ pub const Placement = struct {
     }
 };
 
-/// Rows of a mask, inclusive.
-const RowRange = struct { first: usize, last: usize };
+/// Inclusive endpoints of a row or column span in the fill.
+const InclusiveSpan = struct { first: usize, last: usize };
 
 /// A scanline flood fill whose seed stack is bounded. Queued pixels are
 /// marked in the mask, so a seed that does not fit is found again by
@@ -170,7 +170,7 @@ const Fill = struct {
     seeds: []u32,
     len: usize = 0,
     /// Rows holding queued pixels that did not fit in seeds.
-    pending: ?RowRange = null,
+    pending: ?InclusiveSpan = null,
 
     fn push(self: *Fill, index: usize) void {
         self.mask.cells[index] = .queued;
@@ -210,7 +210,7 @@ const Fill = struct {
 
     /// Clears the run holding index and queues the runs touching it above and
     /// below. Returns the run's columns, or null when it was already cleared.
-    fn run(self: *Fill, index: usize) ?RowRange {
+    fn run(self: *Fill, index: usize) ?InclusiveSpan {
         const cells = self.mask.cells;
         if (cells[index] == .clear) return null;
         const width = self.mask.width;
@@ -363,7 +363,7 @@ fn nearby(a: ?Box, b: ?Box, gap_px: f64) bool {
         p.y <= q.bottom() + gap_px and q.y <= p.bottom() + gap_px;
 }
 
-fn widen(range: ?RowRange, more: RowRange) RowRange {
+fn widen(range: ?InclusiveSpan, more: InclusiveSpan) InclusiveSpan {
     const known = range orelse return more;
     return .{ .first = @min(known.first, more.first), .last = @max(known.last, more.last) };
 }
