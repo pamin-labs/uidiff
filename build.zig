@@ -152,6 +152,10 @@ pub fn build(b: *Build) void {
     const cli_library = if (cli_mode == .shipped_lto) b.createModule(lib) else uidiff;
     if (cli_mode == .shipped_lto) linkShippedCodecs(b, cli_library, target, x86_simd, cli_mode);
 
+    const version = packageVersion(b);
+    const cli_options = b.addOptions();
+    cli_options.addOption([]const u8, "version", version);
+    const cli_config = cli_options.createModule();
     const cli = b.addExecutable(.{
         .name = cli_name,
         .use_lld = if (cli_mode == .shipped_lto) true else null,
@@ -163,7 +167,10 @@ pub fn build(b: *Build) void {
             // The stripped CLI emits message-only panics. Windows retains
             // the unwind metadata used by its exception machinery.
             .unwind_tables = if (optimize != .debug and target.result.os.tag != .windows) .none else null,
-            .imports = &.{.{ .name = "uidiff", .module = cli_library }},
+            .imports = &.{
+                .{ .name = "uidiff", .module = cli_library },
+                .{ .name = "cli_options", .module = cli_config },
+            },
         }),
     });
     // Keep the Windows Zig and CRT objects native. LLD can still optimize the C archives.
@@ -174,12 +181,24 @@ pub fn build(b: *Build) void {
     addSizeCheck(b, install_cli);
     const generator = fixtureGenerator(b, target, decoders);
     const host_generator = if (target.query.isNative()) generator else fixtureGenerator(b, b.graph.host, addDecoders(b, b.graph.host));
-    addTests(b, target, test_mode, decoders, install_cli, host_generator, x86_simd);
+    addTests(b, target, test_mode, decoders, install_cli, host_generator, x86_simd, cli_config, version);
     addThreadedTest(b, target, decoders);
     addPngTestGates(b, target, test_mode, decoders);
     addBenchmark(b, target, optimize, uidiff);
     const fixture_build = b.step("fixture-generator", "Build the fixture generator for the selected target");
     fixture_build.dependOn(&generator.step);
+}
+
+fn packageVersion(b: *Build) []const u8 {
+    var diagnostics: std.zon.parse.Diagnostics = undefined;
+    const manifest = std.zon.parse.fromSlice(struct { version: []const u8 }, .{
+        .gpa = b.allocator,
+        .arena = b.allocator,
+        .source = @embedFile("build.zig.zon"),
+        .diagnostics = &diagnostics,
+        .ignore_unknown_fields = true,
+    }) catch |err| std.process.fatal("cannot read package version from build.zig.zon: {t}", .{err});
+    return manifest.version;
 }
 
 /// The library module's options, without its C decoders.
@@ -652,10 +671,10 @@ fn addSizeCheck(b: *Build, install_cli: *Build.Step.InstallArtifact) void {
     b.step("size", "Check the CLI binary against its size budget").dependOn(&run.step);
 }
 
-fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoders: Decoders, install_cli: *Build.Step.InstallArtifact, host_generator: *Build.Step.Compile, x86_simd: X86Simd) void {
+fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoders: Decoders, install_cli: *Build.Step.InstallArtifact, host_generator: *Build.Step.Compile, x86_simd: X86Simd, cli_config: *Build.Module, version: []const u8) void {
     const uidiff = addCheckedLibrary(b, target, optimize, decoders, x86_simd);
     const cases = b.createModule(.{ .root_source_file = b.path("tests/fixtures.zig"), .target = target, .optimize = optimize });
-    _ = addE2e(b, target, optimize, uidiff, cases, install_cli);
+    _ = addE2e(b, target, optimize, uidiff, cases, install_cli, version);
     const filter = b.option([]const u8, "test-filter", "Run only the library's unit tests that match");
     const step = b.step("test", "Run unit, layer, order, fixture and fuzz-corpus tests");
     if (filter) |pattern| {
@@ -689,6 +708,7 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
             .optimize = mode,
             .imports = &.{ .{ .name = "uidiff", .module = tested }, .{ .name = "fixtures", .module = cases } },
         });
+        if (std.mem.eql(u8, source, cli_source)) test_module.addImport("cli_options", cli_config);
         step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = test_module })).step);
         if (index < fuzz_sources.len) addFuzzInventory(b, inventory, test_module);
     }
@@ -792,10 +812,11 @@ fn addRequiredTest(b: *Build, library: *Build.Module, name: []const u8, descript
     b.step(name, description).dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = library, .filters = filters })).step);
 }
 
-fn addE2e(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, uidiff: *Build.Module, cases: *Build.Module, install_cli: *Build.Step.InstallArtifact) *Build.Step {
+fn addE2e(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, uidiff: *Build.Module, cases: *Build.Module, install_cli: *Build.Step.InstallArtifact, version: []const u8) *Build.Step {
     const options = b.addOptions();
     options.addOptionPathUntracked("executable", .{ .relative = .{ .base = .install_bin, .sub_path = install_cli.artifact.out_filename } });
     options.addOption([]const u8, "usage", @embedFile("src/cli/usage.txt"));
+    options.addOption([]const u8, "version", version);
     const runner = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/e2e.zig"),

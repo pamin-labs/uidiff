@@ -63,6 +63,7 @@ Named build modules, and the only files that may import them. The `export` row n
 | `diff_scenarios` | `tests/diff/` |
 | `fixtures` | `tests/e2e.zig` `tests/decode.zig` `tests/fuzz/` |
 | `e2e_options` | `tests/e2e.zig` |
+| `cli_options` | `src/cli.zig` |
 | `fixture_options` | `tests/fixtures/fresh.zig` |
 | `required_test_options` | `src/root.zig` |
 | `export` | `src/codec/memory.zig` |

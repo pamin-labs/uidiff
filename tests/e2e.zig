@@ -72,6 +72,14 @@ test "the count output names one region in the singular" {
     try testing.expectEqualStrings(single_region_output, result.stdout);
 }
 
+test "the CLI prints the package version from build.zig.zon" {
+    const result = try run(.inherit, 1, .{"--version"});
+    defer free(result);
+    try status(result, 0);
+    try testing.expectEqualStrings(options.version ++ "\n", result.stdout);
+    try testing.expectEqualStrings("", result.stderr);
+}
+
 test "an annotated sheet is written atomically beside a normal report" {
     const spec = comptime fixtures.find(.edit);
     var tmp = testing.tmpDir(.{});

@@ -7,6 +7,7 @@ const Flag = enum {
     json,
     annotate,
     help,
+    version,
 
     fn spelling(comptime self: Flag) [:0]const u8 {
         return "--" ++ @tagName(self);
@@ -20,6 +21,9 @@ const Flag = enum {
 
 /// What the command prints on standard output.
 pub const Output = enum { count, json };
+
+/// The information requested by a standalone flag.
+pub const Info = enum { help, version };
 
 /// Parsed paths and output options. Path slices borrow the arguments.
 pub const Command = struct {
@@ -38,9 +42,14 @@ const max_fuzz_args = 8;
 const max_fuzz_arg_bytes = 8;
 const fuzz_words = [_][:0]const u8{ Flag.json.spelling(), Flag.scale.spelling(), Flag.annotate.spelling(), "2", "1.5", "0x10", "1_0", "out.png" };
 
-/// Reports whether the command is asking for help.
-pub fn wantsHelp(args: []const [:0]const u8) bool {
-    return args.len == 2 and Flag.fromArgument(args[1]) == .help;
+/// Recognises an information request with no other arguments. It compares the
+/// two spellings directly: going through `Flag.fromArgument` here measured
+/// about 1.2 KB larger on Linux ReleaseSafe.
+pub fn infoRequest(args: []const [:0]const u8) ?Info {
+    if (args.len != 2) return null;
+    if (std.mem.eql(u8, args[1], Flag.help.spelling())) return .help;
+    if (std.mem.eql(u8, args[1], Flag.version.spelling())) return .version;
+    return null;
 }
 
 /// Parses paths and flags from process arguments.
@@ -92,8 +101,8 @@ fn fuzzParse(_: void, smith: *std.testing.Smith) !void {
 
 test "usage agrees with every flag spelling" {
     const expected = comptime std.fmt.comptimePrint(
-        "Usage: uidiff <before> <after> [{s} N] [{s}] [{s} <out.png>]\n       uidiff {s}\n",
-        .{ Flag.scale.spelling(), Flag.json.spelling(), Flag.annotate.spelling(), Flag.help.spelling() },
+        "Usage: uidiff <before> <after> [{s} N] [{s}] [{s} <out.png>]\n       uidiff {s}\n       uidiff {s}\n",
+        .{ Flag.scale.spelling(), Flag.json.spelling(), Flag.annotate.spelling(), Flag.help.spelling(), Flag.version.spelling() },
     );
     try std.testing.expectEqualStrings(expected, usage);
 }

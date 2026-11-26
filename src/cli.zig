@@ -2,6 +2,7 @@
 const std = @import("std");
 const uidiff = @import("uidiff");
 const args = @import("cli/args.zig");
+const cli_options = @import("cli_options");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
@@ -49,9 +50,13 @@ pub fn main(init: std.process.Init.Minimal) MainError!u8 {
 
 fn run(io: Io, allocator: Allocator, input: std.process.Args, arena: Allocator, diagnostics: *uidiff.Diagnostics) RunError!Exit {
     const argv = try input.toSlice(arena);
-    if (args.wantsHelp(argv)) {
+    if (args.infoRequest(argv)) |request| {
         diagnostics.path = stdout_name;
-        try Io.File.stdout().writeStreamingAll(io, args.usage);
+        const message = switch (request) {
+            .help => args.usage,
+            .version => cli_options.version ++ "\n",
+        };
+        try Io.File.stdout().writeStreamingAll(io, message);
         diagnostics.path = null;
         return .unchanged;
     }
