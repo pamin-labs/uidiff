@@ -1,14 +1,31 @@
 <h1 align="center">uidiff</h1>
 
-<p align="center"><b>What changed between two screenshots, at a glance.</b><br>
-Compare two captures and get a sheet with detected changes boxed, numbered and labelled.</p>
+<p align="center"><b>See exactly what changed between two screenshots.</b><br>
+Moved content is lined up, and every real edit is boxed, numbered and labelled as changed, inserted or removed.</p>
 
 <p align="center">
   <img src="docs/images/desktop.png" alt="Desktop chat comparison with one removed message, one inserted message, and one bubble whose shade changed slightly" width="100%"><br>
   <sub>One message removed, one inserted, and one bubble a few shades lighter: easy to miss by eye, boxed by uidiff.</sub>
 </p>
 
-A pixel diff tells you which pixels differ, so one inserted row paints everything below it. uidiff tells you what changed: it lines up rows that only moved, boxes each real edit, labels it **changed**, **inserted** or **removed**, and reports how far the rest moved.
+- **Changes, not pixels.** A pixel diff paints everything below an inserted row. uidiff aligns what only moved and reports it as one shift with its offset, so only real edits get a box.
+- **Catches what eyes miss.** A colour a few shades off or a single changed word is boxed and shown side by side in a close-up.
+- **One small native binary.** About 600 KB, no runtime, roughly 11 ms for a 2560×1600 pair. PNG, JPEG and WebP in; a sheet and JSON out.
+
+## Quick start
+
+```sh
+curl -fsSL https://uidiff.paminlabs.com/install.sh | sh
+uidiff before.png after.png --scale 2 --annotate sheet.png
+```
+
+On Windows, in PowerShell:
+
+```powershell
+irm https://uidiff.paminlabs.com/install.ps1 | iex
+```
+
+[Homebrew, npm and other options](#more-ways-to-install) are below.
 
 ## When to use it
 
@@ -18,7 +35,51 @@ A pixel diff tells you which pixels differ, so one inserted row paints everythin
 - **Long pages and feeds.** Inserted or removed content moves everything below it; uidiff reports that as one shifted block with its offset, not as a page of differences.
 - **Any platform with screenshots.** It reads only the two images, so the same command works for websites, iOS and Android apps, desktop apps, games, canvas and mini programs.
 
-## Why uidiff
+## What you get
+
+### The sheet
+
+`--annotate sheet.png` draws the before and after panes with numbered boxes: amber for changed, green for inserted, red for removed. The gutter between them shows which rows stayed and which shifted, and by how much. Each change gets a close-up of both sides below the panes.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/phone-insert.png" alt="Phone chat sheet showing one inserted message and a downward shift"></td>
+    <td width="50%"><img src="docs/images/phone-list.png" alt="Phone chat-list sheet showing two changed regions, one inserted row, and a block moved down"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>One message inserted. The gutter shows the thread moving down.</sub></td>
+    <td align="center"><sub>Two changed regions and one inserted row. A block of rows shifted down.</sub></td>
+  </tr>
+</table>
+
+### The report
+
+`--json` prints one object for scripts, CI and agents. This is the report for the comparison at the top of this page, shortened to one move:
+
+```json
+{
+  "version": 1,
+  "width": 2560,
+  "height": 1600,
+  "regions": [
+    { "number": 1, "kind": "removed",
+      "before": { "x": 1531, "y": 787, "width": 857, "height": 165 }, "after": null },
+    { "number": 2, "kind": "changed",
+      "before": { "x": 1746, "y": 1114, "width": 642, "height": 204 },
+      "after":  { "x": 1746, "y": 924, "width": 642, "height": 204 } },
+    { "number": 3, "kind": "inserted",
+      "before": null, "after": { "x": 1346, "y": 1136, "width": 1042, "height": 100 } }
+  ],
+  "moves": [
+    { "x": 860, "width": 1520,
+      "before": { "y": 968, "height": 366 }, "after": { "y": 778, "height": 366 } }
+  ]
+}
+```
+
+Boxes are in device pixels. A region has a box on each side where it exists. A move's offset is its after `y` minus its before `y`, here −190 px.
+
+## How it compares
 
 **One native binary and a report with labelled changes.** In the CLI comparison below, uidiff took less time and peak memory than pixelmatch, odiff and Iris. The accuracy rows cover 115 real and synthetic screenshot pairs with hand-checked ground truth. Pixel masks were grouped into boxes for scoring.
 
@@ -35,69 +96,7 @@ A pixel diff tells you which pixels differ, so one inserted row paints everythin
 
 <sub>Timings are medians from 15 rotated rounds on Arm64 macOS. The uidiff column was refreshed independently on the same pair. Each comparison starts a new process. uidiff writes JSON, and Iris and pixelmatch include Node startup. See the <a href="bench/README.md">benchmark method</a>.</sub>
 
-## The sheet
-
-`--annotate sheet.png` draws before and after panes, with numbered boxes in amber for changed regions, green for insertions and red for removals. The gutter shows stationary and shifted rows. Numbered close-ups appear below the panes. Panoramic captures use stacked overview strips.
-
-<table>
-  <tr>
-    <td width="50%"><img src="docs/images/phone-insert.png" alt="Phone chat sheet showing one inserted message and a downward shift"></td>
-    <td width="50%"><img src="docs/images/phone-list.png" alt="Phone chat-list sheet showing two changed regions, one inserted row, and a block moved down"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>One message inserted. The alignment gutter shows the thread moving down.</sub></td>
-    <td align="center"><sub>Two changed regions and one inserted row. A block of rows shifted down.</sub></td>
-  </tr>
-</table>
-
-Render the procedural phone fixture with a local build.
-
-```sh
-zig build
-zig-out/bin/uidiff tests/fixtures/images/phone-light/before.png tests/fixtures/images/phone-light/after.png --scale 2 --annotate sheet.png
-```
-
-## The report
-
-`--json` prints each region's number, kind and box on each side, the before and after row ranges for moved content, and the canvas size. Subtract the before row's `y` from the after row's `y` for the signed offset. The exit code distinguishes a clean comparison, detected change regions and errors.
-
-## Install
-
-In a project, add it as a dev dependency so every machine and CI run uses the same version. npm picks the binary for the platform:
-
-```sh
-npm install --save-dev @pamin-labs/uidiff
-npx uidiff before.png after.png
-```
-
-As a command on your machine, with Homebrew on macOS or Linux:
-
-```sh
-brew install pamin-labs/tap/uidiff
-```
-
-Without npm or Homebrew, the install scripts download from uidiff.paminlabs.com, which also works where GitHub is unreachable. On macOS and Linux (x64 or arm64):
-
-```sh
-curl -fsSLO https://uidiff.paminlabs.com/install.sh
-sh install.sh
-```
-
-On Windows (x64 or arm64) in PowerShell:
-
-```powershell
-Invoke-WebRequest -UseBasicParsing https://uidiff.paminlabs.com/install.ps1 -OutFile install.ps1
-.\install.ps1
-```
-
-The installers verify the binary against `SHA256SUMS` and print the installed
-path under `~/.local/bin` or `%LOCALAPPDATA%\Programs\uidiff`. Set
-`UIDIFF_VERSION` to select a specific release, with or without the leading `v`.
-
-The [releases page](https://github.com/pamin-labs/uidiff/releases) also has
-standalone binaries, archives with license notices and checksums.
-
-## Use
+## Usage
 
 ```text
 uidiff <before> <after> [--scale N] [--json] [--annotate <out.png>]
@@ -118,13 +117,30 @@ uidiff --help
 | `1` | Change regions found. |
 | `2` | A comparison or usage error, reported on stderr. |
 
+For the best results, freeze animations, carets and timers, and keep fonts, locale and device scale the same for both captures.
+
+## More ways to install
+
+In a project, add it as a dev dependency so every machine and CI run uses the same version. npm picks the binary for the platform:
+
 ```sh
-uidiff before.png after.png --scale 2                          # "3 regions"
-uidiff before.png after.png --scale 2 --json > report.json
-uidiff before.png after.png --scale 2 --annotate sheet.png
+npm install --save-dev @pamin-labs/uidiff
+npx uidiff before.png after.png
 ```
 
-For the best results, freeze animations, carets and timers, and keep fonts, locale and device scale the same for both captures.
+With Homebrew on macOS or Linux:
+
+```sh
+brew install pamin-labs/tap/uidiff
+```
+
+The install scripts download from uidiff.paminlabs.com, which also works where GitHub is unreachable. They verify the binary against `SHA256SUMS` and install it to `~/.local/bin` or `%LOCALAPPDATA%\Programs\uidiff`. Set `UIDIFF_VERSION` to pick a release, with or without the leading `v`:
+
+```sh
+curl -fsSL https://uidiff.paminlabs.com/install.sh | UIDIFF_VERSION=0.0.1 sh
+```
+
+The [releases page](https://github.com/pamin-labs/uidiff/releases) also has standalone binaries, archives with license notices and checksums.
 
 ## Agent skill
 
@@ -137,3 +153,7 @@ npx skills remove uidiff                # remove it
 ```
 
 Inside a project the skill is recorded in `skills-lock.json`; commit it, and `npx skills install` restores the same version on another machine.
+
+## License
+
+MIT. Third-party notices are in [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES).
