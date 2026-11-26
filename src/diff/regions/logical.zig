@@ -228,22 +228,9 @@ test "one-sided stacks join across a blank seam but keep painted rows separate" 
 test {
     const canvas = @import("uidiff_test_canvas").Painters(values.Image);
     const moves_rules = @import("moves.zig");
-    const before = try canvas.Canvas.init(480, 164);
+    const before, const after = try canvas.compactCardEdits();
     defer before.deinit();
-    const after = try canvas.Canvas.init(480, 164);
     defer after.deinit();
-    for ([_]canvas.Canvas{ before, after }) |image| {
-        for ([_]usize{ 20, 254 }) |left| {
-            image.fill(left, 20, 198, 112, canvas.inkShade(120, 4));
-            image.fill(left + 2, 22, 194, 108, canvas.inkShade(240, 4));
-        }
-    }
-    for ([_]usize{ 52, 286 }) |left| {
-        before.fill(left, 44, 40, 12, canvas.inkShade(64, 4));
-        after.fill(left, 44, 56, 12, canvas.inkShade(72, 4));
-        before.fill(left, 70, 68, 22, canvas.inkShade(64, 4));
-        after.fill(left, 70, 82, 22, canvas.inkShade(72, 4));
-    }
     const label = Box.fromPixels(52, 44, 56, 12);
     const value = Box.fromPixels(52, 70, 82, 22);
     var candidates = [_]pending.Candidate{

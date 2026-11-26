@@ -15,6 +15,7 @@ test "the halo and color stroke leave the changed pixels uncovered" {
     const sheet = try uidiff.renderComparisonSheet(allocator, image, image, &.{changed}, &.{});
     defer sheet.deinit(allocator);
 
+    // Screen-space samples capture the original halo and its protected interior.
     const line = sheet.image().row(434);
     const x = 368;
     try std.testing.expectEqual(source, line[x]);

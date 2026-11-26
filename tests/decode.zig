@@ -2,6 +2,7 @@
 //! allocation failure, and headers past the image bounds.
 const std = @import("std");
 const uidiff = @import("uidiff");
+const canvas = @import("uidiff_testing").canvas;
 const fixtures = @import("fixtures");
 const testing = std.testing;
 
@@ -12,7 +13,7 @@ fn decodeSamples(allocator: std.mem.Allocator) !void {
         var decoded = try uidiff.decode(allocator, bytes);
         defer decoded.deinit();
         try testing.expectEqual(uidiff.Size{ .width = fixtures.blank.width * fixtures.scale, .height = fixtures.blank.height * fixtures.scale }, decoded.image.size());
-        for (decoded.image.pixels) |pixel| try testing.expectEqual(@import("uidiff_testing").canvas.white, pixel);
+        for (decoded.image.pixels) |pixel| try testing.expectEqual(canvas.white, pixel);
     }
 }
 

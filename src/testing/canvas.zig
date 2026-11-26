@@ -221,6 +221,26 @@ pub fn Painters(comptime Image: type) type {
             }
         }
 
+        /// Draws adjacent cards with independent label and value edits. The caller owns both canvases.
+        pub fn compactCardEdits() Allocator.Error![2]Canvas {
+            const before = try Canvas.init(480, 164);
+            errdefer before.deinit();
+            const after = try Canvas.init(480, 164);
+            for ([_]Canvas{ before, after }) |image| {
+                for ([_]usize{ 20, 254 }) |left| {
+                    image.fill(left, 20, 198, 112, inkShade(120, 4));
+                    image.fill(left + 2, 22, 194, 108, inkShade(240, 4));
+                }
+            }
+            for ([_]usize{ 52, 286 }) |left| {
+                before.fill(left, 44, 40, 12, inkShade(64, 4));
+                after.fill(left, 44, 56, 12, inkShade(72, 4));
+                before.fill(left, 70, 68, 22, inkShade(64, 4));
+                after.fill(left, 70, 82, 22, inkShade(72, 4));
+            }
+            return .{ before, after };
+        }
+
         /// Paints a list of cards with an optional insertion.
         pub fn fillCardList(canvas: Canvas, inserted: ?usize) void {
             for (0..13) |index| {
