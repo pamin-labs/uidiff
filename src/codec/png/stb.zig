@@ -102,8 +102,8 @@ fn budget(header: Header, encoded_len: usize, cap: usize) ?usize {
 fn oversizedPng(bytes: []const u8) bool {
     if (bytes.len < png_format.header_bytes or !std.mem.startsWith(u8, bytes, png_format.header_prefix)) return false;
     const offset = png_format.dimensions_offset;
-    const width: u32 = std.mem.readInt(u32, bytes[offset..][0..4], .big);
-    const height: u32 = std.mem.readInt(u32, bytes[offset + 4 ..][0..4], .big);
+    const width: u32 = png_format.readU32(bytes, offset);
+    const height: u32 = png_format.readU32(bytes, offset + @sizeOf(u32));
     if (width == 0 or height == 0) return false;
     const size: Size = .{
         .width = std.math.cast(usize, width) orelse return true,
@@ -127,8 +127,7 @@ test "PNG headers outside the image limits report ImageTooLarge" {
         const dimensions: [8]u8 = @splat(0);
         var header = (png_format.header_prefix ++ dimensions ++
             [_]u8{ png_format.sample_depth, @backingInt(png_format.Colour.rgba), 0, 0, 0 }).*;
-        std.mem.writeInt(u32, header[png_format.dimensions_offset..][0..4], case.width, .big);
-        std.mem.writeInt(u32, header[png_format.dimensions_offset + 4 ..][0..4], case.height, .big);
+        png_format.writeDimensions(header[png_format.dimensions_offset..][0..png_format.dimensions_bytes], case.width, case.height);
         try std.testing.expectError(case.expected, probe(std.testing.allocator, &header, values.max_decode_bytes));
     }
 }

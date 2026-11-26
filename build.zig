@@ -729,6 +729,7 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
                 .{ .name = "fixtures", .module = cases },
             },
         });
+        if (index == fuzz_sources.len) test_module.addImport("png_format", decoders.png_format);
         if (std.mem.eql(u8, source, cli_source)) test_module.addImport("cli_options", cli_config);
         step.dependOn(&b.addRunArtifact(b.addTest(.{
             .root_module = test_module,
@@ -926,6 +927,7 @@ fn fixtureGenerator(b: *Build, target: Build.ResolvedTarget, decoders: Decoders)
         .link_libc = true,
         .imports = &.{
             .{ .name = "uidiff", .module = library },
+            .{ .name = "png_format", .module = decoders.png_format },
             .{ .name = "stb_write_c", .module = stb_write.createModule() },
             .{ .name = "webp_encode_c", .module = webp_encode.createModule() },
             .{ .name = "codec_memory", .module = decoders.memory },

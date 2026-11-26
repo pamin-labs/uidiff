@@ -35,11 +35,11 @@ const Chunks = struct {
 const Samples = struct {
     current: []u8,
     previous: []u8,
-    color: union(enum) { gray, indexed: []const values.Pixel },
+    colour: union(enum) { gray, indexed: []const values.Pixel },
 
     fn expand(self: *const Samples, dst: []u8) bool {
         const pixels = std.mem.bytesAsSlice(values.Pixel, dst);
-        switch (self.color) {
+        switch (self.colour) {
             .gray => for (pixels, self.current) |*out, gray| {
                 out.* = .{ gray, gray, gray, 255 };
             },
@@ -121,9 +121,9 @@ const inflate_bytes = if (builtin.os.tag == .macos and builtin.cpu.arch == .aarc
 /// Recognizes a noninterlaced 8-bit profile from its IHDR fields.
 pub fn streamingProfile(bytes: []const u8) ?Profile {
     if (bytes.len < format.header_bytes or !std.mem.startsWith(u8, bytes, format.header_prefix)) return null;
-    const depth, const color, const compression, const filtering, const interlace = bytes[format.profile_offset..][0..5].*;
+    const depth, const colour, const compression, const filtering, const interlace = bytes[format.profile_offset..][0..5].*;
     if (depth != format.sample_depth or compression != 0 or filtering != 0 or interlace != 0) return null;
-    return std.enums.fromInt(Profile, color);
+    return std.enums.fromInt(Profile, colour);
 }
 
 /// Decodes a validated size into codec-budget-owned pixels, or returns null
@@ -163,7 +163,7 @@ pub fn decode(bytes: []const u8, size: values.Size) memory.Error!?[]values.Pixel
             .gray, .indexed => .{ .samples = .{
                 .current = expansion[0..width],
                 .previous = expansion[width..],
-                .color = if (profile == .gray) .gray else .{ .indexed = chunks.palette },
+                .colour = if (profile == .gray) .gray else .{ .indexed = chunks.palette },
             } },
         },
         .stride = stride,
@@ -186,18 +186,18 @@ fn collectChunks(bytes: []const u8, profile: Profile, palette: *[256]values.Pixe
         const size = chunk.data.len;
         const kind = chunk.kind;
         switch (@as(u32, @bitCast(kind))) {
-            @as(u32, @bitCast(@as([4]u8, "IDAT".*))) => {
+            @as(u32, @bitCast(@as([4]u8, format.idat_type.*))) => {
                 if (profile == .indexed and palette_len == 0) return null;
                 if (range) |prior| {
                     if (prior.end != start) return null;
                     range = .{ .first = prior.first, .end = end };
                 } else range = .{ .first = start, .end = end };
             },
-            @as(u32, @bitCast(@as([4]u8, "IEND".*))) => {
+            @as(u32, @bitCast(@as([4]u8, format.iend_type.*))) => {
                 if (size != 0) return null;
                 return .{ .idat = range orelse return null, .palette = palette[0..palette_len] };
             },
-            @as(u32, @bitCast(@as([4]u8, "PLTE".*))) => {
+            @as(u32, @bitCast(@as([4]u8, format.plte_type.*))) => {
                 if (profile != .indexed or range != null or palette_len != 0) return null;
                 if (size == 0 or size % rgb_channels != 0 or size > palette.len * rgb_channels) return null;
                 const data = chunk.data;
@@ -206,7 +206,7 @@ fn collectChunks(bytes: []const u8, profile: Profile, palette: *[256]values.Pixe
                     pixel.* = rgb ++ [1]u8{255};
                 }
             },
-            @as(u32, @bitCast(@as([4]u8, "tRNS".*))) => {
+            @as(u32, @bitCast(@as([4]u8, format.trns_type.*))) => {
                 if (profile != .indexed or range != null or has_alpha or palette_len == 0 or size > palette_len) return null;
                 const data = chunk.data;
                 for (palette[0..size], data) |*pixel, alpha| pixel[3] = alpha;

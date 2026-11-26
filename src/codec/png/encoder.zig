@@ -82,7 +82,7 @@ pub fn writeRowsWithIo(io: ?Io, allocator: Allocator, size: values.Size, source:
     } else {
         try writeSerial(allocator, size, source, output, rgb_only);
     }
-    try zlib.chunk(output, "IEND", "");
+    try zlib.chunk(output, png_format.iend_type, "");
 }
 
 fn writeSerial(allocator: Allocator, size: values.Size, source: anytype, output: *Writer, rgb_only: bool) zlib.EncodeError!void {
@@ -326,7 +326,7 @@ test "an encoded image starts with the PNG signature and ends with IEND" {
     defer out.deinit();
     try write(std.testing.allocator, .{ .width = 2, .height = 1, .pixels = &pixels }, &out.writer);
     try std.testing.expect(std.mem.startsWith(u8, out.written(), png_format.signature));
-    try std.testing.expect(std.mem.endsWith(u8, out.written(), "IEND\xae\x42\x60\x82"));
+    try std.testing.expect(std.mem.endsWith(u8, out.written(), png_format.iend_type ++ "\xae\x42\x60\x82"));
 }
 
 test "each emitted chunk carries the PNG checksum" {

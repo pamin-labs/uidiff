@@ -56,7 +56,7 @@ Named build modules, and the only files that may import them. The `export` row n
 
 | Module | Importers |
 | --- | --- |
-| `png_format` | `src/codec/png.zig` `src/codec/png/` `tests/e2e.zig` |
+| `png_format` | `src/codec/png.zig` `src/codec/png/` `tests/e2e.zig` `tests/decode.zig` `tests/fixtures/generate.zig` |
 | `stb_c` | `src/codec/png/stb.zig` |
 | `jpeg_encode_c` | `tests/fixtures/jpeg_generate.zig` |
 | `jpeg_c` | `src/codec/jpeg.zig` |

@@ -1,4 +1,4 @@
-//! Streams zlib compression into checksummed PNG chunks.
+//! Inflates PNG image data and deflates rows into checksummed chunks.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -59,7 +59,7 @@ pub const Deflater = struct {
     }
 
     fn emit(self: *Deflater) Writer.Error!void {
-        try chunk(self.output, "IDAT", self.out[0 .. self.out.len - self.stream.avail_out]);
+        try chunk(self.output, format.idat_type, self.out[0 .. self.out.len - self.stream.avail_out]);
         self.stream.next_out = self.out.ptr;
         self.stream.avail_out = @intCast(self.out.len);
     }
@@ -115,18 +115,18 @@ pub const StripStream = struct {
     adler: u32 = 1,
 
     pub fn start(self: StripStream) Writer.Error!void {
-        try chunk(self.output, "IDAT", std.compress.flate.Container.zlib.header());
+        try chunk(self.output, format.idat_type, std.compress.flate.Container.zlib.header());
     }
 
     pub fn write(self: *StripStream, strip: Strip.Result) Writer.Error!void {
         self.adler = zlib.zng_adler32_combine(self.adler, strip.adler, @intCast(strip.input_len));
-        try chunk(self.output, "IDAT", strip.bytes);
+        try chunk(self.output, format.idat_type, strip.bytes);
     }
 
     pub fn finish(self: StripStream) Writer.Error!void {
         var footer: [4]u8 = undefined;
         std.mem.writeInt(u32, &footer, self.adler, .big);
-        try chunk(self.output, "IDAT", &footer);
+        try chunk(self.output, format.idat_type, &footer);
     }
 };
 

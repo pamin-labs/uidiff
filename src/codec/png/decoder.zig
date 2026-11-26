@@ -33,14 +33,14 @@ const PngFixture = struct {
     }
 
     /// Writes a complete PNG from already filtered rows.
-    fn writePng(allocator: Allocator, out: *Writer, size: values.Size, color: png_format.Colour, filtered_rows: []const u8) zlib.EncodeError!void {
-        try writeHeader(out, size, color);
+    fn writePng(allocator: Allocator, out: *Writer, size: values.Size, colour: png_format.Colour, filtered_rows: []const u8) zlib.EncodeError!void {
+        try writeHeader(out, size, colour);
         try writeData(allocator, out, filtered_rows);
     }
 
     /// Writes the signature and an eight-bit, noninterlaced IHDR.
-    fn writeHeader(out: *Writer, size: values.Size, color: png_format.Colour) zlib.EncodeError!void {
-        try png_format.writeHeader(zlib.chunk, out, @intCast(size.width), @intCast(size.height), color);
+    fn writeHeader(out: *Writer, size: values.Size, colour: png_format.Colour) zlib.EncodeError!void {
+        try png_format.writeHeader(zlib.chunk, out, @intCast(size.width), @intCast(size.height), colour);
     }
 
     /// Compresses the given rows and terminates the PNG stream.
@@ -52,7 +52,7 @@ const PngFixture = struct {
         defer deflater.deinit();
         try deflater.write(filtered_rows);
         try deflater.finish();
-        try zlib.chunk(out, "IEND", "");
+        try zlib.chunk(out, png_format.iend_type, "");
     }
 
     /// Applies each filter with a scalar reference predictor.
@@ -82,17 +82,17 @@ const PngFixture = struct {
     fn firstIdat(idat: []const u8) []const u8 {
         var chunks: png_format.Chunks = .{ .remaining = idat };
         const chunk = chunks.next() orelse unreachable; // The test just wrote this chunk.
-        std.debug.assert(std.mem.eql(u8, &chunk.kind, "IDAT"));
+        std.debug.assert(std.mem.eql(u8, &chunk.kind, png_format.idat_type));
         return chunk.data;
     }
 
     /// Writes the same compressed bytes across separate IDAT chunks.
     fn splitIdat(out: *Writer, prefix: []const u8, data: []const u8, at: usize) zlib.EncodeError!void {
         try out.writeAll(prefix);
-        try zlib.chunk(out, "IDAT", data[0..at]);
-        try zlib.chunk(out, "IDAT", "");
-        try zlib.chunk(out, "IDAT", data[at..]);
-        try zlib.chunk(out, "IEND", "");
+        try zlib.chunk(out, png_format.idat_type, data[0..at]);
+        try zlib.chunk(out, png_format.idat_type, "");
+        try zlib.chunk(out, png_format.idat_type, data[at..]);
+        try zlib.chunk(out, png_format.iend_type, "");
     }
 };
 
@@ -117,7 +117,7 @@ fn loadPixels(bytes: []const u8, size: values.Size) DecodeError![]values.Pixel {
 
 test "PNG filters preserve RGB8 and RGBA8 across streaming and fallback" {
     const capture = struct {
-        fn checkFilters(comptime channels: usize, color: png_format.Colour, filters: []const u8) !void {
+        fn checkFilters(comptime channels: usize, colour: png_format.Colour, filters: []const u8) !void {
             const allocator = std.testing.allocator;
             const width = 7;
             const row_bytes = width * channels;
@@ -133,7 +133,7 @@ test "PNG filters preserve RGB8 and RGBA8 across streaming and fallback" {
 
             var output: Writer.Allocating = .init(allocator);
             defer output.deinit();
-            try PngFixture.writePng(allocator, &output.writer, size, color, filtered[0 .. filters.len * (1 + row_bytes)]);
+            try PngFixture.writePng(allocator, &output.writer, size, colour, filtered[0 .. filters.len * (1 + row_bytes)]);
             const header = try stb.probe(allocator, output.written(), values.max_decode_bytes);
             for (filters) |filter_byte| if (filter_byte > @backingInt(png_format.Filter.paeth)) {
                 try std.testing.expectEqual(@as(?[]values.Pixel, null), try loadStreaming(allocator, output.written(), header, values.max_decode_bytes));
@@ -201,7 +201,7 @@ test "RGB8 transparent colour keys use the legacy decoder" {
     var keyed: Writer.Allocating = .init(allocator);
     defer keyed.deinit();
     try keyed.writer.writeAll(png.written()[0..PngFixture.header_end]);
-    try zlib.chunk(&keyed.writer, "tRNS", &.{ 0, raw[1], 0, raw[2], 0, raw[3] });
+    try zlib.chunk(&keyed.writer, png_format.trns_type, &.{ 0, raw[1], 0, raw[2], 0, raw[3] });
     try keyed.writer.writeAll(png.written()[PngFixture.header_end..]);
 
     const header = try stb.probe(allocator, keyed.written(), values.max_decode_bytes);
@@ -215,34 +215,33 @@ test "Scanline decoding leaves gray-alpha, packed indices, wide samples and inte
     const allocator = std.testing.allocator;
     const size: values.Size = .{ .width = 1, .height = 1 };
     const profiles = [_]struct {
-        color: png_format.Colour,
+        colour: png_format.Colour,
         depth: u8 = png_format.sample_depth,
         interlace: u8 = 0,
         raw: []const u8,
         palette: ?[]const u8 = null,
         expected: values.Pixel,
     }{
-        .{ .color = .gray_alpha, .raw = &.{ 0, 37, 99 }, .expected = .{ 37, 37, 37, 99 } },
-        .{ .color = .indexed, .depth = 1, .raw = &.{ 0, 0 }, .palette = &.{ 11, 22, 33 }, .expected = .{ 11, 22, 33, 255 } },
-        .{ .color = .rgb, .depth = 16, .raw = &.{ 0, 11, 0, 22, 0, 33, 0 }, .expected = .{ 11, 22, 33, 255 } },
-        .{ .color = .rgba, .interlace = 1, .raw = &.{ 0, 11, 22, 33, 44 }, .expected = .{ 11, 22, 33, 44 } },
+        .{ .colour = .gray_alpha, .raw = &.{ 0, 37, 99 }, .expected = .{ 37, 37, 37, 99 } },
+        .{ .colour = .indexed, .depth = 1, .raw = &.{ 0, 0 }, .palette = &.{ 11, 22, 33 }, .expected = .{ 11, 22, 33, 255 } },
+        .{ .colour = .rgb, .depth = 16, .raw = &.{ 0, 11, 0, 22, 0, 33, 0 }, .expected = .{ 11, 22, 33, 255 } },
+        .{ .colour = .rgba, .interlace = 1, .raw = &.{ 0, 11, 22, 33, 44 }, .expected = .{ 11, 22, 33, 44 } },
     };
     for (profiles) |profile| {
         var encoded: Writer.Allocating = .init(allocator);
         defer encoded.deinit();
-        try PngFixture.writePng(allocator, &encoded.writer, size, profile.color, profile.raw);
+        try PngFixture.writePng(allocator, &encoded.writer, size, profile.colour, profile.raw);
 
-        const checksum_start = png_format.signature.len + @sizeOf(u32);
         var header = encoded.written()[0..PngFixture.header_end].*;
         header[png_format.profile_offset] = profile.depth;
         header[png_format.header_bytes - 1] = profile.interlace;
-        std.mem.writeInt(u32, header[png_format.header_bytes..][0..4], std.hash.Crc32.hash(header[checksum_start..png_format.header_bytes]), .big);
+        png_format.rewriteHeaderCrc(&header);
         try std.testing.expectEqual(@as(?Profile, null), scanlines.streamingProfile(&header));
 
         var patched: Writer.Allocating = .init(allocator);
         defer patched.deinit();
         try patched.writer.writeAll(&header);
-        if (profile.palette) |palette| try zlib.chunk(&patched.writer, "PLTE", palette);
+        if (profile.palette) |palette| try zlib.chunk(&patched.writer, png_format.plte_type, palette);
         try patched.writer.writeAll(encoded.written()[PngFixture.header_end..]);
 
         const metadata = try stb.probe(allocator, patched.written(), values.max_decode_bytes);
@@ -262,7 +261,7 @@ test "Gray8 and indexed PNG reconstruct every filter across split IDATs" {
     const max_width = 259;
     var samples: [height * max_width]u8 = undefined;
     var filtered: [height * (1 + max_width)]u8 = undefined;
-    var colors: [256 * 3]u8 = undefined;
+    var colours: [256 * 3]u8 = undefined;
     var alphas: [256]u8 = undefined;
     var rows: Writer.Allocating = .init(allocator);
     defer rows.deinit();
@@ -274,7 +273,7 @@ test "Gray8 and indexed PNG reconstruct every filter across split IDATs" {
         for ([_]usize{ 1, 17, 67, max_width }, [_]usize{ 19, 1, 255, 256 }) |width, palette_len| {
             const size: values.Size = .{ .width = width, .height = height };
             const used = samples[0 .. width * height];
-            random.bytes(&colors);
+            random.bytes(&colours);
             random.bytes(&alphas);
             if (profile == .indexed) {
                 for (used) |*sample| sample.* = @intCast(random.uintLessThan(u16, @intCast(palette_len)));
@@ -292,9 +291,9 @@ test "Gray8 and indexed PNG reconstruct every filter across split IDATs" {
                 png.clearRetainingCapacity();
                 try PngFixture.writeHeader(&png.writer, size, @fromBackingInt(@backingInt(profile)));
                 if (profile == .indexed) {
-                    try zlib.chunk(&png.writer, "PLTE", colors[0 .. palette_len * 3]);
-                    if (first % 2 == 0) try zlib.chunk(&png.writer, "tRNS", alphas[0..palette_len]);
-                    if (first == 1) try zlib.chunk(&png.writer, "tRNS", alphas[0 .. palette_len / 2]);
+                    try zlib.chunk(&png.writer, png_format.plte_type, colours[0 .. palette_len * 3]);
+                    if (first % 2 == 0) try zlib.chunk(&png.writer, png_format.trns_type, alphas[0..palette_len]);
+                    if (first == 1) try zlib.chunk(&png.writer, png_format.trns_type, alphas[0 .. palette_len / 2]);
                 }
                 split.clearRetainingCapacity();
                 try PngFixture.splitIdat(&split.writer, png.written(), payload, payload.len / 2);
@@ -322,8 +321,8 @@ test "Gray8 colour keys and invalid palette indices preserve fallback behaviour"
         var png: Writer.Allocating = .init(allocator);
         defer png.deinit();
         try PngFixture.writeHeader(&png.writer, size, @fromBackingInt(@backingInt(case.profile)));
-        if (case.palette.len != 0) try zlib.chunk(&png.writer, "PLTE", case.palette);
-        try zlib.chunk(&png.writer, "tRNS", case.alpha);
+        if (case.palette.len != 0) try zlib.chunk(&png.writer, png_format.plte_type, case.palette);
+        try zlib.chunk(&png.writer, png_format.trns_type, case.alpha);
         try PngFixture.writeData(allocator, &png.writer, &.{ 0, case.sample });
         const header = try stb.probe(allocator, png.written(), values.max_decode_bytes);
         try std.testing.expectEqual(@as(?[]values.Pixel, null), try loadStreaming(allocator, png.written(), header, values.max_decode_bytes));
@@ -346,11 +345,10 @@ test "the streaming probe agrees with the PNG header layout" {
     var header: [png_format.header_bytes]u8 = @splat(0);
     @memcpy(header[0..png_format.header_prefix.len], png_format.header_prefix);
     const offset = png_format.dimensions_offset;
-    std.mem.writeInt(u32, header[offset..][0..4], 253, .big);
-    std.mem.writeInt(u32, header[offset + 4 ..][0..4], 58, .big);
-    const profile = header[offset + 2 * @sizeOf(u32) ..];
+    png_format.writeDimensions(header[offset..][0..png_format.dimensions_bytes], 253, 58);
+    const profile = header[png_format.profile_offset..];
     const depth, const colour, const interlace = .{ 0, 1, 4 };
-    profile[depth] = 8;
+    profile[depth] = png_format.sample_depth;
     profile[colour] = @backingInt(png_format.Colour.rgba);
     try std.testing.expectEqual(@as(?Profile, .rgba), scanlines.streamingProfile(&header));
     try std.testing.expectEqual(@as(?Profile, null), scanlines.streamingProfile(header[0 .. header.len - 1]));
@@ -358,7 +356,7 @@ test "the streaming probe agrees with the PNG header layout" {
     try std.testing.expectEqual(@as(?Profile, .rgb), scanlines.streamingProfile(&header));
     profile[depth] = 16;
     try std.testing.expectEqual(@as(?Profile, null), scanlines.streamingProfile(&header));
-    profile[depth] = 8;
+    profile[depth] = png_format.sample_depth;
     profile[interlace] = 1;
     try std.testing.expectEqual(@as(?Profile, null), scanlines.streamingProfile(&header));
     profile[interlace] = 0;
@@ -407,15 +405,15 @@ test "fuzz streaming PNG reconstruction" {
             switch (profile) {
                 .indexed => {
                     // Every reconstructed byte must name a defined palette entry.
-                    var colors: [256 * 3]u8 = undefined;
+                    var colours: [256 * 3]u8 = undefined;
                     var alphas: [256]u8 = undefined;
-                    for (&colors) |*value| value.* = smith.value(u8);
+                    for (&colours) |*value| value.* = smith.value(u8);
                     const alpha_count = smith.valueRangeAtMost(u16, 1, alphas.len);
                     for (alphas[0..alpha_count]) |*value| value.* = smith.value(u8);
-                    try zlib.chunk(&output.writer, "PLTE", &colors);
-                    try zlib.chunk(&output.writer, "tRNS", alphas[0..alpha_count]);
+                    try zlib.chunk(&output.writer, png_format.plte_type, &colours);
+                    try zlib.chunk(&output.writer, png_format.trns_type, alphas[0..alpha_count]);
                 },
-                .gray => if (smith.value(bool)) try zlib.chunk(&output.writer, "tRNS", &.{ 0, smith.value(u8) }),
+                .gray => if (smith.value(bool)) try zlib.chunk(&output.writer, png_format.trns_type, &.{ 0, smith.value(u8) }),
                 .rgb, .rgba => {},
             }
             const idat_offset = output.written().len;

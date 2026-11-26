@@ -1,6 +1,7 @@
 //! Draws reproducible synthetic pages and writes their encoded pairs and expected reports.
 const std = @import("std");
 const uidiff = @import("uidiff");
+const png_format = @import("png_format");
 const cases = @import("cases.zig");
 const encode = @import("encode.zig");
 const Io = std.Io;
@@ -70,9 +71,6 @@ const scroll_rows = 40 / cases.scale;
 const red: Pixel = .{ 224, 0, 0, 255 };
 const banner_text: Rect = .{ .x = 16, .y = 12, .width = 96, .height = 8 };
 const banner_field: Rect = .{ .x = 16, .y = 24, .width = 64, .height = 4 };
-/// PNG's IHDR data starts after the signature and the chunk's length and type.
-const ihdr_start = 16;
-const ihdr_crc_start = 12;
 const sixteen_bits = 16;
 
 /// Writes the fixture set into the directory named by the only argument.
@@ -220,12 +218,9 @@ fn writeClaim(io: Io, allocator: Allocator, out: Io.Dir, comptime claim: cases.C
     // A nonopaque pixel forces an RGBA header for the forged 16-bit image.
     try uidiff.encodePng(allocator, .{ .width = 1, .height = 1, .pixels = &.{.{ 0, 0, 0, 0 }} }, &output.writer);
     const bytes = output.written();
-    const header = bytes[ihdr_start..];
-    std.mem.writeInt(u32, header[0..4], claim.width, .big);
-    std.mem.writeInt(u32, header[4..8], claim.height, .big);
-    header[8] = sixteen_bits;
-    const fields = bytes[ihdr_crc_start .. ihdr_start + 13];
-    std.mem.writeInt(u32, bytes[ihdr_start + 13 ..][0..4], std.hash.Crc32.hash(fields), .big);
+    png_format.writeDimensions(bytes[png_format.dimensions_offset..][0..png_format.dimensions_bytes], claim.width, claim.height);
+    bytes[png_format.profile_offset] = sixteen_bits;
+    png_format.rewriteHeaderCrc(bytes[0..png_format.header_end]);
     try out.writeFile(io, .{ .sub_path = claim.file(), .data = bytes });
 }
 
