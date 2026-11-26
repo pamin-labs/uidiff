@@ -23,11 +23,16 @@ const Grant = struct { module: []const u8, importers: []const []const u8 };
 /// The facade and private implementation directory of a nested module.
 const Submodule = struct { facade: []const u8, directory: []const u8 };
 
+/// One row of the diff tier table: a unit of the diff layer and its tier.
+/// A unit imports only units of a lower tier.
+const DiffUnit = struct { tier: u8, paths: []const []const u8 };
+
 /// The rules AGENTS.md states. Slices borrow its text; free with deinit.
 const Rules = struct {
     layers: []Layer,
     grants: []Grant,
     submodules: []Submodule,
+    diff_units: []DiffUnit,
     arena: std.heap.ArenaAllocator,
 
     fn deinit(self: *Rules) void {
@@ -43,6 +48,13 @@ const Rules = struct {
         for (self.grants) |grant| if (std.mem.eql(u8, grant.module, module)) return covered(grant.importers, path);
         return false;
     }
+
+    /// The diff unit holding path, or null outside the tiered diff internals.
+    fn diffUnitOf(self: Rules, path: []const u8) !?*const DiffUnit {
+        if (!sources.inDirectory(path, diff_directory) or std.mem.eql(u8, path, diff_test_support)) return null;
+        for (self.diff_units) |*unit| if (covered(unit.paths, path)) return unit;
+        return error.UntieredDiffSource;
+    }
 };
 
 const agents_path = "AGENTS.md";
@@ -51,6 +63,9 @@ const layers_heading = "## Layers";
 const max_agents_bytes = 64 * 1024;
 /// The module-table row naming files whose exported functions C code calls back.
 const export_row = "export";
+const diff_root = "src/diff.zig";
+const diff_directory = "src/diff/";
+const diff_test_support = "src/diff/test_support.zig";
 
 const sample_agents =
     \\## Layout
@@ -75,6 +90,18 @@ const sample_agents =
     \\| Submodule root | Implementation directory |
     \\| --- | --- |
     \\| `src/diff/regions.zig` | `src/diff/regions/` |
+    \\
+    \\| Diff tier | Paths | Holds |
+    \\| --- | --- | --- |
+    \\| 4 | `src/diff/span.zig` | |
+    \\| 3 | `src/diff/motion.zig` | |
+    \\| 3 | `src/diff/unpaired.zig` | |
+    \\| 2 | `src/diff/rows.zig` `src/diff/rows/` | |
+    \\| 2 | `src/diff/regions.zig` `src/diff/regions/` | |
+    \\| 1 | `src/diff/columns.zig` | |
+    \\| 1 | `src/diff/yiq.zig` | |
+    \\| 0 | `src/diff/mask.zig` | |
+    \\| 0 | `src/diff/pixel.zig` | |
     \\## Gates
 ;
 
@@ -104,7 +131,8 @@ fn parseRules(allocator: Allocator, text: []const u8) !Rules {
     var layers: std.ArrayList(Layer) = .empty;
     var grants: std.ArrayList(Grant) = .empty;
     var submodules: std.ArrayList(Submodule) = .empty;
-    var table: enum { none, layers, modules, submodules } = .none;
+    var diff_units: std.ArrayList(DiffUnit) = .empty;
+    var table: enum { none, layers, modules, submodules, diff_units } = .none;
     var lines = std.mem.splitScalar(u8, try section(text, layers_heading), '\n');
     while (lines.next()) |raw| {
         const line = std.mem.trim(u8, raw, " \r");
@@ -122,6 +150,8 @@ fn parseRules(allocator: Allocator, text: []const u8) !Rules {
                 .modules
             else if (std.mem.eql(u8, first, "Submodule root"))
                 .submodules
+            else if (std.mem.eql(u8, first, "Diff tier"))
+                .diff_units
             else
                 return error.UnknownTable,
             .layers => try layers.append(a, .{
@@ -133,14 +163,18 @@ fn parseRules(allocator: Allocator, text: []const u8) !Rules {
                 .facade = std.mem.trim(u8, first, "` "),
                 .directory = std.mem.trim(u8, cells.next() orelse return error.ShortRow, "` "),
             }),
+            .diff_units => try diff_units.append(a, .{
+                .tier = try std.fmt.parseInt(u8, first, 10),
+                .paths = try ticks(a, cells.next() orelse return error.ShortRow),
+            }),
             .modules => try grants.append(a, .{
                 .module = std.mem.trim(u8, first, "` "),
                 .importers = try ticks(a, cells.next() orelse return error.ShortRow),
             }),
         }
     }
-    if (layers.items.len == 0 or grants.items.len == 0) return error.MissingTable;
-    return .{ .layers = layers.items, .grants = grants.items, .submodules = submodules.items, .arena = arena };
+    if (layers.items.len == 0 or grants.items.len == 0 or diff_units.items.len == 0) return error.MissingTable;
+    return .{ .layers = layers.items, .grants = grants.items, .submodules = submodules.items, .diff_units = diff_units.items, .arena = arena };
 }
 
 /// The backticked items of a cell.
@@ -184,15 +218,43 @@ fn isRoot(row: *const Layer, path: []const u8) bool {
     return false;
 }
 
-fn allowedImport(allocator: Allocator, rules: Rules, from_path: []const u8, target: []const u8) !bool {
+fn testOnlyImport(tree: *const Ast, node: Ast.Node.Index, allow_gated_export: bool) bool {
+    const token = tree.nodeMainToken(node);
+    for (tree.rootDecls()) |decl| {
+        if (token < tree.firstToken(decl) or token > tree.lastToken(decl)) continue;
+        if (tree.nodeTag(decl) == .test_decl) return true;
+        if (!allow_gated_export) return false;
+
+        // The standalone scenario module still needs the diff root's test export.
+        const variable = tree.fullVarDecl(decl) orelse return false;
+        const gated = tree.fullIf(variable.ast.init_node.unwrap() orelse return false) orelse return false;
+        const condition = tree.firstToken(gated.ast.cond_expr);
+        return tree.lastToken(gated.ast.cond_expr) == condition + 2 and
+            std.mem.eql(u8, tree.tokenSlice(condition), "builtin") and
+            tree.tokenTag(condition + 1) == .period and
+            std.mem.eql(u8, tree.tokenSlice(condition + 2), "is_test") and
+            token >= tree.firstToken(gated.ast.then_expr) and token <= tree.lastToken(gated.ast.then_expr);
+    }
+    return false;
+}
+
+fn allowedImport(allocator: Allocator, rules: Rules, source: *const Source, node: Ast.Node.Index, target: []const u8) !bool {
     if (std.mem.eql(u8, target, "std") or std.mem.eql(u8, target, "builtin")) return true;
+    const from_path = source.path;
     const from = rules.layerOf(from_path) orelse return error.UnclassifiedSource;
     if (!sources.isZig(target)) return contains(from.imports, target) or rules.granted(target, from_path);
     const resolved = try std.fs.path.resolvePosix(allocator, &.{ std.fs.path.dirnamePosix(from_path) orelse ".", target });
     defer allocator.free(resolved);
     const to = rules.layerOf(resolved) orelse return false;
-    // Only the standalone comparison test helper may call back through its facade.
-    if (std.mem.eql(u8, from_path, "src/diff/test_support.zig") and std.mem.eql(u8, resolved, "src/diff.zig")) return true;
+    if (std.mem.eql(u8, resolved, diff_test_support))
+        return from == to and testOnlyImport(&source.tree, node, std.mem.eql(u8, from_path, diff_root));
+    if (std.mem.eql(u8, from_path, diff_test_support) and std.mem.eql(u8, resolved, diff_root))
+        return true;
+    if (try rules.diffUnitOf(from_path)) |from_unit| {
+        if (try rules.diffUnitOf(resolved)) |to_unit| {
+            if (from_unit != to_unit and to_unit.tier >= from_unit.tier) return false;
+        }
+    }
     for (rules.submodules) |submodule| {
         const inside = sources.inDirectory(from_path, submodule.directory);
         const facade = std.mem.eql(u8, from_path, submodule.facade);
@@ -216,7 +278,7 @@ fn checkSource(allocator: Allocator, rules: Rules, source: *const Source) !void 
                 const literal = tree.tokenSlice(tree.nodeMainToken(params[0]));
                 const target = try std.zig.string_literal.parseAlloc(allocator, literal);
                 defer allocator.free(target);
-                if (!try allowedImport(allocator, rules, source.path, target)) return error.ForbiddenImport;
+                if (!try allowedImport(allocator, rules, source, node, target)) return error.ForbiddenImport;
             } else if (std.mem.startsWith(u8, source.path, "src/") and std.mem.eql(u8, name, "@setRuntimeSafety")) {
                 if (params.len != 1 or !std.mem.eql(u8, tree.tokenSlice(tree.nodeMainToken(params[0])), "true"))
                     return error.RuntimeSafetyOptOut;
@@ -328,6 +390,23 @@ test "the guard rejects reverse imports, submodule imports and foreign bindings"
     try checkWithText("src/root.zig", "const diff = @import(\"diff.zig\");");
     try checkWithText("tests/fuzz/decode.zig", "const cases = @import(\"cases\");");
     try checkWithText("tests/e2e.zig", "const cases = @import(\"fixtures/cases.zig\");");
+}
+
+test "diff units only import lower tiers and fixtures stay in test scope" {
+    try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/yiq.zig", "const regions = @import(\"regions.zig\");"));
+    try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/regions/moves.zig", "test { _ = @import(\"../span.zig\"); }"));
+    try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/span.zig", "fn sample() void { _ = @import(\"test_support.zig\"); }"));
+    try testing.expectError(error.ForbiddenImport, checkWithText(diff_root, "const sample = @import(\"diff/test_support.zig\");"));
+    try testing.expectError(error.ForbiddenImport, checkWithText(diff_root, "const sample = if (builtin.is_test) void else @import(\"diff/test_support.zig\");"));
+    try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/rows.zig", "const regions = @import(\"regions.zig\");"));
+    try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/regions/logical.zig", "test { _ = @import(\"../rows.zig\"); }"));
+    try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/mask.zig", "const pixel = @import(\"pixel.zig\");"));
+    try testing.expectError(error.UntieredDiffSource, checkWithText("src/diff/extra.zig", "const pixel = @import(\"pixel.zig\");"));
+    try checkWithText("src/diff/yiq.zig", "const mask = @import(\"mask.zig\");");
+    try checkWithText("src/diff/rows/band.zig", "const search = @import(\"search.zig\");");
+    try checkWithText("src/diff/regions/moves.zig", "test { _ = @import(\"../test_support.zig\"); }");
+    try checkWithText(diff_root, "const sample = if (builtin.is_test) @import(\"diff/test_support.zig\") else void;");
+    try checkWithText(diff_test_support, "const diff = @import(\"../diff.zig\");");
 }
 
 test "layout paths come only from the layout section" {
