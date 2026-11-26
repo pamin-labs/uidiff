@@ -17,6 +17,9 @@ const RunError = std.process.Args.ToSliceError || uidiff.CompareFilesError || ui
 /// error returned from main would exit with 1, the status for changed images.
 pub const MainError = error{};
 
+/// The CLI uses filesystem I/O only.
+pub const std_options: std.Options = .{ .networking = false };
+
 /// What the command names when standard output fails.
 const stdout_name = "stdout";
 
