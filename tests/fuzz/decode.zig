@@ -10,10 +10,28 @@ const blank = fixtures.find(.identical);
 /// The blank fixture's files are small; seeds and inputs fit this buffer.
 const max_sample_bytes = 4096;
 /// The seed index past the last format means raw bytes.
-const raw = std.meta.tags(Format).len;
+const raw = seed_count;
 const max_mutations = 8;
 
-fn fuzzDecode(seeds: [formats.len][]const u8, smith: *testing.Smith) !void {
+// Noninterlaced 3-by-3 images whose filtered rows reach the sample decoder.
+const gray8 =
+    "\x89\x50\x4e\x47\x0d\x0a\x1a\x0a\x00\x00\x00\x0d\x49\x48\x44\x52" ++
+    "\x00\x00\x00\x03\x00\x00\x00\x03\x08\x00\x00\x00\x00\x73\x43\xea" ++
+    "\x63\x00\x00\x00\x14\x49\x44\x41\x54\x78\x9c\x63\x10\x39\x91\xc2" ++
+    "\xa8\xfa\x9f\x93\x85\x9d\x5b\x12\x00\x13\xc2\x02\x9e\xbb\x2c\x0d" ++
+    "\x88\x00\x00\x00\x00\x49\x45\x4e\x44\xae\x42\x60\x82";
+const indexed8 =
+    "\x89\x50\x4e\x47\x0d\x0a\x1a\x0a\x00\x00\x00\x0d\x49\x48\x44\x52" ++
+    "\x00\x00\x00\x03\x00\x00\x00\x03\x08\x03\x00\x00\x00\x61\xf6\x45" ++
+    "\x8d\x00\x00\x00\x09\x50\x4c\x54\x45\xd2\x16\x3e\x0b\x9a\x5d\x5c" ++
+    "\x2d\xb4\xba\x8c\x84\x7f\x00\x00\x00\x02\x74\x52\x4e\x53\x00\xbb" ++
+    "\x2a\x20\xa7\x3c\x00\x00\x00\x14\x49\x44\x41\x54\x78\x9c\x63\x60" ++
+    "\x62\x60\x64\x64\x64\x60\x64\x61\x60\xfc\x0f\x00\x01\x50\x01\x0b" ++
+    "\x71\xc8\xbf\x05\x00\x00\x00\x00\x49\x45\x4e\x44\xae\x42\x60\x82";
+const extra_seeds = [_][]const u8{ gray8, indexed8 };
+const seed_count = formats.len + extra_seeds.len;
+
+fn fuzzDecode(seeds: [seed_count][]const u8, smith: *testing.Smith) !void {
     var encoded: [max_sample_bytes]u8 = undefined;
     const pick = smith.valueRangeAtMost(u8, 0, raw);
     const length = if (pick == raw) smith.slice(&encoded) else mutate(smith, &encoded, seeds[pick]);
@@ -35,15 +53,21 @@ fn mutate(smith: *testing.Smith, encoded: []u8, base: []const u8) u32 {
 }
 
 test "fuzz encoded screenshots" {
-    var seeds: [formats.len][]const u8 = undefined;
+    var seeds: [seed_count][]const u8 = undefined;
     var loaded: usize = 0;
     defer for (seeds[0..loaded]) |bytes| testing.allocator.free(bytes);
     inline for (formats, 0..) |format, i| {
         seeds[i] = try std.Io.Dir.cwd().readFileAlloc(testing.io, blank.path(.before, format), testing.allocator, .limited(max_sample_bytes));
         loaded += 1;
     }
+    @memcpy(seeds[loaded..], &extra_seeds);
     comptime var corpus: []const []const u8 = &.{};
-    inline for (0..raw + 1) |i| corpus = corpus ++ .{&[_]u8{i}};
+    // Smith reads choices as little-endian u64s. Missing subsequent choices
+    // leave each selected image intact for its first decode.
+    inline for (0..raw + 1) |i| {
+        const choice = comptime std.mem.toBytes(std.mem.nativeToLittle(u64, i));
+        corpus = corpus ++ .{&choice};
+    }
     try testing.fuzz(seeds, fuzzDecode, .{ .corpus = corpus });
 }
 

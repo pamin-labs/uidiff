@@ -86,11 +86,11 @@ Boxes are in device pixels. A region has a box on each side where it exists. A m
 | Moved content found with its offset | **56 / 56** | 56 / 56 | n/a | n/a |
 | What you get | labelled regions, moves, a sheet | a mask | a mask | a mask |
 | CLI time, 2560×1600 pair | **9.8 ms** | 65 ms | 103 ms | 379 ms |
-| CPU time, same pair | **12.9 ms** | 80 ms | 127 ms | 419 ms |
+| CPU time, same pair | **13.0 ms** | 80 ms | 127 ms | 419 ms |
 | Peak RSS | **35.4 MiB** | 70 MiB | 50 MiB | 147 MiB |
 | Install | **604 KB**, one file | 1.3 MB + Node | 2.4 MB | 0.76 MB + Node |
 
-<sub>Timings are medians from 15 rotated rounds on Arm64 macOS. The uidiff column was refreshed independently on the original pair, alternating the current CLI with v0.0.2. Competitor figures are from the original run. Each comparison starts a new process. uidiff writes JSON, and Iris and pixelmatch include Node startup. See the <a href="bench/README.md">benchmark method</a>.</sub>
+<sub>Timings are medians from 15 rotated rounds on Arm64 macOS. The uidiff column was refreshed independently on the original pair, alternating the current CLI with v0.0.3. Competitor figures are from the original run. Each comparison starts a new process. uidiff writes JSON, and Iris and pixelmatch include Node startup. See the <a href="bench/README.md">benchmark method</a>.</sub>
 
 ## Usage
 

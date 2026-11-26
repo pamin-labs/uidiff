@@ -18,10 +18,16 @@ pub const dimensions_offset = signature.len + @sizeOf(u32) + header_type.len;
 pub const profile_offset = dimensions_offset + 2 * @sizeOf(u32);
 /// Offset of the PNG colour type byte.
 pub const color_offset = profile_offset + 1;
-/// Bits per channel in the RGB8 and RGBA8 profiles.
+/// Bits per sample in the streaming profiles.
 pub const sample_depth = 8;
+/// PNG colour type with one grayscale sample.
+pub const gray_color = 0;
 /// PNG colour type with red, green and blue channels.
 pub const rgb_color = 2;
+/// PNG colour type with one palette index.
+pub const indexed_color = 3;
+/// PNG colour type with grayscale and alpha channels.
+pub const gray_alpha_color = 4;
 /// PNG colour type with red, green, blue and alpha channels.
 pub const rgba_color = 6;
 

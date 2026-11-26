@@ -1,4 +1,4 @@
-//! Reconstructs bounded RGB8 and RGBA8 PNG scanlines with zlib-ng.
+//! Reconstructs bounded noninterlaced 8-bit PNG scanlines with zlib-ng.
 const std = @import("std");
 const builtin = @import("builtin");
 const values = @import("../../value.zig");
@@ -8,39 +8,56 @@ const zlib = @import("zlib_c");
 
 const Filter = enum(u8) { none, sub, up, average, paeth };
 const Range = struct { first: usize, end: usize };
-const Pixel = @Vector(4, u8);
-const Wide = @Vector(4, i16);
 const Block = @Vector(vector_bytes, u8);
 const BlockBytes = [vector_bytes]u8;
-const Words = @Vector(vector_bytes / @sizeOf(u32), u32);
 
-const Paeth = struct {
-    left: Pixel,
-    upper_left: Pixel,
+/// Colour types accepted by the noninterlaced 8-bit decoder.
+pub const Profile = enum(u8) {
+    gray = format.gray_color,
+    rgb = format.rgb_color,
+    indexed = format.indexed_color,
+    rgba = format.rgba_color,
 
-    fn pixels(self: *Paeth, dst: []values.Pixel, src: []const values.Pixel, above: []const values.Pixel) void {
-        for (dst, src, above) |*out, raw, up| {
-            const left = widen(self.left);
-            const upper = widen(up);
-            const diagonal = widen(self.upper_left);
-            const low = @min(left, upper);
-            const high = @max(left, upper);
-            const threshold = @as(Wide, @splat(3)) * diagonal - (left + upper);
-            const middle = @select(i16, high <= threshold, low, diagonal);
-            const prediction = @select(i16, threshold <= low, high, middle);
-            // Paeth selects one of the three input bytes.
-            const delta: Pixel = @intCast(prediction);
-            self.left = @as(Pixel, raw) +% delta;
-            self.upper_left = up;
-            out.* = self.left;
-        }
+    pub fn samplesPerPixel(self: Profile) usize {
+        return switch (self) {
+            .gray, .indexed => 1,
+            .rgb => rgb_channels,
+            .rgba => channels,
+        };
     }
 };
+
+const Chunks = struct {
+    idat: Range,
+    palette: []const values.Pixel,
+};
+
+const Samples = struct {
+    current: []u8,
+    previous: []u8,
+    color: union(enum) { gray, indexed: []const values.Pixel },
+
+    fn expand(self: *const Samples, dst: []u8) bool {
+        const pixels = std.mem.bytesAsSlice(values.Pixel, dst);
+        switch (self.color) {
+            .gray => for (pixels, self.current) |*out, gray| {
+                out.* = .{ gray, gray, gray, 255 };
+            },
+            .indexed => |palette| for (pixels, self.current) |*out, index| {
+                if (index >= palette.len) return false;
+                out.* = palette[index];
+            },
+        }
+        return true;
+    }
+};
+
+const Expansion = union(enum) { rgba, rgb: []u8, samples: Samples };
 
 const Rows = struct {
     pixels: []u8,
     partial: []u8,
-    expanded: []u8,
+    expansion: Expansion,
     stride: usize,
     used: usize = 0,
     written: usize = 0,
@@ -68,16 +85,22 @@ const Rows = struct {
     fn write(self: *Rows, raw: []const u8) bool {
         if (self.written == self.pixels.len) return false;
         const filter = std.enums.fromInt(Filter, raw[0]) orelse return false;
-        const rgb = self.expanded.len != 0;
         const dst = self.pixels[self.written..][0..self.stride];
         const above = if (self.written == 0) null else self.pixels[self.written - self.stride ..][0..self.stride];
-        const residue = if (rgb) expanded: {
-            const expanded = self.expanded[0..self.stride];
-            expandRgb(expanded, raw[1..]);
-            break :expanded expanded;
-        } else raw[1..][0..self.stride];
-        unfilter(dst, residue, above, filter);
-        if (rgb) setOpaque(dst);
+        const residue = raw[1..];
+        switch (self.expansion) {
+            .rgba => unfilter(channels, dst, residue, above, filter),
+            .rgb => |expanded| {
+                expandRgb(expanded, residue);
+                unfilter(channels, dst, expanded, above, filter);
+                setOpaque(dst);
+            },
+            .samples => |*samples| {
+                unfilter(1, samples.current, residue, if (above == null) null else samples.previous, filter);
+                if (!samples.expand(dst)) return false;
+                std.mem.swap([]u8, &samples.current, &samples.previous);
+            },
+        }
         self.written += self.stride;
         return true;
     }
@@ -93,48 +116,63 @@ const chunk_prefix = 2 * @sizeOf(u32);
 // The larger span amortizes dictionary updates on Apple silicon.
 const inflate_bytes = if (builtin.os.tag == .macos and builtin.cpu.arch == .aarch64) 64 * 1024 else 32 * 1024;
 
-/// Recognizes the noninterlaced RGB8 and RGBA8 profiles.
-pub fn streamingHeader(bytes: []const u8) bool {
-    if (bytes.len < format.header_bytes or !std.mem.startsWith(u8, bytes, format.header_prefix)) return false;
-    const profile = bytes[format.profile_offset..][0..5];
-    return profile[0] == format.sample_depth and (profile[1] == format.rgb_color or profile[1] == format.rgba_color) and
-        profile[2] == 0 and profile[3] == 0 and profile[4] == 0;
+/// Recognizes a noninterlaced 8-bit profile from its IHDR fields.
+pub fn streamingProfile(bytes: []const u8) ?Profile {
+    if (bytes.len < format.header_bytes or !std.mem.startsWith(u8, bytes, format.header_prefix)) return null;
+    const depth, const color, const compression, const filtering, const interlace = bytes[format.profile_offset..][0..5].*;
+    if (depth != format.sample_depth or compression != 0 or filtering != 0 or interlace != 0) return null;
+    return std.enums.fromInt(Profile, color);
 }
 
 /// Returns codec-budget-owned pixels, or null if the legacy decoder should try.
 pub fn decode(bytes: []const u8, size: values.Size) memory.Error!?[]values.Pixel {
-    const range = idatRange(bytes) orelse return null;
+    const profile = streamingProfile(bytes) orelse return null;
+    var palette: [256]values.Pixel = undefined;
+    const chunks = collectChunks(bytes, profile, &palette) orelse return null;
     const width = size.width;
     const height = size.height;
     if (width != be32(bytes, format.dimensions_offset) or height != be32(bytes, format.dimensions_offset + @sizeOf(u32))) return null;
     const count = size.pixelCount() orelse return null;
     const stride = width * channels;
-    const rgb = bytes[format.color_offset] == format.rgb_color;
-    const input_bytes = width * (if (rgb) @as(usize, rgb_channels) else channels) + 1;
-    const scratch_bytes = inflate_bytes + input_bytes + (if (rgb) stride else 0);
+    const input_bytes = width * profile.samplesPerPixel() + 1;
+    const expansion_bytes = switch (profile) {
+        .gray, .indexed => 2 * width,
+        .rgb => stride,
+        .rgba => 0,
+    };
     // Inflate writes the whole accepted pixel buffer. Scratch is consumed only
-    // through bytes written by inflate or by the split-row copy.
+    // through rows written by inflate, the split-row copy or the unfilter.
     const pixels = memory.allocBytes(count * channels) orelse return memory.failure();
     var keep = false;
     defer if (!keep) memory.uidiff_codec_free(pixels.ptr);
-    const scratch = memory.allocBytes(scratch_bytes) orelse return memory.failure();
+    const scratch = memory.allocBytes(inflate_bytes + input_bytes + expansion_bytes) orelse return memory.failure();
     defer memory.uidiff_codec_free(scratch.ptr);
+    const expansion = scratch[inflate_bytes + input_bytes ..];
     var rows: Rows = .{
         .pixels = pixels,
         .partial = scratch[inflate_bytes..][0..input_bytes],
-        .expanded = scratch[inflate_bytes + input_bytes .. scratch_bytes],
+        .expansion = switch (profile) {
+            .rgba => .rgba,
+            .rgb => .{ .rgb = expansion },
+            .gray, .indexed => .{ .samples = .{
+                .current = expansion[0..width],
+                .previous = expansion[width..],
+                .color = if (profile == .gray) .gray else .{ .indexed = chunks.palette },
+            } },
+        },
         .stride = stride,
     };
-    if (!try inflateRows(bytes, range, scratch[0..inflate_bytes], &rows)) return null;
+    if (!try inflateRows(bytes, chunks.idat, scratch[0..inflate_bytes], &rows)) return null;
     keep = true;
     return std.mem.bytesAsSlice(values.Pixel, pixels);
 }
 
-fn idatRange(bytes: []const u8) ?Range {
-    if (!streamingHeader(bytes)) return null;
+fn collectChunks(bytes: []const u8, profile: Profile, palette: *[256]values.Pixel) ?Chunks {
     var pos: usize = format.header_bytes + @sizeOf(u32);
     if (pos > bytes.len) return null;
     var range: ?Range = null;
+    var palette_len: usize = 0;
+    var has_alpha = false;
     while (bytes.len - pos >= chunk_overhead) {
         const size = be32(bytes, pos);
         if (size > bytes.len - pos - chunk_overhead) return null;
@@ -142,13 +180,32 @@ fn idatRange(bytes: []const u8) ?Range {
         const kind = bytes[pos + @sizeOf(u32) ..][0..4].*;
         switch (@as(u32, @bitCast(kind))) {
             @as(u32, @bitCast(@as([4]u8, "IDAT".*))) => {
+                if (profile == .indexed and palette_len == 0) return null;
                 if (range) |prior| {
                     if (prior.end != pos) return null;
                     range = .{ .first = prior.first, .end = next };
                 } else range = .{ .first = pos, .end = next };
             },
-            @as(u32, @bitCast(@as([4]u8, "IEND".*))) => return if (size == 0) range else null,
-            @as(u32, @bitCast(@as([4]u8, "tRNS".*))), @as(u32, @bitCast(@as([4]u8, "acTL".*))) => return null,
+            @as(u32, @bitCast(@as([4]u8, "IEND".*))) => {
+                if (size != 0) return null;
+                return .{ .idat = range orelse return null, .palette = palette[0..palette_len] };
+            },
+            @as(u32, @bitCast(@as([4]u8, "PLTE".*))) => {
+                if (profile != .indexed or range != null or palette_len != 0) return null;
+                if (size == 0 or size % rgb_channels != 0 or size > palette.len * rgb_channels) return null;
+                const data = bytes[pos + chunk_prefix ..][0..size];
+                palette_len = @divExact(size, rgb_channels);
+                for (palette[0..palette_len], std.mem.bytesAsSlice([rgb_channels]u8, data)) |*pixel, rgb| {
+                    pixel.* = rgb ++ [1]u8{255};
+                }
+            },
+            @as(u32, @bitCast(@as([4]u8, "tRNS".*))) => {
+                if (profile != .indexed or range != null or has_alpha or palette_len == 0 or size > palette_len) return null;
+                const data = bytes[pos + chunk_prefix ..][0..size];
+                for (palette[0..size], data) |*pixel, alpha| pixel[3] = alpha;
+                has_alpha = true;
+            },
+            @as(u32, @bitCast(@as([4]u8, "acTL".*))) => return null,
             else => if (kind[0] & 32 == 0) return null,
         }
         pos = next;
@@ -217,24 +274,24 @@ fn zfree(_: ?*anyopaque, block: ?*anyopaque) callconv(.c) void {
     memory.uidiff_codec_free(block);
 }
 
-fn unfilter(dst: []u8, src: []const u8, above: ?[]const u8, filter: Filter) void {
+fn unfilter(comptime lanes: usize, dst: []u8, src: []const u8, above: ?[]const u8, filter: Filter) void {
     switch (filter) {
         .none => @memcpy(dst, src),
-        .sub => sub(dst, src),
+        .sub => sub(lanes, dst, src),
         .up => if (above) |up| addUp(dst, src, up) else @memcpy(dst, src),
-        .average => average(dst, src, above),
-        .paeth => if (above) |up| paeth(dst, src, up) else sub(dst, src),
+        .average => average(lanes, dst, src, above),
+        .paeth => if (above) |up| paeth(lanes, dst, src, up) else sub(lanes, dst, src),
     }
 }
 
-fn sub(dst: []u8, src: []const u8) void {
+fn sub(comptime lanes: usize, dst: []u8, src: []const u8) void {
     const end = dst.len - dst.len % block_bytes;
     var carry: Block = @splat(0);
     for (blocks(dst[0..end]), blocks(src[0..end])) |*out, *raw| {
-        carry = prefixAdd(out, raw, carry);
+        carry = prefixAdd(lanes, out, raw, carry);
     }
-    var left = firstPixel(carry);
-    for (std.mem.bytesAsSlice(values.Pixel, dst[end..]), std.mem.bytesAsSlice(values.Pixel, src[end..])) |*out, raw| {
+    var left: @Vector(lanes, u8) = @as(BlockBytes, carry)[0..lanes].*;
+    for (std.mem.bytesAsSlice([lanes]u8, dst[end..]), std.mem.bytesAsSlice([lanes]u8, src[end..])) |*out, raw| {
         left +%= raw;
         out.* = left;
     }
@@ -248,59 +305,77 @@ fn addUp(dst: []u8, src: []const u8, up: []const u8) void {
     for (dst[end..], src[end..], up[end..]) |*out, raw, prev| out.* = raw +% prev;
 }
 
-fn average(dst: []u8, src: []const u8, above: ?[]const u8) void {
-    const pixels = std.mem.bytesAsSlice(values.Pixel, dst);
-    const residuals = std.mem.bytesAsSlice(values.Pixel, src);
-    var left: Pixel = @splat(0);
+fn average(comptime lanes: usize, dst: []u8, src: []const u8, above: ?[]const u8) void {
+    const pixels = std.mem.bytesAsSlice([lanes]u8, dst);
+    const residuals = std.mem.bytesAsSlice([lanes]u8, src);
+    var left: @Vector(lanes, u8) = @splat(0);
     if (above) |prev| {
-        for (pixels, residuals, std.mem.bytesAsSlice(values.Pixel, prev)) |*out, raw, up| {
-            left = averagePixel(left, up, raw);
+        for (pixels, residuals, std.mem.bytesAsSlice([lanes]u8, prev)) |*out, raw, up| {
+            left = averagePixel(lanes, left, up, raw);
             out.* = left;
         }
     } else {
         for (pixels, residuals) |*out, raw| {
-            left = averagePixel(left, @splat(0), raw);
+            left = averagePixel(lanes, left, @splat(0), raw);
             out.* = left;
         }
     }
 }
 
-fn averagePixel(left: Pixel, up: Pixel, raw: Pixel) Pixel {
-    const prediction = (widen(left) + widen(up)) >> @splat(1);
-    return raw +% @as(Pixel, @intCast(prediction));
+fn averagePixel(comptime lanes: usize, left: @Vector(lanes, u8), up: @Vector(lanes, u8), raw: @Vector(lanes, u8)) @Vector(lanes, u8) {
+    const wide_left: @Vector(lanes, i16) = @intCast(left);
+    const wide_up: @Vector(lanes, i16) = @intCast(up);
+    return raw +% @as(@Vector(lanes, u8), @intCast((wide_left + wide_up) >> @splat(1)));
 }
 
-fn paeth(dst: []u8, src: []const u8, above: []const u8) void {
-    const first_up: Pixel = above[0..channels].*;
-    const first_raw: Pixel = src[0..channels].*;
-    var predictor: Paeth = .{ .left = first_up +% first_raw, .upper_left = first_up };
-    dst[0..channels].* = predictor.left;
+fn paethPixel(comptime lanes: usize, lhs: @Vector(lanes, u8), up: @Vector(lanes, u8), upper_left: @Vector(lanes, u8)) @Vector(lanes, u8) {
+    const Wide = @Vector(lanes, i16);
+    const left: Wide = @intCast(lhs);
+    const upper: Wide = @intCast(up);
+    const diagonal: Wide = @intCast(upper_left);
+    const low = @min(left, upper);
+    const high = @max(left, upper);
+    const threshold = @as(Wide, @splat(3)) * diagonal - (left + upper);
+    const middle = @select(i16, high <= threshold, low, diagonal);
+    const prediction = @select(i16, threshold <= low, high, middle);
+    // Paeth selects one of the three input bytes.
+    return @intCast(prediction);
+}
 
-    var out = dst[channels..];
-    var raw = src[channels..];
-    var up = above[channels..];
+fn paeth(comptime lanes: usize, dst: []u8, src: []const u8, above: []const u8) void {
+    const Sample = @Vector(lanes, u8);
+    var upper_left: Sample = above[0..lanes].*;
+    var left = upper_left +% @as(Sample, src[0..lanes].*);
+    dst[0..lanes].* = left;
+
+    var out = dst[lanes..];
+    var raw = src[lanes..];
+    var up = above[lanes..];
     while (out.len != 0) {
-        const corner = repeatPixel(predictor.upper_left);
+        const corner = repeatSample(lanes, upper_left);
         if (out.len >= vector_bytes and @reduce(.And, @as(Block, up[0..vector_bytes].*) == corner)) {
-            // Over a flat row above, Paeth predicts the left pixel: keep the
+            // Over a flat row above, Paeth predicts the left sample: keep the
             // carry in a vector for the whole run.
-            var carry = repeatPixel(predictor.left);
+            var carry = repeatSample(lanes, left);
             var i: usize = 0;
             while (true) {
-                carry = prefixAdd(out[i..][0..vector_bytes], raw[i..][0..vector_bytes], carry);
+                carry = prefixAdd(lanes, out[i..][0..vector_bytes], raw[i..][0..vector_bytes], carry);
                 i += vector_bytes;
                 if (out.len - i < vector_bytes or !@reduce(.And, @as(Block, up[i..][0..vector_bytes].*) == corner)) break;
             }
-            predictor.left = firstPixel(carry);
+            left = @as(BlockBytes, carry)[0..lanes].*;
             out = out[i..];
             raw = raw[i..];
             up = up[i..];
             continue;
         }
-        predictor.pixels(std.mem.bytesAsSlice(values.Pixel, out[0..channels]), std.mem.bytesAsSlice(values.Pixel, raw[0..channels]), std.mem.bytesAsSlice(values.Pixel, up[0..channels]));
-        out = out[channels..];
-        raw = raw[channels..];
-        up = up[channels..];
+        const upper: Sample = up[0..lanes].*;
+        left = @as(Sample, raw[0..lanes].*) +% paethPixel(lanes, left, upper, upper_left);
+        upper_left = upper;
+        out[0..lanes].* = left;
+        out = out[lanes..];
+        raw = raw[lanes..];
+        up = up[lanes..];
     }
 }
 
@@ -308,26 +383,30 @@ fn blocks(bytes: anytype) @TypeOf(std.mem.bytesAsSlice(BlockBytes, bytes)) {
     return std.mem.bytesAsSlice(BlockBytes, bytes);
 }
 
-fn widen(pixel: Pixel) Wide {
-    return @intCast(pixel);
+fn repeatSample(comptime lanes: usize, sample: @Vector(lanes, u8)) Block {
+    const mask = comptime mask: {
+        var indices: [vector_bytes]i32 = undefined;
+        for (&indices, 0..) |*index, i| index.* = @intCast(i % lanes);
+        break :mask indices;
+    };
+    return @shuffle(u8, sample, undefined, mask);
 }
 
-fn repeatPixel(pixel: Pixel) Block {
-    return @bitCast(@as(Words, @splat(@bitCast(pixel))));
-}
-
-fn firstPixel(block: Block) Pixel {
-    return @bitCast(@as(Words, @bitCast(block))[0]);
-}
-
-fn prefixAdd(dst: *BlockBytes, src: *const BlockBytes, carry: Block) Block {
+fn prefixAdd(comptime lanes: usize, dst: *BlockBytes, src: *const BlockBytes, carry: Block) Block {
     const zero: Block = @splat(0);
     var v: Block = src.*;
-    v +%= @shuffle(u8, zero, v, @Vector(16, i32){ 0, 1, 2, 3, -1, -2, -3, -4, -5, -6, -7, -8, -9, -10, -11, -12 });
-    v +%= @shuffle(u8, zero, v, @Vector(16, i32){ 0, 1, 2, 3, 4, 5, 6, 7, -1, -2, -3, -4, -5, -6, -7, -8 });
+    comptime var shift = lanes;
+    inline while (shift < vector_bytes) : (shift *= 2) {
+        const mask = comptime mask: {
+            var indices: [vector_bytes]i32 = undefined;
+            for (&indices, 0..) |*index, i| index.* = if (i < shift) @intCast(i) else -1 - @as(i32, @intCast(i - shift));
+            break :mask indices;
+        };
+        v +%= @shuffle(u8, zero, v, mask);
+    }
     v +%= carry;
     dst.* = v;
-    return @bitCast(@as(Words, @splat(@as(Words, @bitCast(v))[3])));
+    return repeatSample(lanes, @as(BlockBytes, v)[vector_bytes - lanes ..][0..lanes].*);
 }
 
 fn expandRgb(dst: []u8, src: []const u8) void {
@@ -346,7 +425,7 @@ fn expandRgb(dst: []u8, src: []const u8) void {
 }
 
 fn setOpaque(dst: []u8) void {
-    const alpha = repeatPixel(.{ 0, 0, 0, 255 });
+    const alpha = repeatSample(channels, .{ 0, 0, 0, 255 });
     const end = dst.len - dst.len % block_bytes;
     for (blocks(dst[0..end])) |*out| out.* = @as(Block, out.*) | alpha;
     for (std.mem.bytesAsSlice(values.Pixel, dst[end..])) |*out| out[3] = 255;
