@@ -131,6 +131,7 @@ PNG chunk checksums use zlib-ng's CRC-32. On x86_64, zlib-ng detects PCLMULQDQ a
 
 - A column interval starts at x (called left in a column span) and has a width. A row interval starts at y and has a height. The intervals are half-open, so right is x + width and bottom is y + height. The column card search keeps a left bound and exclusive right bound in `Edge` to use directly as loop endpoints.
 - An aligned band stores a row start and row count for each side. The flood fill's `InclusiveSpan` uses inclusive first and last indices on either axis.
+- A byte span in the PNG decoder stores its start offset and length.
 
 ## Annotation glossary
 

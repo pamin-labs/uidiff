@@ -7,7 +7,7 @@ const memory = @import("codec_memory");
 const zlib = @import("zlib.zig");
 
 const Filter = format.Filter;
-const Range = struct { first: usize, end: usize };
+const ByteSpan = struct { start: usize, length: usize };
 const Block = @Vector(vector_bytes, u8);
 const BlockBytes = [vector_bytes]u8;
 
@@ -28,7 +28,7 @@ pub const Profile = enum(u8) {
 };
 
 const Chunks = struct {
-    idat: Range,
+    idat: ByteSpan,
     palette: []const value.Pixel,
 };
 
@@ -168,7 +168,7 @@ pub fn decode(bytes: []const u8, size: value.Size) memory.Error!?[]value.Pixel {
         },
         .stride = stride,
     };
-    if (!try zlib.inflateRows(bytes[chunks.idat.first..chunks.idat.end], inflate_bytes, scratch[0..inflate_bytes], &rows)) return null;
+    if (!try zlib.inflateRows(bytes[chunks.idat.start..][0..chunks.idat.length], inflate_bytes, scratch[0..inflate_bytes], &rows)) return null;
     keep = true;
     return std.mem.bytesAsSlice(value.Pixel, pixels);
 }
@@ -176,7 +176,7 @@ pub fn decode(bytes: []const u8, size: value.Size) memory.Error!?[]value.Pixel {
 fn collectChunks(bytes: []const u8, profile: Profile, palette: *[256]value.Pixel) ?Chunks {
     if (format.header_end > bytes.len) return null;
     var chunks: format.Chunks = .{ .remaining = bytes[format.header_end..] };
-    var range: ?Range = null;
+    var range: ?ByteSpan = null;
     var palette_len: usize = 0;
     var has_alpha = false;
     var start = format.header_end;
@@ -189,9 +189,9 @@ fn collectChunks(bytes: []const u8, profile: Profile, palette: *[256]value.Pixel
             @as(u32, @bitCast(@as([4]u8, format.idat_type.*))) => {
                 if (profile == .indexed and palette_len == 0) return null;
                 if (range) |prior| {
-                    if (prior.end != start) return null;
-                    range = .{ .first = prior.first, .end = end };
-                } else range = .{ .first = start, .end = end };
+                    if (prior.start + prior.length != start) return null;
+                    range = .{ .start = prior.start, .length = end - prior.start };
+                } else range = .{ .start = start, .length = end - start };
             },
             @as(u32, @bitCast(@as([4]u8, format.iend_type.*))) => {
                 if (size != 0) return null;
