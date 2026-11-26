@@ -382,7 +382,7 @@ fn addBenchmark(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, uid
 }
 
 fn fixtureGenerator(b: *Build, target: Build.ResolvedTarget, decoders: Decoders) *Build.Step.Compile {
-    const library = b.createModule(libraryOptions(b, target, .safe, decoders));
+    const library = b.createModule(libraryOptions(b, target, codecs.fixture_mode, decoders));
     const module = codecs.fixtureModule(b, target, library, decoders, b.path("tools/fixtures/generate.zig"), b.path("tools/fixtures/stb_write.c"));
     module.addImport("fixture_cases", b.createModule(.{ .root_source_file = b.path("tests/fixtures/cases.zig") }));
     return b.addExecutable(.{ .name = "uidiff-fixtures", .root_module = module });

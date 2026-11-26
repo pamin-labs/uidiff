@@ -63,6 +63,11 @@ const PinnedSource = struct {
     }
 };
 
+/// ReleaseSafe keeps safety checks enabled in the fixture generators.
+pub const fixture_mode: Optimize = .safe;
+
+// Translate headers in the shipped Zig mode even in a checked build.
+const header_mode: Optimize = .safe;
 const codec_mode: Optimize = .fast;
 const jpeg_public_config = "#define UIDIFF_JPEG_PUBLIC_CONFIG 1\n#include \"build_config.h\"\n#undef UIDIFF_JPEG_PUBLIC_CONFIG\n";
 const png_compression_level = 3;
@@ -168,15 +173,15 @@ pub fn addDecoders(b: *Build, target: Build.ResolvedTarget) Decoders {
     const jpeg = b.dependency("libjpeg_turbo", .{});
     const jpeg_config = b.addWriteFiles();
     _ = jpeg_config.add("jconfig.h", jpeg_public_config);
-    const jpeg_c = b.addTranslateC(.{ .root_source_file = b.path("src/codec/jpeg/bridge.h"), .target = target, .optimize = .safe });
+    const jpeg_c = b.addTranslateC(.{ .root_source_file = b.path("src/codec/jpeg/bridge.h"), .target = target, .optimize = header_mode });
     jpeg_c.addIncludePath(jpeg_config.getDirectory());
     jpeg_c.addIncludePath(jpeg.path("src"));
     jpeg_c.addIncludePath(b.path("src/codec/jpeg"));
-    const stb_c = b.addTranslateC(.{ .root_source_file = b.path("src/codec/png/stb.h"), .target = target, .optimize = .safe });
+    const stb_c = b.addTranslateC(.{ .root_source_file = b.path("src/codec/png/stb.h"), .target = target, .optimize = header_mode });
     stb_c.addIncludePath(stb.path(""));
     stb_c.defineCMacro("STBI_NO_STDIO", null);
-    const webp_c = b.addTranslateC(.{ .root_source_file = webp.path("src/webp/decode.h"), .target = target, .optimize = .safe });
-    const zlib_c = b.addTranslateC(.{ .root_source_file = zlibHeaders(b, target).getDirectory().path(b, "zlib-ng.h"), .target = target, .optimize = .safe });
+    const webp_c = b.addTranslateC(.{ .root_source_file = webp.path("src/webp/decode.h"), .target = target, .optimize = header_mode });
+    const zlib_c = b.addTranslateC(.{ .root_source_file = zlibHeaders(b, target).getDirectory().path(b, "zlib-ng.h"), .target = target, .optimize = header_mode });
     return .{
         .jpeg = jpeg_c.createModule(),
         .stb = stb_c.createModule(),
@@ -189,19 +194,18 @@ pub fn addDecoders(b: *Build, target: Build.ResolvedTarget) Decoders {
 
 /// Compiles the fixture codecs and exposes the encoder bindings to the generator.
 pub fn fixtureModule(b: *Build, target: Build.ResolvedTarget, library: *Build.Module, decoders: Decoders, source: Build.LazyPath, stb_source: Build.LazyPath) *Build.Module {
-    const optimize: Optimize = .safe;
     const webp = b.dependency("libwebp", .{});
     const stb = b.dependency("stb", .{});
-    const stb_write = b.addTranslateC(.{ .root_source_file = stb.path("stb_image_write.h"), .target = target, .optimize = optimize });
+    const stb_write = b.addTranslateC(.{ .root_source_file = stb.path("stb_image_write.h"), .target = target, .optimize = fixture_mode });
     stb_write.defineCMacro("STBI_WRITE_NO_STDIO", null);
-    const webp_encode = b.addTranslateC(.{ .root_source_file = webp.path("src/webp/encode.h"), .target = target, .optimize = optimize });
+    const webp_encode = b.addTranslateC(.{ .root_source_file = webp.path("src/webp/encode.h"), .target = target, .optimize = fixture_mode });
     const codecs = b.createModule(.{ .target = target, .optimize = codec_mode, .link_libc = true });
     addDecoderSources(b, codecs, target, .fixture, .shipped);
     library.linkLibrary(b.addLibrary(.{ .name = "uidiff-fixture-codecs", .root_module = codecs }));
     const module = b.createModule(.{
         .root_source_file = source,
         .target = target,
-        .optimize = optimize,
+        .optimize = fixture_mode,
         .link_libc = true,
         .imports = &.{
             .{ .name = "uidiff", .module = library },
@@ -221,14 +225,14 @@ pub fn jpegFixtureModule(b: *Build, generator: Build.LazyPath) *Build.Module {
     const jpeg = b.dependency("libjpeg_turbo", .{});
     const config = b.addWriteFiles();
     const header = config.add("jpeg_encoder.h", "#include \"jinclude.h\"\n#include \"jpeglib.h\"\n");
-    const c = b.addTranslateC(.{ .root_source_file = header, .target = b.graph.host, .optimize = .safe });
+    const c = b.addTranslateC(.{ .root_source_file = header, .target = b.graph.host, .optimize = fixture_mode });
     c.addIncludePath(config.getDirectory());
     c.addIncludePath(jpeg.path("src"));
     c.addIncludePath(b.path("src/codec/jpeg"));
     const module = b.createModule(.{
         .root_source_file = generator,
         .target = b.graph.host,
-        .optimize = .safe,
+        .optimize = fixture_mode,
         .link_libc = true,
         .imports = &.{.{ .name = "jpeg_encode_c", .module = c.createModule() }},
     });
