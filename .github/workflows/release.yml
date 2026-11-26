@@ -1,8 +1,14 @@
 name: Release
 
-# Run from main in the Actions tab; the version comes from build.zig.zon and the run creates its tag.
+# Run from main in the Actions tab. The run sets build.zig.zon to the version, commits it,
+# builds that commit for every target in parallel and publishes it everywhere under its tag.
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, such as 0.2.0 or 0.2.0-rc.1
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -15,23 +21,45 @@ jobs:
   version:
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       tag: ${{ steps.version.outputs.tag }}
       prerelease: ${{ steps.version.outputs.prerelease }}
+      sha: ${{ steps.commit.outputs.sha }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
       - id: version
         run: |
-          version=$(python3 scripts/release/package.py version)
+          version=$(python3 scripts/release/package.py set-version "$REQUESTED")
           if gh release view "v$version" >/dev/null 2>&1; then
-            echo "::error::v$version is already released; raise the version in build.zig.zon"
+            echo "::error::v$version is already released"
             exit 1
           fi
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
           echo "prerelease=$([[ "$version" == *-* ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
         env:
+          REQUESTED: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+      # The contents API commits as GitHub, so the version commit is signed, and it refuses
+      # the write if build.zig.zon changed on main since this checkout.
+      - id: commit
+        run: |
+          if git diff --quiet -- build.zig.zon; then
+            echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          sha=$(gh api -X PUT "repos/$GH_REPO/contents/build.zig.zon" \
+            -f message="chore(release): $TAG" \
+            -f content="$(base64 -w0 build.zig.zon)" \
+            -f sha="$(git rev-parse HEAD:build.zig.zon)" \
+            -f branch=main --jq .commit.sha)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
 
@@ -40,6 +68,7 @@ jobs:
     uses: ./.github/workflows/build-release-targets.yml
     with:
       package: true
+      ref: ${{ needs.version.outputs.sha }}
 
   github:
     needs: [version, build]
@@ -54,6 +83,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          ref: ${{ needs.version.outputs.sha }}
           persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -66,11 +96,12 @@ jobs:
       - run: |
           options=()
           if [[ "$PRERELEASE" == true ]]; then options+=(--prerelease); fi
-          gh release create "$TAG" --target "$GITHUB_SHA" --generate-notes "${options[@]}" release/*
+          gh release create "$TAG" --target "$SHA" --generate-notes "${options[@]}" release/*
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}
           PRERELEASE: ${{ needs.version.outputs.prerelease }}
+          SHA: ${{ needs.version.outputs.sha }}
       - if: ${{ needs.version.outputs.prerelease == 'false' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -123,6 +154,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          ref: ${{ needs.version.outputs.sha }}
           persist-credentials: false
       - run: gh release download "$TAG" --dir release
         env:
@@ -150,6 +182,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          ref: ${{ needs.version.outputs.sha }}
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:

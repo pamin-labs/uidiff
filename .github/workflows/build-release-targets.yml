@@ -6,6 +6,10 @@ on:
       package:
         type: boolean
         default: false
+      ref:
+        description: Commit to build; empty builds the triggering commit.
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -18,6 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
       - id: targets
         run: |
@@ -36,6 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
