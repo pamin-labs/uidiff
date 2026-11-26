@@ -5,7 +5,7 @@ const codecs = @import("build/codecs.zig");
 const Optimize = std.builtin.Optimize;
 const Build = std.Build;
 const Decoders = codecs.Decoders;
-const CodecBuild = codecs.CodecBuild;
+const ShippedLinkage = codecs.ShippedLinkage;
 const X86Simd = codecs.X86Simd;
 
 // The shipped Zig binary retains runtime safety checks. The C decoders
@@ -45,7 +45,7 @@ pub fn build(b: *Build) void {
     const decoders = codecs.addDecoders(b, target);
     const lib = libraryOptions(b, target, optimize, decoders);
     const uidiff = b.addModule("uidiff", lib);
-    codecs.linkShippedCodecs(b, uidiff, target, x86_simd, .shipped);
+    codecs.linkShippedCodecs(b, uidiff, target, x86_simd, .objects);
     // Enable LTO for the measured Linux musl release targets. Windows opts in for benchmarking.
     const os = target.result.os.tag;
     const arch = target.result.cpu.arch;
@@ -55,9 +55,9 @@ pub fn build(b: *Build) void {
     const requested_lto = b.option(bool, "cli-lto", "Override LTO for Linux musl or Windows ReleaseSafe CLIs");
     if (requested_lto == true and !can_lto) @panic("-Dcli-lto=true requires an arm64 or x86-64 Linux musl or Windows ReleaseSafe target");
     // Keep bitcode archives out of the public module consumed by other builds.
-    const cli_mode: CodecBuild = if (requested_lto orelse (can_lto and linux_musl)) .shipped_lto else .shipped;
-    const cli_library = if (cli_mode == .shipped_lto) b.createModule(lib) else uidiff;
-    if (cli_mode == .shipped_lto) codecs.linkShippedCodecs(b, cli_library, target, x86_simd, cli_mode);
+    const codec_linkage: ShippedLinkage = if (requested_lto orelse (can_lto and linux_musl)) .lto else .objects;
+    const cli_library = if (codec_linkage == .lto) b.createModule(lib) else uidiff;
+    if (codec_linkage == .lto) codecs.linkShippedCodecs(b, cli_library, target, x86_simd, codec_linkage);
 
     const version = packageVersion(b);
     const cli_options = b.addOptions();
@@ -65,7 +65,7 @@ pub fn build(b: *Build) void {
     const cli_config = cli_options.createModule();
     const cli = b.addExecutable(.{
         .name = cli_name,
-        .use_lld = if (cli_mode == .shipped_lto) true else null,
+        .use_lld = if (codec_linkage == .lto) true else null,
         .root_module = b.createModule(.{
             .root_source_file = b.path(cli_source),
             .target = target,
@@ -81,7 +81,7 @@ pub fn build(b: *Build) void {
         }),
     });
     // Keep the Windows Zig and CRT objects native. LLD can still optimize the C archives.
-    if (cli_mode == .shipped_lto and linux_musl) cli.lto = .full;
+    if (codec_linkage == .lto and linux_musl) cli.lto = .full;
     const install_cli = b.addInstallArtifact(cli, .{});
     b.getInstallStep().dependOn(&install_cli.step);
     inline for (.{ "LICENSE", "THIRD_PARTY_NOTICES" }) |notice| b.installFile(notice, "bin/" ++ notice);
@@ -131,7 +131,7 @@ fn libraryOptions(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, d
 
 fn addCheckedLibrary(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoders: Decoders, x86_simd: X86Simd) *Build.Module {
     const module = b.createModule(libraryOptions(b, target, optimize, decoders));
-    codecs.addDecoderSources(b, module, target, .checked, x86_simd);
+    codecs.addCheckedDecoders(b, module, target, x86_simd);
     module.addImport("uidiff_test_canvas", b.createModule(.{
         .root_source_file = b.path("src/testing/canvas.zig"),
         .target = target,

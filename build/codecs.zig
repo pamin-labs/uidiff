@@ -17,7 +17,10 @@ pub const Decoders = struct {
 /// How a build compiles the C decoders: in their own measured mode for the
 /// shipped binary, or inside the Zig module, in its mode with UBSan, for
 /// tests and fuzzing (without coverage feedback; see fuzz_coverage_flags).
-pub const CodecBuild = enum { shipped, shipped_lto, checked, fixture };
+const CodecBuild = enum { shipped, shipped_lto, checked, fixture };
+/// Selects object code or LTO bitcode for the shipped decoder archive.
+pub const ShippedLinkage = enum { objects, lto };
+
 /// Selects the zlib-ng x86 dispatch paths for a build.
 pub const X86Simd = enum { shipped, baseline, without_ssse3, without_sse4, without_avx2 };
 
@@ -156,13 +159,17 @@ const webp_encoder = [_][]const u8{
 };
 
 /// Links the compact decoder archive into a shipped library module.
-pub fn linkShippedCodecs(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, x86_simd: X86Simd, mode: CodecBuild) void {
+pub fn linkShippedCodecs(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, x86_simd: X86Simd, linkage: ShippedLinkage) void {
     // Keep unwind metadata in checked builds where codec failures
     // are diagnosed. The shipped C archive uses error returns.
     const codecs = b.createModule(.{ .target = target, .optimize = codec_mode, .link_libc = true, .unwind_tables = .none });
+    const mode: CodecBuild = switch (linkage) {
+        .objects => .shipped,
+        .lto => .shipped_lto,
+    };
     addDecoderSources(b, codecs, target, mode, x86_simd);
-    const archive = b.addLibrary(.{ .name = "uidiff-codecs", .root_module = codecs, .use_lld = if (mode == .shipped_lto) true else null });
-    if (mode == .shipped_lto) archive.lto = .full;
+    const archive = b.addLibrary(.{ .name = "uidiff-codecs", .root_module = codecs, .use_lld = if (linkage == .lto) true else null });
+    if (linkage == .lto) archive.lto = .full;
     module.linkLibrary(archive);
 }
 
@@ -242,9 +249,13 @@ pub fn jpegFixtureModule(b: *Build, generator: Build.LazyPath) *Build.Module {
     return module;
 }
 
-/// Adds the PNG, JPEG and WebP decoders' C sources, bounded by the limits
-/// that src/value/image.zig owns.
-pub fn addDecoderSources(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, mode: CodecBuild, x86_simd: X86Simd) void {
+/// Compiles the decoders in the caller's module so its sanitizer settings apply.
+pub fn addCheckedDecoders(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, x86_simd: X86Simd) void {
+    addDecoderSources(b, module, target, .checked, x86_simd);
+}
+
+// Adds the decoders' C sources, bounded by the limits src/value/image.zig owns.
+fn addDecoderSources(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, mode: CodecBuild, x86_simd: X86Simd) void {
     // Keep the screenshot path throughput-oriented and compact the other
     // codecs in the shipped binary. Checked builds keep their normal mode.
     const legacy_flags: []const []const u8 = if (mode != .checked) &.{"-Os"} else &.{};
