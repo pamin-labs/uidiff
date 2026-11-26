@@ -4,7 +4,7 @@ const value = @import("value.zig");
 const diff = @import("diff.zig");
 const codec = @import("codec.zig");
 const annotate = @import("annotate.zig");
-const files = @import("files.zig");
+const pipeline = @import("pipeline.zig");
 
 // Keeps the codec's C hooks in every build that links the decoders.
 comptime {
@@ -28,7 +28,7 @@ pub const Region = value.Region;
 /// Selects the source image for a region or annotation.
 pub const Side = value.Side;
 /// Parameters for comparison and file decoding.
-pub const Options = files.Options;
+pub const Options = pipeline.Options;
 /// An owned set of numbered changes and the combined canvas dimensions.
 pub const Comparison = diff.Comparison;
 /// Input and scratch-space failures from diff.
@@ -74,17 +74,17 @@ pub const DevicePx = value.DevicePx;
 /// Renders the same styled comparison sheet as file annotation.
 pub const renderComparisonSheet = annotate.renderSheet;
 /// Streams a styled comparison sheet as PNG without a full canvas allocation.
-pub const encodeComparisonSheet = files.encodeComparisonSheet;
+pub const encodeComparisonSheet = pipeline.encodeComparisonSheet;
 /// The files one comparison reads and writes.
-pub const Paths = files.Paths;
+pub const Paths = pipeline.Paths;
 /// The path of the file a failure concerns.
-pub const Diagnostics = files.Diagnostics;
+pub const Diagnostics = pipeline.Diagnostics;
 /// Failures rendering, encoding or writing the annotated sheet.
-pub const WriteError = files.WriteError;
+pub const WriteError = pipeline.WriteError;
 /// File, codec, comparison and sheet failures.
-pub const CompareFilesError = files.CompareError;
+pub const CompareFilesError = pipeline.CompareError;
 /// Decodes two files, compares them and writes the sheet if asked. The caller owns the result.
-pub const compareFiles = files.compareFiles;
+pub const compareFiles = pipeline.compareFiles;
 
 /// Compares a pair of borrowed RGBA8 values. The caller owns the result.
 pub fn compare(allocator: std.mem.Allocator, before: Image, after: Image, options: Options) CompareError!Comparison {
@@ -92,7 +92,7 @@ pub fn compare(allocator: std.mem.Allocator, before: Image, after: Image, option
 }
 
 test "module roots expose their API" {
-    inline for (.{ value, diff, codec, annotate, report, files }) |module| std.testing.refAllDecls(module);
+    inline for (.{ value, diff, codec, annotate, report, pipeline }) |module| std.testing.refAllDecls(module);
 }
 
 test "required test selection" {

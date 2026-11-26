@@ -24,7 +24,7 @@ Follow the public pamin-labs/skills engineering rules in [core](.agents/skills/p
 - `src/value.zig` and `src/value/` hold shared values and the image and memory bounds. Value modules depend only on other values and the standard library.
 - `src/codec.zig` and `src/codec/` handle format detection, bounded file reads, dimension and memory-budget checks, decoding and PNG encoding. `src/codec/types.zig` holds the shared decoder header type, and `src/codec/memory.zig` and `src/codec/memory.h` hold the C allocation hooks. Only `src/codec/png/stb.zig` imports the translated stb_image header, only `src/codec/jpeg.zig` the translated libjpeg-turbo bridge under `src/codec/jpeg/`, and only `src/codec/webp.zig` the translated libwebp decoder header; the encoder headers are translated separately for the fixture generator, so the shipped library never includes them. `src/codec/png.zig` exposes PNG registration, decoding and encoding through the bounded streams in `src/codec/png/`.
 - `src/diff.zig` owns the comparison API and resolves collected regions. The comparison internals in `src/diff/` are named, with their tiers, under Layers. `src/diff/rows/recolour.zig` identifies runs of changed colour within aligned bands. `src/annotate.zig` and `src/annotate/` number and place labels and draw the annotated sheet. `src/annotate/badges.zig` places badges and exposes the routing and painting in `src/annotate/badges/`. `src/annotate/crops.zig` owns close-up geometry and sampling, and `src/annotate/sheet.zig` composes the overview and the detail rows. `src/report.zig` owns the versioned JSON report.
-- `src/files.zig` is the file pipeline: it checks the options once, decodes both files, compares them and writes the sheet atomically. The CLI calls it and only translates.
+- `src/pipeline.zig` is the file pipeline: it checks the options once, decodes both files, compares them and writes the sheet atomically. The CLI calls it and only translates.
 - `src/cli.zig` is the CLI entry and `src/cli/` its argument syntax and usage text.
 - `bench/` measures the public API.
 - `npm/` contains the JavaScript launcher. The release tooling stages its manifest and the scoped launcher and its native platform packages from the build version and target list.
@@ -44,13 +44,13 @@ Follow the public pamin-labs/skills engineering rules in [core](.agents/skills/p
 | diff | `src/diff.zig` `src/diff/` | value |
 | annotate | `src/annotate.zig` `src/annotate/` | value |
 | report | `src/report.zig` | value |
-| files | `src/files.zig` | value, codec, diff, annotate |
+| pipeline | `src/pipeline.zig` | value, codec, diff, annotate |
 | testing | `src/testing.zig` `src/testing/` | uidiff |
-| api | `src/root.zig` | value, codec, diff, annotate, report, files |
+| api | `src/root.zig` | value, codec, diff, annotate, report, pipeline |
 | cli | `src/cli.zig` `src/cli/` | `uidiff` |
 | tool | `bench/` `tests/` | `uidiff` |
 
-`src/testing/jpeg.zig` belongs to `uidiff` and is path-imported by test declarations in `src/codec/jpeg.zig` and `src/files.zig`, `src/testing/canvas.zig` is `uidiff_test_canvas`, and the remaining files in `src/testing/` belong to `uidiff_testing`. Scenario runners and fuzz targets use procedural images and fuzz inputs from `uidiff_testing`. The named `fixtures` module describes the committed fixture set. Source unit tests and the private testing module share the named `uidiff_test_canvas` leaf because Zig assigns each source file to one module per compilation.
+`src/testing/jpeg.zig` belongs to `uidiff` and is path-imported by test declarations in `src/codec/jpeg.zig` and `src/pipeline.zig`, `src/testing/canvas.zig` is `uidiff_test_canvas`, and the remaining files in `src/testing/` belong to `uidiff_testing`. Scenario runners and fuzz targets use procedural images and fuzz inputs from `uidiff_testing`. The named `fixtures` module describes the committed fixture set. Source unit tests and the private testing module share the named `uidiff_test_canvas` leaf because Zig assigns each source file to one module per compilation.
 
 Named build modules, and the only files that may import them. The `export` row names the files whose exported functions C code calls back.
 
