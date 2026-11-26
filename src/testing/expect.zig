@@ -5,7 +5,6 @@ const canvas = @import("uidiff_test_canvas");
 const Canvas = canvas.Painters(uidiff.Image).Canvas;
 
 const CompareCheckError = uidiff.CompareError || error{TestExpectedEqual};
-const LocateEditError = uidiff.CompareError || error{ MissingEdit, TestUnexpectedResult };
 
 /// Checks that a reported region of the requested kind covers a test point.
 pub fn hasRegion(found: []const uidiff.Region, side: uidiff.Side, x: usize, y: usize, kind: ?uidiff.Kind) bool {
@@ -15,17 +14,6 @@ pub fn hasRegion(found: []const uidiff.Region, side: uidiff.Side, x: usize, y: u
         if (kind != null and kind != region.kind) continue;
         const box = (if (side == .before) region.before else region.after) orelse continue;
         if (box.x <= px and box.right() > px and box.y <= py and box.bottom() > py) return true;
-    }
-    return false;
-}
-
-/// Finds a two-sided mark that excludes the body of a nearby edit.
-pub fn hasSeparateMark(found: []const uidiff.Region, x: usize, y: usize, body_x: usize, body_y: usize) bool {
-    if (!hasRegion(found, .after, body_x, body_y, null)) return false;
-    for (found, 0..) |_, index| {
-        const mark = found[index..][0..1];
-        if (hasRegion(mark, .before, x, y, null) and hasRegion(mark, .after, x, y, null) and
-            !hasRegion(mark, .after, body_x, body_y, null)) return true;
     }
     return false;
 }
@@ -45,22 +33,6 @@ pub fn checkRegions(actual: []const uidiff.Region, expected: []const uidiff.Regi
         try std.testing.expectEqual(number, got.number);
         try std.testing.expectEqual(if (want.before == null) uidiff.Kind.inserted else if (want.after == null) uidiff.Kind.removed else uidiff.Kind.changed, got.kind);
     }
-}
-
-/// Checks that an edit is reported within the expected width.
-pub fn expectEditAt(before: Canvas, after: Canvas, x: usize, y: usize, max_box_width: usize) LocateEditError!void {
-    const result = try compareCanvases(before, after, 1);
-    defer result.deinit(std.testing.allocator);
-    for (result.regions) |region| {
-        const box = region.after orelse continue;
-        if (box.x <= @as(f64, @floatFromInt(x)) and box.right() > @as(f64, @floatFromInt(x)) and
-            box.y <= @as(f64, @floatFromInt(y)) and box.bottom() > @as(f64, @floatFromInt(y)))
-        {
-            try std.testing.expect(box.width <= @as(f64, @floatFromInt(max_box_width)));
-            return;
-        }
-    }
-    return error.MissingEdit;
 }
 
 /// Compares two procedural canvases at the supplied scale.

@@ -19,6 +19,16 @@ fn dimmedPage() !struct { canvas.Canvas, canvas.Canvas } {
     return .{ before, after };
 }
 
+fn hasSeparateMark(found: []const uidiff.Region, x: usize, y: usize, body_x: usize, body_y: usize) bool {
+    if (!expect.hasRegion(found, .after, body_x, body_y, null)) return false;
+    for (found, 0..) |_, index| {
+        const mark = found[index..][0..1];
+        if (expect.hasRegion(mark, .before, x, y, null) and expect.hasRegion(mark, .after, x, y, null) and
+            !expect.hasRegion(mark, .after, body_x, body_y, null)) return true;
+    }
+    return false;
+}
+
 test "a dimmed viewport with a new opaque center pane is an inserted overlay" {
     const before, const after = try dimmedPage();
     defer before.deinit();
@@ -48,7 +58,7 @@ test "a colored edit next to a floating panel remains visible on both sides" {
     after.fill(22, 50, 18, 4, .{ 168, 31, 48, 255 });
     const result = try expect.compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
-    try std.testing.expect(expect.hasSeparateMark(result.regions, 26, 52, 100, 70));
+    try std.testing.expect(hasSeparateMark(result.regions, 26, 52, 100, 70));
 }
 
 test "audit: a gray label turning black beside a toast remains two-sided" {
@@ -62,7 +72,7 @@ test "audit: a gray label turning black beside a toast remains two-sided" {
     after.fill(28, 88, 18, 5, .{ 0, 0, 0, 255 });
     const result = try expect.compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
-    try std.testing.expect(expect.hasSeparateMark(result.regions, 34, 90, 110, 75));
+    try std.testing.expect(hasSeparateMark(result.regions, 34, 90, 110, 75));
 }
 
 test "round 25 audit: a darkened gray label cannot set its own shadow transmission" {
@@ -76,7 +86,7 @@ test "round 25 audit: a darkened gray label cannot set its own shadow transmissi
     after.fill(28, 88, 18, 5, .{ 115, 115, 115, 255 });
     const result = try expect.compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
-    try std.testing.expect(expect.hasSeparateMark(result.regions, 34, 90, 110, 75));
+    try std.testing.expect(hasSeparateMark(result.regions, 34, 90, 110, 75));
 }
 
 test "round 25 audit: narrow, edge-touching and gradient panels retain the old side" {
@@ -104,7 +114,7 @@ test "round 25 audit: narrow, edge-touching and gradient panels retain the old s
         const prior_x: usize = if (profile == .edge) 20 else 90;
         try std.testing.expect(expect.hasRegion(result.regions, .before, prior_x, 80, null));
         try std.testing.expect(expect.hasRegion(result.regions, .after, 120, 80, null));
-        try std.testing.expect(expect.hasSeparateMark(result.regions, 48, 113, 120, 80));
+        try std.testing.expect(hasSeparateMark(result.regions, 48, 113, 120, 80));
     }
 }
 
@@ -125,7 +135,7 @@ test "audit: growing or replacing a toast retains the old panel" {
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(expect.hasRegion(result.regions, .before, 48, 88, null));
     try std.testing.expect(expect.hasRegion(result.regions, .after, 48, 88, null));
-    try std.testing.expect(expect.hasSeparateMark(result.regions, 48, 129, 120, 88));
+    try std.testing.expect(hasSeparateMark(result.regions, 48, 129, 120, 88));
 }
 
 test "a modal does not hide a changed page behind its scrim" {

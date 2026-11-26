@@ -12,6 +12,29 @@ const Pixel = uidiff.Pixel;
 const Kind = uidiff.Kind;
 const region_padding = uidiff.region_padding;
 
+fn auditPage(image: canvas.Canvas, first_row: usize, insertion: ?usize, deletion: ?usize, rows_count: usize) void {
+    @memset(image.pixels, canvas.white);
+    const height = image.view.height;
+    var y = first_row;
+    for (0..25) |i| {
+        if (insertion == i) {
+            const bottom = @min(height, y + 18 * rows_count - 3);
+            if (y < bottom) image.fill(8, y, 225, bottom - y, .{ 60, 140, 90, 255 });
+            y += 18 * rows_count;
+        }
+        if (deletion) |start| if (i >= start and i < start + rows_count) continue;
+        if (y + 9 <= height) image.line(8, 58, y, i * 7, 30);
+        y += 18;
+    }
+}
+
+fn auditChrome(image: canvas.Canvas) void {
+    const height = image.view.height;
+    image.fill(0, 0, 240, 41, .{ 220, 220, 235, 255 });
+    image.fill(0, height - 50, 240, 50, .{ 235, 225, 220, 255 });
+    image.fill(20, height - 40, 61, 21, .{ 50, 50, 200, 255 });
+}
+
 test "middle insertions box only new content with and without image growth" {
     const before = try canvas.Canvas.square();
     defer before.deinit();
@@ -285,14 +308,18 @@ test "balanced insertion and deletion detect every visible loss in both directio
         defer after.deinit();
         const clipped = try canvas.Canvas.init(240, height);
         defer clipped.deinit();
-        canvas.auditPage(before, chrome, null, null, 0);
+        const first_row: usize = if (chrome) 44 else 8;
+        auditPage(before, first_row, null, null, 0);
+        if (chrome) auditChrome(before);
         for ([_]usize{ 1, 3, 6 }) |insert_at| {
             for (1..4) |rows_count| {
-                canvas.auditPage(clipped, chrome, insert_at, null, rows_count);
+                auditPage(clipped, first_row, insert_at, null, rows_count);
+                if (chrome) auditChrome(clipped);
                 for (insert_at + 1..20) |delete_at| {
-                    const y = (if (chrome) @as(usize, 44) else 8) + 18 * delete_at;
+                    const y = first_row + 18 * delete_at;
                     if (y + 18 * rows_count > height - (if (chrome) @as(usize, 50) else 0)) continue;
-                    canvas.auditPage(after, chrome, insert_at, delete_at, rows_count);
+                    auditPage(after, first_row, insert_at, delete_at, rows_count);
+                    if (chrome) auditChrome(after);
                     const observable = !std.mem.eql(u8, std.mem.sliceAsBytes(after.pixels), std.mem.sliceAsBytes(clipped.pixels));
                     for ([_]bool{ false, true }) |reverse| {
                         const result = try expect.compareCanvases(if (reverse) after else before, if (reverse) before else after, 1);
@@ -321,7 +348,7 @@ test "exchanging separated cards preserves the removed card height" {
     defer before.deinit();
     const after = try canvas.Canvas.init(240, 520);
     defer after.deinit();
-    canvas.auditPage(before, false, null, null, 0);
+    auditPage(before, 8, null, null, 0);
     const old_y = 8 + 10 * 18;
     const new_y = 8 + 18;
     before.fill(8, old_y, 220, 30, .{ 220, 30, 30, 255 });

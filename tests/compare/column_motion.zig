@@ -30,6 +30,32 @@ fn growMainColumn(before: canvas.Canvas) !canvas.Canvas {
     return after;
 }
 
+fn fillCardList(image: canvas.Canvas, inserted: ?usize) void {
+    for (0..13) |index| {
+        const content = if (inserted) |at| if (index == at) 90 else index - @intFromBool(index > at) else index;
+        canvas.paintCard(image, 190, 14 + 40 * index, 401, 33, content);
+    }
+}
+
+fn strokeRounded(image: canvas.Canvas, top: usize, radius: usize) void {
+    const left = 220;
+    const width = 540;
+    const height = 200;
+    const stroke = 2;
+    for (0..height) |y| for (0..width) |x| {
+        if (!insideRounded(x, y, width, height, radius)) continue;
+        if (x >= stroke and x < width - stroke and y >= stroke and y < height - stroke and
+            insideRounded(x - stroke, y - stroke, width - 2 * stroke, height - 2 * stroke, radius - stroke)) continue;
+        image.row(top + y)[left + x] = .{ 100, 100, 105, 255 };
+    };
+}
+
+fn insideRounded(x: usize, y: usize, width: usize, height: usize, radius: usize) bool {
+    const dx = radius -| @min(x, width - 1 - x);
+    const dy = radius -| @min(y, height - 1 - y);
+    return dx * dx + dy * dy <= radius * radius;
+}
+
 test "card corner edits never align their narrow border columns as moves" {
     const before = try canvas.Canvas.init(800, 600);
     defer before.deinit();
@@ -38,8 +64,8 @@ test "card corner edits never align their narrow border columns as moves" {
     @memset(before.pixels, .{ 245, 245, 247, 255 });
     @memset(after.pixels, .{ 245, 245, 247, 255 });
     for ([_]usize{ 60, 300 }) |y| {
-        canvas.strokeRounded(before, y, 4);
-        canvas.strokeRounded(after, y, 16);
+        strokeRounded(before, y, 4);
+        strokeRounded(after, y, 16);
         // A separator can have the same ink as the outline.
         if (y == 300) {
             const edge = before.row(y)[480];
@@ -65,12 +91,12 @@ test "a blank sidebar group keeps a new mark stationary beside inserted cards" {
     const sidebar: Pixel = .{ 235, 238, 245, 255 };
     before.fill(0, 0, 180, 500, sidebar);
     for (0..10) |i_row| before.line(12, 55, 20 + 36 * i_row, 19 + i_row, 40);
-    canvas.fillCardList(before, null);
+    fillCardList(before, null);
     for ([_][2]usize{ .{ 60, 92 }, .{ 130, 122 }, .{ 160, 142 }, .{ 130, 205 }, .{ 160, 390 } }) |position| {
         const mark_x, const mark_y = position;
         @memcpy(after.pixels, before.pixels);
         after.fill(180, 0, 420, 500, canvas.white);
-        canvas.fillCardList(after, 3);
+        fillCardList(after, 3);
         after.fill(mark_x, mark_y, 17, 17, .{ 200, 40, 40, 255 });
 
         const result = try expect.compareCanvases(before, after, 1);

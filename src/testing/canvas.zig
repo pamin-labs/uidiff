@@ -77,30 +77,6 @@ pub fn Painters(comptime Image: type) type {
                 }
             }
 
-            /// Paints a glyph at a fractional sample phase.
-            pub fn coverageGlyph(self: Canvas, phase: i32) void {
-                const samples = 8;
-                const area = samples * samples;
-                // Coordinates use half a sample so each point is at a cell centre.
-                for (14..34) |y| {
-                    for (25..44) |x| {
-                        var covered: u32 = 0;
-                        for (0..samples) |sy| {
-                            const dy = @as(i32, @intCast(2 * (y * samples + sy) + 1)) - 24 * 16;
-                            for (0..samples) |sx| {
-                                const dx = @as(i32, @intCast(2 * (x * samples + sx) + 1)) - 34 * 16 - 2 * phase;
-                                const stem = @abs(8 * dx + 3 * dy) < 64 and @abs(dy) < 144;
-                                const bar = @abs(dy - 4 * 16) <= 10 and @abs(dx) < 112;
-                                covered += @intFromBool(stem or bar);
-                            }
-                        }
-                        var pixel: Pixel = .{ 24, 26, 29, 255 };
-                        for (pixel[0..3]) |*channel| channel.* += @intCast(((180 - @as(u32, channel.*)) * covered + area / 2) / area);
-                        self.row(y)[x] = pixel;
-                    }
-                }
-            }
-
             /// Replaces the red channel in a rectangle.
             pub fn red(self: Canvas, x: usize, y: usize, w: usize, h: usize, value: u8) void {
                 for (y..y + h) |j| for (self.row(j)[x..][0..w]) |*pixel| {
@@ -199,28 +175,6 @@ pub fn Painters(comptime Image: type) type {
             }
         }
 
-        /// Paints a page with optional stationary chrome and added or missing lines.
-        pub fn auditPage(canvas: Canvas, chrome: bool, insertion: ?usize, deletion: ?usize, rows_count: usize) void {
-            @memset(canvas.pixels, white);
-            const height = canvas.view.height;
-            var y: usize = if (chrome) 44 else 8;
-            for (0..25) |i| {
-                if (insertion == i) {
-                    const bottom = @min(height, y + 18 * rows_count - 3);
-                    if (y < bottom) canvas.fill(8, y, 225, bottom - y, .{ 60, 140, 90, 255 });
-                    y += 18 * rows_count;
-                }
-                if (deletion) |start| if (i >= start and i < start + rows_count) continue;
-                if (y + 9 <= height) canvas.line(8, 58, y, i * 7, 30);
-                y += 18;
-            }
-            if (chrome) {
-                canvas.fill(0, 0, 240, 41, .{ 220, 220, 235, 255 });
-                canvas.fill(0, height - 50, 240, 50, .{ 235, 225, 220, 255 });
-                canvas.fill(20, height - 40, 61, 21, .{ 50, 50, 200, 255 });
-            }
-        }
-
         /// Draws adjacent cards with independent label and value edits. The caller owns both canvases.
         pub fn compactCardEdits() Allocator.Error![2]Canvas {
             const before = try Canvas.init(480, 164);
@@ -241,14 +195,6 @@ pub fn Painters(comptime Image: type) type {
             return .{ before, after };
         }
 
-        /// Paints a list of cards with an optional insertion.
-        pub fn fillCardList(canvas: Canvas, inserted: ?usize) void {
-            for (0..13) |index| {
-                const content = if (inserted) |at| if (index == at) 90 else index - @intFromBool(index > at) else index;
-                paintCard(canvas, 190, 14 + 40 * index, 401, 33, content);
-            }
-        }
-
         /// Paints the edge and label of a single card.
         pub fn paintCard(canvas: Canvas, x: usize, y: usize, width: usize, height: usize, seed: usize) void {
             const edge: Pixel = .{ 180, 183, 189, 255 };
@@ -258,26 +204,6 @@ pub fn Painters(comptime Image: type) type {
             canvas.fill(x, y, 1, visible, edge);
             canvas.fill(x + width - 1, y, 1, visible, edge);
             if (visible >= 17) canvas.line(x + 12, x + 86, y + 8, seed, 40);
-        }
-
-        /// Paints the outline of the rounded panel fixture.
-        pub fn strokeRounded(canvas: Canvas, top: usize, radius: usize) void {
-            const left = 220;
-            const width = 540;
-            const height = 200;
-            const stroke = 2;
-            for (0..height) |y| for (0..width) |x| {
-                if (!insideRounded(x, y, width, height, radius)) continue;
-                if (x >= stroke and x < width - stroke and y >= stroke and y < height - stroke and
-                    insideRounded(x - stroke, y - stroke, width - 2 * stroke, height - 2 * stroke, radius - stroke)) continue;
-                canvas.row(top + y)[left + x] = .{ 100, 100, 105, 255 };
-            };
-        }
-
-        fn insideRounded(x: usize, y: usize, width: usize, height: usize, radius: usize) bool {
-            const dx = radius -| @min(x, width - 1 - x);
-            const dy = radius -| @min(y, height - 1 - y);
-            return dx * dx + dy * dy <= radius * radius;
         }
 
         fn int(n: usize) isize {

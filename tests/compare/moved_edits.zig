@@ -10,6 +10,21 @@ const Kind = uidiff.Kind;
 const region_padding = uidiff.region_padding;
 const min_region_pixels = canvas.block_size * canvas.block_size;
 
+fn expectEditAt(before: canvas.Canvas, after: canvas.Canvas, x: usize, y: usize, max_box_width: usize) !void {
+    const result = try expect.compareCanvases(before, after, 1);
+    defer result.deinit(std.testing.allocator);
+    for (result.regions) |region| {
+        const box = region.after orelse continue;
+        if (box.x <= @as(f64, @floatFromInt(x)) and box.right() > @as(f64, @floatFromInt(x)) and
+            box.y <= @as(f64, @floatFromInt(y)) and box.bottom() > @as(f64, @floatFromInt(y)))
+        {
+            try std.testing.expect(box.width <= @as(f64, @floatFromInt(max_box_width)));
+            return;
+        }
+    }
+    return error.MissingEdit;
+}
+
 test "stroke edits survive row movement, neighbouring dark text and a wider crop" {
     const width = 240;
     const height = 400;
@@ -36,7 +51,7 @@ test "stroke edits survive row movement, neighbouring dark text and a wider crop
             after.fill(0, 2, 2, 2, canvas.inkShade(0, 4));
             after.fill(236, 2, 2, 2, canvas.inkShade(0, 4));
         }
-        try expect.expectEditAt(before, after, dark_x + 2, dark_y + 4, 20);
+        try expectEditAt(before, after, dark_x + 2, dark_y + 4, 20);
     }
 
     for ([_]enum { dark_widen, light_shift, light_widen }{ .dark_widen, .light_shift, .light_widen }) |edit_kind| {
@@ -54,10 +69,10 @@ test "stroke edits survive row movement, neighbouring dark text and a wider crop
             },
         }
         if (edit_kind == .dark_widen) {
-            try expect.expectEditAt(before, after, dark_x + 2, dark_y + moved + 4, 20);
+            try expectEditAt(before, after, dark_x + 2, dark_y + moved + 4, 20);
         } else {
             const x = light_x + @as(usize, if (edit_kind == .light_shift) 2 else 3);
-            try expect.expectEditAt(before, after, x, y + 4, 20);
+            try expectEditAt(before, after, x, y + 4, 20);
         }
     }
 }
@@ -75,7 +90,7 @@ test "small icon motion stays local in a textured viewport" {
         defer after.deinit();
         after.text(8, 232, 6, 0, 30);
         after.fill(100, 140 + shift, 20, 20, color);
-        try expect.expectEditAt(before, after, 110, 159 + shift, 20 + 2 * region_padding);
+        try expectEditAt(before, after, 110, 159 + shift, 20 + 2 * region_padding);
     }
 }
 
@@ -226,7 +241,7 @@ test "a light stem edit stays visible beside touching dark text" {
             .left => 103,
             else => 105,
         };
-        try expect.expectEditAt(before, after, x, y + 4, 24);
+        try expectEditAt(before, after, x, y + 4, 24);
     }
 }
 

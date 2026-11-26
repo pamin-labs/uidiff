@@ -12,6 +12,29 @@ const Pixel = uidiff.Pixel;
 const Kind = uidiff.Kind;
 const min_region_pixels = canvas.block_size * canvas.block_size;
 
+fn coverageGlyph(image: canvas.Canvas, phase: i32) void {
+    const samples = 8;
+    const area = samples * samples;
+    // Coordinates use half a sample so each point is at a cell centre.
+    for (14..34) |y| {
+        for (25..44) |x| {
+            var covered: u32 = 0;
+            for (0..samples) |sy| {
+                const dy = @as(i32, @intCast(2 * (y * samples + sy) + 1)) - 24 * 16;
+                for (0..samples) |sx| {
+                    const dx = @as(i32, @intCast(2 * (x * samples + sx) + 1)) - 34 * 16 - 2 * phase;
+                    const stem = @abs(8 * dx + 3 * dy) < 64 and @abs(dy) < 144;
+                    const bar = @abs(dy - 4 * 16) <= 10 and @abs(dx) < 112;
+                    covered += @intFromBool(stem or bar);
+                }
+            }
+            var pixel: Pixel = .{ 24, 26, 29, 255 };
+            for (pixel[0..3]) |*channel| channel.* += @intCast(((180 - @as(u32, channel.*)) * covered + area / 2) / area);
+            image.row(y)[x] = pixel;
+        }
+    }
+}
+
 test "one-step noise and two-step red variation are ignored" {
     const before = try canvas.Canvas.square();
     defer before.deinit();
@@ -198,8 +221,8 @@ test "subpixel glyph coverage changes preserve borders and pale recolours" {
     const background: Pixel = .{ 24, 26, 29, 255 };
     @memset(before.pixels, background);
     @memset(after.pixels, background);
-    before.coverageGlyph(0);
-    after.coverageGlyph(1);
+    coverageGlyph(before, 0);
+    coverageGlyph(after, 1);
     try expect.check(before, after, 2, &.{});
 
     before.fill(4, 43, 14, 1, canvas.inkShade(180, 4));
