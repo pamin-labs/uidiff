@@ -71,7 +71,8 @@ pub fn loadStb(bytes: []const u8, expected: Size) DecodeError![]Pixel {
     errdefer c.stbi_image_free(data);
     const actual = try types.fromC(width, height);
     if (actual.width != expected.width or actual.height != expected.height) return error.InvalidImage;
-    const count = actual.pixelCount() orelse return error.ImageTooLarge;
+    // The matching probe dimensions have already passed the image limits.
+    const count = expected.width * expected.height;
     // stb allocates the returned block through our memory hooks.
     const allocation = memory.allocatedBytes(data);
     const used = count * @sizeOf(Pixel);
@@ -80,21 +81,20 @@ pub fn loadStb(bytes: []const u8, expected: Size) DecodeError![]Pixel {
 }
 
 noinline fn beginDecode(allocator: Allocator, header: Header, len: usize, cap: usize) DecodeError!void {
-    const limit = budget(header, len) orelse return error.ImageTooLarge;
-    if (limit > cap) return error.ImageTooLarge;
+    const limit = budget(header, len, cap) orelse return error.ImageTooLarge;
     memory.begin(allocator, limit);
 }
 
 /// Returns the most bytes stb may hold while decoding an image with this
-/// header from encoded_len bytes, or null past max_decode_bytes.
-fn budget(header: Header, encoded_len: usize) ?usize {
+/// header from encoded_len bytes, or null past the validated cap.
+fn budget(header: Header, encoded_len: usize, cap: usize) ?usize {
     const width = std.math.add(usize, header.size.width, block_pixels - 1) catch return null;
     const height = std.math.add(usize, header.size.height, block_pixels - 1) catch return null;
     const blocks = std.math.mul(usize, width / block_pixels, height / block_pixels) catch return null;
     const image = std.math.mul(usize, blocks, block_pixels * block_pixels * @sizeOf(Pixel) * png_image_buffers) catch return null;
     const scaled = std.math.mul(usize, image, header.sample_bytes) catch return null;
     const total = std.math.add(usize, scaled, encoded_len +| fixed_bytes) catch return null;
-    return if (total <= values.max_decode_bytes) total else null;
+    return if (total <= cap) total else null;
 }
 
 // stb replaces a failed format probe's reason with "unknown image type".
@@ -139,8 +139,8 @@ test "the largest 8-bit images fit the decode budget and a 16-bit one does not" 
     const padded: Size = .{ .width = 4097, .height = values.max_pixels / 4097 };
     for ([_]Size{ tall, padded }) |largest| {
         try std.testing.expect(largest.pixelCount() != null);
-        try std.testing.expect(budget(.{ .size = largest, .sample_bytes = 1 }, values.max_encoded_bytes) != null);
-        try std.testing.expectEqual(@as(?usize, null), budget(.{ .size = largest, .sample_bytes = 2 }, 0));
+        try std.testing.expect(budget(.{ .size = largest, .sample_bytes = 1 }, values.max_encoded_bytes, values.max_decode_bytes) != null);
+        try std.testing.expectEqual(@as(?usize, null), budget(.{ .size = largest, .sample_bytes = 2 }, 0, values.max_decode_bytes));
     }
 }
 

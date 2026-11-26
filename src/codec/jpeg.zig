@@ -107,11 +107,12 @@ pub fn probe(_: Allocator, bytes: []const u8, cap: usize) DecodeError!Header {
     return error.InvalidImage;
 }
 
-/// Decodes RGBA8 under the caller's memory cap. The caller releases the result.
+/// Decodes RGBA8 with the size and cap validated by the codec registry.
+/// The caller releases the result.
 pub fn decode(allocator: Allocator, bytes: []const u8, header: Header, cap: usize) DecodeError![]Pixel {
-    const count = header.size.pixelCount() orelse return error.ImageTooLarge;
+    const count = header.size.width * header.size.height;
     const length = std.math.cast(c_ulong, bytes.len) orelse return error.ImageTooLarge;
-    memory.begin(allocator, @min(cap, values.max_decode_bytes));
+    memory.begin(allocator, cap);
     defer memory.end();
     var run: Decode = .{ .bytes = bytes, .length = length, .size = header.size, .count = count };
     var decoder = std.mem.zeroes(c.jpeg_decompress_struct);

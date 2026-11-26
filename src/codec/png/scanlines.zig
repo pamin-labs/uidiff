@@ -126,7 +126,8 @@ pub fn streamingProfile(bytes: []const u8) ?Profile {
     return std.enums.fromInt(Profile, color);
 }
 
-/// Returns codec-budget-owned pixels, or null if the legacy decoder should try.
+/// Decodes a validated size into codec-budget-owned pixels, or returns null
+/// if the legacy decoder should try.
 pub fn decode(bytes: []const u8, size: values.Size) memory.Error!?[]values.Pixel {
     const profile = streamingProfile(bytes) orelse return null;
     var palette: [256]values.Pixel = undefined;
@@ -134,7 +135,7 @@ pub fn decode(bytes: []const u8, size: values.Size) memory.Error!?[]values.Pixel
     const width = size.width;
     const height = size.height;
     if (width != format.readU32(bytes, format.dimensions_offset) or height != format.readU32(bytes, format.dimensions_offset + @sizeOf(u32))) return null;
-    const count = size.pixelCount() orelse return null;
+    const count = width * height;
     const stride = width * channels;
     const input_bytes = width * profile.samplesPerPixel() + 1;
     const expansion_bytes = switch (profile) {
