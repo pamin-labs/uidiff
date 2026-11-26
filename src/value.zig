@@ -7,6 +7,8 @@ const scale = @import("value/scale.zig");
 
 /// Borrowed packed pixels and their source dimensions.
 pub const Image = image.Image;
+/// Borrowed images in comparison order.
+pub const Pair = image.Pair;
 /// Four channels in RGBA byte order.
 pub const Pixel = image.Pixel;
 /// Source dimensions in device pixels.

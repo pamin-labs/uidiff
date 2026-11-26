@@ -7,7 +7,6 @@ const value = @import("../../value.zig");
 const pixel = @import("../pixel.zig");
 const Box = value.Box;
 const Region = value.Region;
-const Image = value.Image;
 
 // Samples around the viewport imply a shared backdrop only when there is
 // enough contrast to distinguish a scrim from a replacement solid colour.
@@ -35,23 +34,23 @@ const scrim_window_contrast = 12.0;
 
 /// Assigns the affected side when a translucent backdrop and a new opaque
 /// panel explain a full-viewport change.
-pub fn classifyOverlay(region: *Region, before: Image, after: Image, scale: value.Scale) void {
-    if (before.width != after.width or before.height != after.height) return;
-    const viewport = Box.fromPixels(0, 0, before.width, before.height);
+pub fn classifyOverlay(region: *Region, pair: value.Pair, scale: value.Scale) void {
+    if (pair.before.width != pair.after.width or pair.before.height != pair.after.height) return;
+    const viewport = Box.fromPixels(0, 0, pair.before.width, pair.before.height);
     const old = region.before orelse return;
     const new = region.after orelse return;
     if (!std.meta.eql(old, viewport) or !std.meta.eql(new, viewport)) return;
     const radius: usize = bounds.deviceIndex(@min(scale.devicePixels(scrim_shadow_radius), max_scrim_shadow_radius));
-    if (overlaid(before, after, radius)) region.before = null else if (overlaid(after, before, radius)) region.after = null;
+    if (overlaid(pair, radius)) region.before = null else if (overlaid(pair.reversed(), radius)) region.after = null;
 }
 
-fn checkScrimShadow(before: Image, after: Image, panel: bounds.PixelRect, radius: usize, shade: scrim.Scrim) bool {
-    const last_y = before.height - 1;
-    const last_x = before.width - 1;
+fn checkScrimShadow(pair: value.Pair, panel: bounds.PixelRect, radius: usize, shade: scrim.Scrim) bool {
+    const last_y = pair.before.height - 1;
+    const last_x = pair.before.width - 1;
     var y: usize = 0;
     while (true) : (y = @min(y + scrim_sample_pitch, last_y)) {
-        const old = before.row(y);
-        const new = after.row(y);
+        const old = pair.before.row(y);
+        const new = pair.after.row(y);
         const in_panel_rows = y >= panel.top and y < panel.bottom;
         var x: usize = 0;
         while (true) : (x = @min(x + scrim_sample_pitch, last_x)) {
@@ -68,48 +67,48 @@ fn checkScrimShadow(before: Image, after: Image, panel: bounds.PixelRect, radius
     return true;
 }
 
-fn overlaid(before: Image, after: Image, radius: usize) bool {
-    const shade = fitScrim(before, after) orelse return false;
-    const panel = panelBounds(before, after, shade) orelse return false;
-    return checkScrimShadow(before, after, panel, radius, shade);
+fn overlaid(pair: value.Pair, radius: usize) bool {
+    const shade = fitScrim(pair) orelse return false;
+    const panel = panelBounds(pair, shade) orelse return false;
+    return checkScrimShadow(pair, panel, radius, shade);
 }
 
-fn panelBounds(before: Image, after: Image, shade: scrim.Scrim) ?bounds.PixelRect {
-    const y = before.height / 2;
-    const center = before.width / 2;
-    const a = before.row(y);
-    const b = after.row(y);
+fn panelBounds(pair: value.Pair, shade: scrim.Scrim) ?bounds.PixelRect {
+    const y = pair.before.height / 2;
+    const center = pair.before.width / 2;
+    const a = pair.before.row(y);
+    const b = pair.after.row(y);
     const panel = b[center];
-    const inset = before.width / panel_center_inset_divisor;
+    const inset = pair.before.width / panel_center_inset_divisor;
     const center_samples = [_]usize{ center - inset, center, center + inset };
     for (center_samples) |x| {
         if (!pixel.same(panel, b[x]) or shade.residual(a[x], b[x]) < scrim_window_contrast) return null;
     }
-    const origin = y * before.width + center;
-    const stride: isize = @intCast(before.width);
-    const right_extent = before.width - center - 1;
-    const lower_extent = before.height - y - 1;
-    const left = scrimReach(before, after, shade, origin, center, -1);
-    const right = scrimReach(before, after, shade, origin, right_extent, 1);
-    const top = scrimReach(before, after, shade, origin, y, -stride);
-    const bottom = scrimReach(before, after, shade, origin, lower_extent, stride);
+    const origin = y * pair.before.width + center;
+    const stride: isize = @intCast(pair.before.width);
+    const right_extent = pair.before.width - center - 1;
+    const lower_extent = pair.before.height - y - 1;
+    const left = scrimReach(pair, shade, origin, center, -1);
+    const right = scrimReach(pair, shade, origin, right_extent, 1);
+    const top = scrimReach(pair, shade, origin, y, -stride);
+    const bottom = scrimReach(pair, shade, origin, lower_extent, stride);
     if (left == center or right == right_extent or top == y or bottom == lower_extent) return null;
     return .{ .left = center - left, .right = center + right + 1, .top = y - top, .bottom = y + bottom + 1 };
 }
 
 // Takes a validated ray from a pixel to its row or column boundary.
-noinline fn scrimReach(before: Image, after: Image, shade: scrim.Scrim, origin: usize, extent: usize, step: isize) usize {
+noinline fn scrimReach(pair: value.Pair, shade: scrim.Scrim, origin: usize, extent: usize, step: isize) usize {
     var pos: isize = @intCast(origin);
     for (0..extent) |distance| {
         pos += step;
         const index: usize = @intCast(pos);
-        if (shade.matches(before.pixels[index], after.pixels[index])) return distance;
+        if (shade.matches(pair.before.pixels[index], pair.after.pixels[index])) return distance;
     }
     return extent;
 }
 
-noinline fn fitScrim(before: Image, after: Image) ?scrim.Scrim {
-    if (before.width < min_scrim_extent or before.height < min_scrim_extent) return null;
+noinline fn fitScrim(pair: value.Pair) ?scrim.Scrim {
+    if (pair.before.width < min_scrim_extent or pair.before.height < min_scrim_extent) return null;
     // Sample through the outer page bands so low-contrast viewport chrome
     // cannot determine the transmission for high-contrast content.
     const Channels = @Vector(4, u8);
@@ -117,14 +116,14 @@ noinline fn fitScrim(before: Image, after: Image) ?scrim.Scrim {
     var darkest: Channels = @splat(255);
     var bright_overlay: Channels = undefined;
     var dark_overlay: Channels = undefined;
-    const margin = before.height / scrim_fit_margin_divisor;
+    const margin = pair.before.height / scrim_fit_margin_divisor;
     var y: usize = 0;
-    while (y < before.height) : (y += scrim_fit_pitch) {
-        if (y >= margin and y < before.height - margin) continue;
-        const source = before.row(y);
-        const dimmed = after.row(y);
+    while (y < pair.before.height) : (y += scrim_fit_pitch) {
+        if (y >= margin and y < pair.before.height - margin) continue;
+        const source = pair.before.row(y);
+        const dimmed = pair.after.row(y);
         var x: usize = 0;
-        while (x < before.width) : (x += scrim_fit_pitch) {
+        while (x < pair.before.width) : (x += scrim_fit_pitch) {
             const a: Channels = source[x];
             const b: Channels = dimmed[x];
             if (a[3] != 255 or b[3] != 255) return null;
@@ -143,8 +142,8 @@ noinline fn fitScrim(before: Image, after: Image) ?scrim.Scrim {
     if (range < scrim_min_contrast or highs[signal] <= lows[signal] or highs[signal] >= peaks[signal]) return null;
     const transmission = @as(f32, @floatFromInt(highs[signal] - lows[signal])) / @as(f32, @floatFromInt(range));
     if (transmission < scrim_min_transmission or transmission > scrim_max_transmission) return null;
-    const a = before.pixels[0];
-    const b = after.pixels[0];
+    const a = pair.before.pixels[0];
+    const b = pair.after.pixels[0];
     const base = scrim.tone(b) - scrim.tone(a) * @as(@Vector(3, f32), @splat(transmission));
     if (@reduce(.Min, base) < -scrim.scrim_rounding or
         @reduce(.Max, base) > 255 * (1 - transmission) + scrim.scrim_rounding) return null;

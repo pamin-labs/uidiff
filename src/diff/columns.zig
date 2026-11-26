@@ -14,8 +14,7 @@ pub const Group = struct { span: Span, lane: Span };
 
 /// The compared pair and the column span holding every change, in device pixels.
 pub const Scope = struct {
-    before: Image,
-    after: Image,
+    pair: value.Pair,
     span: Span,
     /// Where to draw a gap with no changed pixels against its background.
     bounds: Span,
@@ -98,28 +97,28 @@ const gutter_check_rows = 32;
 
 /// Finds the shared-width interval containing every changed column.
 /// Assumes both images are valid and width is at most the narrower one.
-pub fn span(before: Image, after: Image, width: usize) Span {
-    if (before.height != after.height) return .{ .left = 0, .width = width };
-    return spanRows(before, after, .{ .left = 0, .width = width }, 0, before.height);
+pub fn span(pair: value.Pair, width: usize) Span {
+    if (pair.before.height != pair.after.height) return .{ .left = 0, .width = width };
+    return spanRows(pair, .{ .left = 0, .width = width }, 0, pair.before.height);
 }
 
 /// Finds stationary gutters across common rows and any unchanged extension.
-pub fn partition(before: Image, after: Image, bounds: Span, stationary: []bool) Partition {
+pub fn partition(pair: value.Pair, bounds: Span, stationary: []bool) Partition {
     @memset(stationary, true);
-    const common = @min(before.height, after.height);
+    const common = @min(pair.before.height, pair.after.height);
     for (0..common) |y| {
-        markChanged(stationary, before.rowSegment(y, bounds.left, bounds.width), after.rowSegment(y, bounds.left, bounds.width));
+        markChanged(stationary, pair.before.rowSegment(y, bounds.left, bounds.width), pair.after.rowSegment(y, bounds.left, bounds.width));
         if ((y + 1) % gutter_check_rows == 0 and !hasGutter(stationary)) {
             return .{ .left = bounds.left, .stationary = &.{}, .extent = bounds.left + bounds.width };
         }
     }
-    const tall = if (before.height > after.height) before else after;
+    const tall = if (pair.before.height > pair.after.height) pair.before else pair.after;
     const edge = tall.rowSegment(common - 1, bounds.left, bounds.width);
     for (common..tall.height) |y| {
         // A column with new content in the extension is still compared.
         markChanged(stationary, edge, tall.rowSegment(y, bounds.left, bounds.width));
     }
-    return .{ .left = bounds.left, .stationary = stationary, .extent = @min(before.width, after.width) };
+    return .{ .left = bounds.left, .stationary = stationary, .extent = @min(pair.before.width, pair.after.width) };
 }
 
 /// Reports whether the span has the same horizontal paint on every row.
@@ -143,14 +142,14 @@ pub fn blankBand(source: Image, first: usize, rows: usize, bounds: Span) bool {
 }
 
 /// Finds changed columns within a shared, validated rectangle.
-pub fn spanRows(before: Image, after: Image, bounds: Span, top: usize, bottom: usize) Span {
+pub fn spanRows(pair: value.Pair, bounds: Span, top: usize, bottom: usize) Span {
     const width = bounds.width;
     var left = width;
     var right: usize = 0;
     for (top..bottom) |y| {
         if (left == 0 and right == width) break;
-        const a = before.rowSegment(y, bounds.left, width);
-        const b = after.rowSegment(y, bounds.left, width);
+        const a = pair.before.rowSegment(y, bounds.left, width);
+        const b = pair.after.rowSegment(y, bounds.left, width);
         var x: usize = 0;
         while (x + pixel.block_pixels <= left and pixel.sameBlock(a[x..][0..pixel.block_pixels], b[x..][0..pixel.block_pixels])) x += pixel.block_pixels;
         while (x + lanes <= left and equalBlock(a[x..][0..lanes], b[x..][0..lanes])) x += lanes;
@@ -310,7 +309,7 @@ test "the last row includes both changed edges around a vector tail" {
     var new = old;
     new[lanes + 1][0] = 0;
     new[new.len - 1][3] = 128;
-    const found = span(.{ .width = lanes + 1, .height = 2, .pixels = &old }, .{ .width = lanes + 1, .height = 2, .pixels = &new }, lanes + 1);
+    const found = span(.{ .before = .{ .width = lanes + 1, .height = 2, .pixels = &old }, .after = .{ .width = lanes + 1, .height = 2, .pixels = &new } }, lanes + 1);
     try std.testing.expectEqual(@as(usize, 0), found.left);
     try std.testing.expectEqual(@as(usize, lanes + 1), found.width);
 }

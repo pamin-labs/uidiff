@@ -12,7 +12,6 @@ const yiq = @import("yiq.zig");
 const Allocator = std.mem.Allocator;
 const Box = value.Box;
 const Collector = regions.Collector;
-const Image = value.Image;
 const Pixel = value.Pixel;
 const Raster = yiq.Raster;
 
@@ -53,8 +52,8 @@ const replacement_context_rows = 4;
 
 /// Collects changed bands and moves across the changed columns.
 pub fn collect(allocator: Allocator, collector: *Collector, moves: *std.ArrayList(value.Move), scope: columns.Scope, scroll_limit_px: usize) Allocator.Error!void {
-    const before = scope.before;
-    const after = scope.after;
+    const before = scope.pair.before;
+    const after = scope.pair.after;
     const row_count = before.height + after.height;
     const storage = try allocator.alloc(u64, 2 * row_count);
     defer allocator.free(storage);
@@ -71,9 +70,9 @@ pub fn collect(allocator: Allocator, collector: *Collector, moves: *std.ArrayLis
     if (scope.span.width > columns.min_gutter and (ambiguous or hasFlatEdge(scope))) {
         const stationary = try allocator.alloc(bool, scope.span.width);
         defer allocator.free(stationary);
-        var parts = columns.partition(before, after, scope.span, stationary);
+        var parts = columns.partition(scope.pair, scope.span, stationary);
         if (parts.next()) |first| if (first.span.width != scope.span.width and
-            (ambiguous or hasFlatColumn(before, after, first, parts)))
+            (ambiguous or hasFlatColumn(scope.pair, first, parts)))
         {
             if (before.height == after.height and !hasColumnWiderThanLimit(first, parts, local_limit_px)) {
                 buffers.alignment.deinit(allocator);
@@ -85,7 +84,7 @@ pub fn collect(allocator: Allocator, collector: *Collector, moves: *std.ArrayLis
             var has_movement = false;
             var part = first;
             while (true) {
-                const local: columns.Scope = .{ .before = before, .after = after, .span = part.span, .bounds = part.span, .frame = part.lane };
+                const local: columns.Scope = .{ .pair = scope.pair, .span = part.span, .bounds = part.span, .frame = part.lane };
                 // A strip as narrow as the replacement gap may be only the
                 // edge of a card. Give it the same positional comparison as
                 // a stationary group unless the whole span explains a move.
@@ -136,17 +135,17 @@ fn mixedShifts(bands: []const rows.Band) bool {
 fn hasFlatEdge(scope: columns.Scope) bool {
     const left: columns.Span = .{ .left = scope.span.left, .width = 1 };
     const right: columns.Span = .{ .left = scope.span.left + scope.span.width - 1, .width = 1 };
-    return columns.sameRows(scope.before, left) or columns.sameRows(scope.after, left) or
-        columns.sameRows(scope.before, right) or columns.sameRows(scope.after, right);
+    return columns.sameRows(scope.pair.before, left) or columns.sameRows(scope.pair.after, left) or
+        columns.sameRows(scope.pair.before, right) or columns.sameRows(scope.pair.after, right);
 }
 
 // A group with the same row throughout one image supplies no evidence of
 // motion. It must not take its displacement from adjacent content.
-fn hasFlatColumn(before: Image, after: Image, first: columns.Group, trailing: columns.Partition) bool {
+fn hasFlatColumn(pair: value.Pair, first: columns.Group, trailing: columns.Partition) bool {
     var group = first;
     var rest = trailing;
     while (true) {
-        if (columns.sameRows(before, group.span) or columns.sameRows(after, group.span)) return true;
+        if (columns.sameRows(pair.before, group.span) or columns.sameRows(pair.after, group.span)) return true;
         group = rest.next() orelse return false;
     }
 }
@@ -159,10 +158,10 @@ fn hasColumnWiderThanLimit(first: columns.Group, tail: columns.Partition, limit:
 }
 
 fn alignSpan(allocator: Allocator, scope: columns.Scope, scroll_limit_px: usize, local_limit_px: usize, keys: []u64, bands: []rows.Band, filtered: []u64, workspace: *rows.Workspace) Allocator.Error!?[]rows.Band {
-    const old_keys = keys[0..scope.before.height];
-    const new_keys = keys[scope.before.height..];
-    rows.keys(scope.before, scope.span.left, scope.span.width, old_keys);
-    rows.keys(scope.after, scope.span.left, scope.span.width, new_keys);
+    const old_keys = keys[0..scope.pair.before.height];
+    const new_keys = keys[scope.pair.before.height..];
+    rows.keys(scope.pair.before, scope.span.left, scope.span.width, old_keys);
+    rows.keys(scope.pair.after, scope.span.left, scope.span.width, new_keys);
     if (scope.frame != null and (std.mem.allEqual(u64, old_keys, old_keys[0]) or
         std.mem.allEqual(u64, new_keys, new_keys[0]))) return null;
     // A compact change is local motion, even if re-pairing its two edges
@@ -180,10 +179,8 @@ fn alignSpan(allocator: Allocator, scope: columns.Scope, scroll_limit_px: usize,
         .replacement = 2 * local_limit_px,
         // Unchanged columns on the same rows are additional evidence of a
         // local overwrite, especially when repeating lines can match at a pitch.
-        .narrow_edit = scope.span.width <= @min(scope.before.width, scope.after.width) / 2,
-        .images = .{ scope.before, scope.after },
-        .left = scope.span.left,
-        .width = scope.span.width,
+        .narrow_edit = scope.span.width <= @min(scope.pair.before.width, scope.pair.after.width) / 2,
+        .sample = .{ .pair = scope.pair, .columns = scope.span },
     };
     const aligned = try rows.matchBands(allocator, old_keys, new_keys, limits, bands, filtered, workspace) orelse return null;
     rows.refineElements(old_keys, new_keys, limits, aligned);
@@ -191,8 +188,8 @@ fn alignSpan(allocator: Allocator, scope: columns.Scope, scroll_limit_px: usize,
 }
 
 fn compareSpan(allocator: Allocator, collector: *Collector, scope: columns.Scope, aligned: ?[]rows.Band, buffers: *CompareBuffers) !void {
-    const before = scope.before;
-    const after = scope.after;
+    const before = scope.pair.before;
+    const after = scope.pair.after;
     const left = scope.span.left;
     const width = scope.span.width;
     const overlap = @min(before.height, after.height);
@@ -275,7 +272,7 @@ fn compareReplacement(collector: *Collector, scope: columns.Scope, band: rows.Ba
     // Equal-displacement anchors can include edited rows alongside the
     // replacement. Include enough context to recover a split component.
     const top = @min(replacement_context_rows, band.before, band.after);
-    const bottom = @min(replacement_context_rows, scope.before.height - band.before - band.removed, scope.after.height - band.after - band.added);
+    const bottom = @min(replacement_context_rows, scope.pair.before.height - band.before - band.removed, scope.pair.after.height - band.after - band.added);
     const first_old = band.before - top;
     const first_new = band.after - top;
     const height = top + band.removed + bottom;
@@ -286,10 +283,10 @@ fn compareReplacement(collector: *Collector, scope: columns.Scope, band: rows.Ba
     var pixels_changed: usize = 0;
     var inside = false;
     for (0..height) |y| {
-        const before = scope.before.rowSegment(first_old + y, left, width);
-        const after = scope.after.rowSegment(first_new + y, left, width);
+        const before = scope.pair.before.rowSegment(first_old + y, left, width);
+        const after = scope.pair.after.rowSegment(first_new + y, left, width);
         if (pixel.sameRun(before, after)) continue;
-        const offset = ((first_old + y) * scope.before.width + left) * @sizeOf(Pixel);
+        const offset = ((first_old + y) * scope.pair.before.width + left) * @sizeOf(Pixel);
         for (before, after, 0..) |old, new, x| {
             if (!yiq.aboveThreshold(old, new, offset + x * @sizeOf(Pixel))) continue;
             inside = inside or (y >= top and y < top + band.removed);
@@ -324,8 +321,8 @@ fn sameBandPixels(scope: columns.Scope, band: rows.Band) bool {
     const width = scope.span.width;
     // Check the actual bytes before dropping the band, including hash collisions.
     for (0..band.removed) |row| {
-        const before = scope.before.rowSegment(band.before + row, left, width);
-        const after = scope.after.rowSegment(band.after + row, left, width);
+        const before = scope.pair.before.rowSegment(band.before + row, left, width);
+        const after = scope.pair.after.rowSegment(band.after + row, left, width);
         if (!pixel.sameRun(before, after)) return false;
     }
     return true;
@@ -394,7 +391,7 @@ test "a taller button excludes unchanged card borders on unpaired rows" {
         image.line(40, 300, 220 + growth, 6, 28);
     }
     const span: columns.Span = .{ .left = 24, .width = 298 };
-    const scope: columns.Scope = .{ .before = before.view, .after = after.view, .span = span, .bounds = span };
+    const scope: columns.Scope = .{ .pair = .{ .before = before.view, .after = after.view }, .span = span, .bounds = span };
     var storage: [regions.max_regions]regions.Candidate = undefined;
     var collector: Collector = .{ .boxes = &storage, .gap_px = 4, .max_gap_px = 20 };
     var buffers: CompareBuffers = .{};

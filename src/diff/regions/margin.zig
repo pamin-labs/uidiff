@@ -24,17 +24,17 @@ const shade_mark_residual: f32 = 6;
 
 /// Finds a separate colour edit embedded in a flat dimmed margin. The enclosing
 /// region remains available to account for the rest of the changed pixels.
-pub fn shadeMarginEdit(region: Region, before: Image, after: Image, scale: value.Scale) ?candidate.Candidate {
-    if (before.width != after.width or before.height != after.height) return null;
+pub fn shadeMarginEdit(region: Region, pair: value.Pair, scale: value.Scale) ?candidate.Candidate {
+    if (pair.before.width != pair.after.width or pair.before.height != pair.after.height) return null;
     const box = candidate.stationaryBox(region) orelse return null;
-    const viewport = Box.fromPixels(0, 0, before.width, before.height);
+    const viewport = Box.fromPixels(0, 0, pair.before.width, pair.before.height);
     if (std.meta.eql(box, viewport) or box.width < scale.devicePixels(shade_margin_width)) return null;
     const area = bounds.PixelRect.fromBox(box);
     const extent = bounds.deviceIndex(@min(scale.devicePixels(shade_margin_height), box.height / 2));
-    return shadeMargin(before, after, area, extent, .start) orelse shadeMargin(before, after, area, extent, .end);
+    return shadeMargin(pair, area, extent, .start) orelse shadeMargin(pair, area, extent, .end);
 }
 
-fn shadeMargin(before: Image, after: Image, area: bounds.PixelRect, extent: usize, edge: bounds.RailEnd) ?candidate.Candidate {
+fn shadeMargin(pair: value.Pair, area: bounds.PixelRect, extent: usize, edge: bounds.RailEnd) ?candidate.Candidate {
     const width = area.right - area.left;
     const center = area.left + width / 2;
     const max_mark_width = width / shade_mark_width_divisor;
@@ -49,8 +49,8 @@ fn shadeMargin(before: Image, after: Image, area: bounds.PixelRect, extent: usiz
     // not provide evidence that a smaller mark is independent.
     for (0..extent) |offset| {
         const y = if (edge == .start) area.top + offset else area.bottom - 1 - offset;
-        const old = before.row(y);
-        const new = after.row(y);
+        const old = pair.before.row(y);
+        const new = pair.after.row(y);
         const source = scrim.tone(old[center]);
         const brightness = @reduce(.Add, source);
         if (brightness == 0) break;
@@ -101,7 +101,7 @@ test "faint shadow variation at the margin is not a separate colour edit" {
     const before: Image = .{ .pixels = &old, .width = width, .height = height };
     const after: Image = .{ .pixels = &new, .width = width, .height = height };
     const area: bounds.PixelRect = .{ .left = 0, .right = width, .top = 0, .bottom = height };
-    try std.testing.expectEqual(null, shadeMargin(before, after, area, 8, .start));
+    try std.testing.expectEqual(null, shadeMargin(.{ .before = before, .after = after }, area, 8, .start));
 }
 
 test {

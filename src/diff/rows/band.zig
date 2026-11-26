@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const value = @import("../../value.zig");
+const columns = @import("../columns.zig");
 const Image = value.Image;
 
 /// A pair of row ranges, with any surplus treated as one-sided.
@@ -14,14 +15,18 @@ pub const Band = struct {
     mode: union(enum) { regular, hash_match, replacement, spacing, element, revealed: usize } = .regular,
 };
 
+/// The source pixels available to refine hash-based row alignment.
+pub const Sample = struct {
+    pair: value.Pair,
+    columns: columns.Span,
+};
+
 /// Device-pixel limits for identifying small scrolls and replacements.
 pub const Limits = struct {
     scroll: usize,
     replacement: usize,
     narrow_edit: bool = false,
-    images: ?[2]Image = null,
-    left: usize = 0,
-    width: usize = 0,
+    sample: ?Sample = null,
 };
 
 /// One run of exactly matched row keys.

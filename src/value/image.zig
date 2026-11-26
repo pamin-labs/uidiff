@@ -1,5 +1,6 @@
 //! Image dimensions and borrowed RGBA8 pixels shared across layers.
 const std = @import("std");
+const region = @import("region.zig");
 
 /// Red, green, blue and alpha channels in byte order.
 pub const Pixel = [4]u8;
@@ -63,6 +64,23 @@ pub const Image = struct {
     /// Borrows bytes of a row segment within a validated image.
     pub fn rowBytes(self: Image, y: usize, left: usize, width: usize) []const u8 {
         return std.mem.sliceAsBytes(self.rowSegment(y, left, width));
+    }
+};
+
+/// The borrowed source images in comparison order.
+pub const Pair = struct {
+    before: Image,
+    after: Image,
+
+    pub fn get(self: Pair, side: region.Side) Image {
+        return switch (side) {
+            .before => self.before,
+            .after => self.after,
+        };
+    }
+
+    pub fn reversed(self: Pair) Pair {
+        return .{ .before = self.after, .after = self.before };
     }
 };
 

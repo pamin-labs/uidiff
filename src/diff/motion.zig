@@ -56,11 +56,11 @@ pub fn gatherMoves(allocator: Allocator, moves: *std.ArrayList(value.Move), scop
     }
     var kept = first;
     for (moves.items[first..]) |move| {
-        if (columns.blankBand(scope.before, move.before.y, move.before.height, span) and
-            columns.blankBand(scope.after, move.after.y, move.after.height, span)) continue;
+        if (columns.blankBand(scope.pair.before, move.before.y, move.before.height, span) and
+            columns.blankBand(scope.pair.after, move.after.y, move.after.height, span)) continue;
         var full = move;
         const pitch = move.shift();
-        if (columns.enclosingCard(scope.before, span, scope.frame orelse scope.bounds, move.before.y, columns.CardSearch.motion(span, pitch))) |card| {
+        if (columns.enclosingCard(scope.pair.before, span, scope.frame orelse scope.bounds, move.before.y, columns.CardSearch.motion(span, pitch))) |card| {
             full.x = .init(card.columns.left);
             full.width = .init(card.columns.width);
         }
@@ -73,14 +73,14 @@ pub fn gatherMoves(allocator: Allocator, moves: *std.ArrayList(value.Move), scop
 fn columnMotion(scope: Scope, keys: []const u64, move: value.Move, scroll_limit_px: usize) bool {
     // A matching edge that remains at its old position gives no evidence
     // that the column moved. Require several content rows at the new offset.
-    const before = keys[0..scope.before.height];
-    const after = keys[scope.before.height..];
+    const before = keys[0..scope.pair.before.height];
+    const after = keys[scope.pair.before.height..];
     const minimum: usize = @max(min_column_motion_rows, column_motion_scroll_factor * scroll_limit_px);
     var supported: usize = 0;
     for (0..move.before.height) |i| {
         const old = move.before.y + i;
         const new = move.after.y + i;
-        if (before[old] != after[new] or (old < after.len and before[old] == after[old]) or columns.blankBand(scope.before, old, 1, scope.span)) continue;
+        if (before[old] != after[new] or (old < after.len and before[old] == after[old]) or columns.blankBand(scope.pair.before, old, 1, scope.span)) continue;
         supported += 1;
         if (supported == minimum) return true;
     }
@@ -94,7 +94,7 @@ test "an aligned blank tail contributes no phantom move" {
     const after = try canvas.Canvas.init(64, 64);
     defer after.deinit();
     const span: columns.Span = .{ .left = 0, .width = 64 };
-    const scope: columns.Scope = .{ .before = before.view, .after = after.view, .span = span, .bounds = span };
+    const scope: columns.Scope = .{ .pair = .{ .before = before.view, .after = after.view }, .span = span, .bounds = span };
     const band: rows.Band = .{ .before = 26, .after = 58, .removed = 6, .added = 6 };
     var moves: std.ArrayList(value.Move) = .empty;
     defer moves.deinit(std.testing.allocator);

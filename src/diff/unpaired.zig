@@ -21,7 +21,7 @@ const min_bar_rows = 2;
 /// Collects changes for rows aligned to a gap.
 pub fn collect(collector: *Collector, scope: Scope, scratch: mask.Scratch, rows: Rows) void {
     if (rows.count == 0) return;
-    const source = if (rows.side == .before) scope.before else scope.after;
+    const source = scope.pair.get(rows.side);
     const left = scope.span.left;
     const width = scope.span.width;
     const y = rows.y;
@@ -79,9 +79,9 @@ pub fn collect(collector: *Collector, scope: Scope, scratch: mask.Scratch, rows:
 /// A resized edit can leave an unpaired tail against an unchanged background.
 /// Verify the paint across both images before reusing it, including any vertical border.
 pub fn sharedBackdrop(scope: Scope, old_y: usize, new_y: usize) ?[]const Pixel {
-    if (old_y >= scope.before.height or new_y >= scope.after.height) return null;
+    if (old_y >= scope.pair.before.height or new_y >= scope.pair.after.height) return null;
     const span = scope.span;
-    const new = rowRun(scope.after, new_y, span);
+    const new = rowRun(scope.pair.after, new_y, span);
     // The ordinary gap comparison already handles flat paint. Reuse a row
     // across the edit when both sides of the span show the same card edge.
     const edge = new[0];
@@ -91,28 +91,28 @@ pub fn sharedBackdrop(scope: Scope, old_y: usize, new_y: usize) ?[]const Pixel {
     while (pixel.same(edge, new[border])) : (border += 1) {}
     for (new[new.len - border ..]) |p| if (!pixel.same(p, edge)) return null;
     for (new[border .. new.len - border]) |p| if (!pixel.same(p, fill)) return null;
-    if (!pixel.sameRun(rowRun(scope.before, old_y, span), new)) return null;
-    return scope.after.row(new_y);
+    if (!pixel.sameRun(rowRun(scope.pair.before, old_y, span), new)) return null;
+    return scope.pair.after.row(new_y);
 }
 
 fn unchangedBlank(scope: Scope, bounds: columns.Span, y: usize, opposite: usize, rows: usize) bool {
-    if (opposite >= scope.after.height) return true;
-    const expected = rowRun(scope.before, y, bounds);
+    if (opposite >= scope.pair.after.height) return true;
+    const expected = rowRun(scope.pair.before, y, bounds);
     var end = y + rows;
-    while (end < scope.before.height and pixel.sameRun(rowRun(scope.before, end, bounds), expected)) end += 1;
-    if (end == scope.before.height) return hasEqualRun(expected, scope.after, bounds, y, opposite, rows);
+    while (end < scope.pair.before.height and pixel.sameRun(rowRun(scope.pair.before, end, bounds), expected)) end += 1;
+    if (end == scope.pair.before.height) return hasEqualRun(expected, scope.pair.after, bounds, y, opposite, rows);
     if (end == y + rows and fixedLowerEdge(scope, bounds, expected, y, end)) return true;
 
     var first = y;
-    while (first > 0 and pixel.sameRun(rowRun(scope.before, first - 1, bounds), expected)) first -= 1;
-    return interiorBlank(scope.after, bounds, expected, first, end, opposite -| (y - first)) or
+    while (first > 0 and pixel.sameRun(rowRun(scope.pair.before, first - 1, bounds), expected)) first -= 1;
+    return interiorBlank(scope.pair.after, bounds, expected, first, end, opposite -| (y - first)) or
         fixedUpperBar(scope, bounds, expected, first);
 }
 
 fn fixedLowerEdge(scope: Scope, bounds: columns.Span, paint: []const Pixel, y: usize, end: usize) bool {
-    return end < scope.after.height and
-        pixel.sameRun(rowRun(scope.before, end, bounds), rowRun(scope.after, end, bounds)) and
-        hasEqualRun(paint, scope.after, bounds, y, y, end - y);
+    return end < scope.pair.after.height and
+        pixel.sameRun(rowRun(scope.pair.before, end, bounds), rowRun(scope.pair.after, end, bounds)) and
+        hasEqualRun(paint, scope.pair.after, bounds, y, y, end - y);
 }
 
 fn interiorBlank(after: Image, bounds: columns.Span, paint: []const Pixel, first: usize, end: usize, opposite: usize) bool {
@@ -122,17 +122,17 @@ fn interiorBlank(after: Image, bounds: columns.Span, paint: []const Pixel, first
 }
 
 fn fixedUpperBar(scope: Scope, bounds: columns.Span, paint: []const Pixel, first: usize) bool {
-    if (first < min_bar_rows or first >= scope.after.height or
-        !pixel.sameRun(paint, rowRun(scope.after, first, bounds)) or
-        !columns.blankBand(scope.before, first - min_bar_rows, min_bar_rows, bounds)) return false;
+    if (first < min_bar_rows or first >= scope.pair.after.height or
+        !pixel.sameRun(paint, rowRun(scope.pair.after, first, bounds)) or
+        !columns.blankBand(scope.pair.before, first - min_bar_rows, min_bar_rows, bounds)) return false;
     // A viewport bar reaches the top. Check its paint at both margins so
     // icons and lettering can interrupt the interior of the bar.
     const left = bounds.left;
     const right = left + bounds.width - 1;
-    const bar = scope.before.row(first - 1)[left];
+    const bar = scope.pair.before.row(first - 1)[left];
     for (0..first) |y| {
-        const a = scope.before.row(y);
-        const z = scope.after.row(y);
+        const a = scope.pair.before.row(y);
+        const z = scope.pair.after.row(y);
         if (!pixel.same(a[left], bar) or !pixel.same(a[right], bar) or
             !pixel.same(z[left], bar) or !pixel.same(z[right], bar)) return false;
     }
@@ -167,7 +167,7 @@ test "an interior blank run is ignored only if the layout retains its length" {
     after.fill(10, 20, 24, 5, ink);
     after.fill(10, 37, 30, 5, ink);
     const span: columns.Span = .{ .left = 0, .width = 64 };
-    const scope: Scope = .{ .before = before.view, .after = after.view, .span = span, .bounds = span };
+    const scope: Scope = .{ .pair = .{ .before = before.view, .after = after.view }, .span = span, .bounds = span };
     try std.testing.expect(unchangedBlank(scope, span, 20, 25, 8));
     after.fill(10, 31, 30, 6, ink);
     try std.testing.expect(!unchangedBlank(scope, span, 20, 25, 8));
@@ -186,7 +186,7 @@ test "blank space above a fixed input bar does not inherit unrelated sidebar pai
         image.fill(20, 130, 110, 20, canvas.inkShade(190, 4));
         image.line(30, 112, 135, 0, 32);
     }
-    const scope: Scope = .{ .before = before.view, .after = after.view, .span = .{ .left = 24, .width = 96 }, .bounds = .{ .left = 0, .width = 144 } };
+    const scope: Scope = .{ .pair = .{ .before = before.view, .after = after.view }, .span = .{ .left = 24, .width = 96 }, .bounds = .{ .left = 0, .width = 144 } };
     var boxes: [2]regions.Candidate = undefined;
     var collector: Collector = .{ .boxes = &boxes, .gap_px = 0, .max_gap_px = 144 };
     var mask_cells: [96 * 20]mask.Cell = undefined;
@@ -206,8 +206,7 @@ test "an equal unpaired bottom margin does not produce a removal" {
         @memset(after.pixels, .{ 96, 67, 77, 255 });
         after.fill(0, 36, 64, 6, color);
         const scope: Scope = .{
-            .before = before.view,
-            .after = after.view,
+            .pair = .{ .before = before.view, .after = after.view },
             .span = .{ .left = 0, .width = 64 },
             .bounds = .{ .left = 0, .width = 64 },
         };
