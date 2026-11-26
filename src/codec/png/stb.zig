@@ -2,10 +2,10 @@
 //! caller's allocator and are charged against a budget sized from the header.
 const std = @import("std");
 const c = @import("stb_c");
-const values = @import("../value.zig");
-const png_format = @import("png_format.zig");
+const values = @import("../../value.zig");
+const png_format = @import("format.zig");
 const memory = @import("codec_memory");
-const decoded_size = @import("dimensions.zig");
+const decoded_size = @import("../dimensions.zig");
 const Allocator = std.mem.Allocator;
 const Pixel = values.Pixel;
 const Size = values.Size;

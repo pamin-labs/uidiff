@@ -436,7 +436,7 @@ fn addStbDecoder(b: *Build, module: *Build.Module, target: Build.ResolvedTarget,
     module.addIncludePath(b.dependency("stb", .{}).path(""));
     module.addIncludePath(b.path("src/codec"));
     module.addCSourceFile(.{
-        .file = b.path("src/codec/stb.c"),
+        .file = b.path("src/codec/png/stb.c"),
         .flags = std.mem.concat(b.allocator, []const u8, &.{
             &.{b.fmt("-DSTBI_MAX_DIMENSIONS={d}", .{values.max_extent})}, &codec_section_flags, &fuzz_coverage_flags, legacy_flags,
         }) catch @panic("OOM"),
@@ -651,7 +651,7 @@ fn addDecoders(b: *Build, target: Build.ResolvedTarget) Decoders {
     jpeg_c.addIncludePath(jpeg_config.getDirectory());
     jpeg_c.addIncludePath(jpeg.path("src"));
     jpeg_c.addIncludePath(b.path("src/codec"));
-    const stb_c = b.addTranslateC(.{ .root_source_file = b.path("src/codec/stb.h"), .target = target, .optimize = shipped_mode });
+    const stb_c = b.addTranslateC(.{ .root_source_file = b.path("src/codec/png/stb.h"), .target = target, .optimize = shipped_mode });
     stb_c.addIncludePath(stb.path(""));
     stb_c.defineCMacro("STBI_NO_STDIO", null);
     const webp_c = b.addTranslateC(.{ .root_source_file = webp.path("src/webp/decode.h"), .target = target, .optimize = shipped_mode });

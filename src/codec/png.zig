@@ -7,8 +7,8 @@ const Io = std.Io;
 const deflate = @import("png/deflate.zig");
 const encoder = @import("png/encoder.zig");
 const decoder = @import("png/decoder.zig");
-const png_format = @import("png_format.zig");
-const stb = @import("stb.zig");
+const png_format = @import("png/format.zig");
+const stb = @import("png/stb.zig");
 
 /// Malformed PNG bytes, a decode past the memory budget, or allocation failure.
 pub const DecodeError = decoder.DecodeError;
@@ -78,5 +78,6 @@ test "RGB8 streaming preserves opaque partial rows" {
 }
 
 test {
+    std.testing.refAllDecls(stb);
     std.testing.refAllDecls(@This());
 }

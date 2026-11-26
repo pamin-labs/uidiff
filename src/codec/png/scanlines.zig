@@ -2,7 +2,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const values = @import("../../value.zig");
-const format = @import("../png_format.zig");
+const format = @import("format.zig");
 const memory = @import("codec_memory");
 const zlib = @import("zlib_c");
 
