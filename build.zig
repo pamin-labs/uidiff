@@ -16,6 +16,7 @@ const shipped_mode: Optimize = .safe;
 const max_cli_bytes = 1_200_000;
 const cli_name = "uidiff";
 const cli_source = "src/cli.zig";
+const size_source = "tools/size.zig";
 const fuzz_directory = "tests/fuzz";
 const styled_sheet_fuzz_source = fuzz_directory ++ "/sheet.zig";
 // The self-hosted x86_64 backend used by Debug on Linux does not emit the
@@ -141,7 +142,7 @@ fn addCheckedLibrary(b: *Build, target: Build.ResolvedTarget, optimize: Optimize
 
 fn addSizeCheck(b: *Build, install_cli: *Build.Step.InstallArtifact) void {
     const checker = b.addExecutable(.{ .name = "uidiff-size", .root_module = b.createModule(.{
-        .root_source_file = b.path("tools/size.zig"),
+        .root_source_file = b.path(size_source),
         .target = b.graph.host,
         .optimize = .debug,
     }) });
@@ -225,7 +226,7 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
         .imports = &.{.{ .name = "uidiff", .module = uidiff }},
     }) })).step);
     step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = b.createModule(.{
-        .root_source_file = b.path("tools/size.zig"),
+        .root_source_file = b.path(size_source),
         .target = target,
         .optimize = optimize,
     }) })).step);
