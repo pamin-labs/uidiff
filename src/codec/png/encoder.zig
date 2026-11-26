@@ -29,7 +29,9 @@ const sheet_strip_rows = 8;
 
 const parallel_min_bytes = 6 * 1024 * 1024;
 
-const target_strip_bytes = 768 * 1024;
+// A smaller strip cuts the worker buffers while still amortizing deflate
+// setup and dictionary hand-off across enough rows.
+const target_strip_bytes = 256 * 1024;
 
 const max_strip_workers = 4;
 
