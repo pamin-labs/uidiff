@@ -63,27 +63,17 @@ pub fn collect(collector: *Collector, scope: Scope, scratch_mask: []change_mask.
         } else if (regions.group(collector, cells, seeds, at) != .empty) return;
     }
     if (rows.background != null) return;
-    const blank = blankBand(source, y, rows.count, scope.bounds);
+    const blank = columns.blankBand(source, y, rows.count, scope.bounds);
     // An empty band that changes layout spans its column.
     const bounds = if (blank) scope.bounds else scope.span;
     if (rows.side == .before) if (rows.opposite) |opposite| {
         // Unchanged columns outside the reported span can contain unrelated
         // paint. Test the same columns that the fallback would report.
-        if ((blank or (bounds.width != scope.bounds.width and blankBand(source, y, rows.count, bounds))) and
+        if ((blank or (bounds.width != scope.bounds.width and columns.blankBand(source, y, rows.count, bounds))) and
             unchangedBlank(scope, bounds, y, opposite, rows.count)) return;
     };
     const box = Box.fromPixels(bounds.left, y, bounds.width, rows.count);
     collector.addOn(rows.side, box);
-}
-
-/// Checks whether an entire band is filled with the same paint.
-pub fn blankBand(source: Image, first: usize, rows: usize, bounds: columns.Span) bool {
-    const head = rowRun(source, first, bounds);
-    if (!pixel.sameRun(head[1..], head[0 .. head.len - 1])) return false;
-    for (first + 1..first + rows) |y| {
-        if (!pixel.sameRun(head, rowRun(source, y, bounds))) return false;
-    }
-    return true;
 }
 
 /// A resized edit can leave an unpaired tail against an unchanged background.
@@ -134,7 +124,7 @@ fn interiorBlank(after: Image, bounds: columns.Span, paint: []const Pixel, first
 fn fixedUpperBar(scope: Scope, bounds: columns.Span, paint: []const Pixel, first: usize) bool {
     if (first < min_bar_rows or first >= scope.after.height or
         !pixel.sameRun(paint, rowRun(scope.after, first, bounds)) or
-        !blankBand(scope.before, first - min_bar_rows, min_bar_rows, bounds)) return false;
+        !columns.blankBand(scope.before, first - min_bar_rows, min_bar_rows, bounds)) return false;
     // A viewport bar reaches the top. Check its paint at both margins so
     // icons and lettering can interrupt the interior of the bar.
     const left = bounds.left;

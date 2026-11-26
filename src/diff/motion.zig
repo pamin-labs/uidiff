@@ -3,12 +3,9 @@ const std = @import("std");
 const values = @import("../value.zig");
 const columns = @import("columns.zig");
 const rows = @import("rows.zig");
-const unpaired = @import("unpaired.zig");
 const Allocator = std.mem.Allocator;
 const Scope = columns.Scope;
 
-/// Maximum displacement treated as a short scroll.
-pub const scroll_shift = values.CssPx.init(2);
 const min_column_motion_rows = 4;
 const column_motion_scroll_factor = 2;
 
@@ -59,8 +56,8 @@ pub fn gatherMoves(allocator: Allocator, moves: *std.ArrayList(values.Move), sco
     }
     var kept = first;
     for (moves.items[first..]) |move| {
-        if (unpaired.blankBand(scope.before, move.before.y, move.before.height, span) and
-            unpaired.blankBand(scope.after, move.after.y, move.after.height, span)) continue;
+        if (columns.blankBand(scope.before, move.before.y, move.before.height, span) and
+            columns.blankBand(scope.after, move.after.y, move.after.height, span)) continue;
         var full = move;
         const pitch = move.shift();
         if (columns.enclosingCard(scope.before, span, scope.frame orelse scope.bounds, move.before.y, columns.CardSearch.motion(span, pitch))) |card| {
@@ -83,7 +80,7 @@ fn columnMotion(scope: Scope, keys: []const u64, move: values.Move, scroll_limit
     for (0..move.before.height) |i| {
         const old = move.before.y + i;
         const new = move.after.y + i;
-        if (before[old] != after[new] or (old < after.len and before[old] == after[old]) or unpaired.blankBand(scope.before, old, 1, scope.span)) continue;
+        if (before[old] != after[new] or (old < after.len and before[old] == after[old]) or columns.blankBand(scope.before, old, 1, scope.span)) continue;
         supported += 1;
         if (supported == minimum) return true;
     }

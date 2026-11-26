@@ -132,6 +132,16 @@ pub fn sameRows(image: Image, bounds: Span) bool {
     return true;
 }
 
+/// Checks whether an entire band is filled with the same paint.
+pub fn blankBand(source: Image, first: usize, rows: usize, bounds: Span) bool {
+    const head = source.rowSegment(first, bounds.left, bounds.width);
+    if (!pixel.sameRun(head[1..], head[0 .. head.len - 1])) return false;
+    for (first + 1..first + rows) |y| {
+        if (!pixel.sameRun(head, source.rowSegment(y, bounds.left, bounds.width))) return false;
+    }
+    return true;
+}
+
 /// Finds changed columns within a shared, validated rectangle.
 pub fn spanRows(before: Image, after: Image, bounds: Span, top: usize, bottom: usize) Span {
     const width = bounds.width;
