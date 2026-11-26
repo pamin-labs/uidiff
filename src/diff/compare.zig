@@ -391,6 +391,7 @@ fn compareSpan(allocator: Allocator, collector: *Collector, scope: Scope, aligne
     for (changes) |band| {
         if (band.mode == .spacing) continue;
         const paired = @min(band.removed, band.added);
+        var grouped = false;
         if (paired != 0) {
             const moved = band.before != band.after;
             const context: usize = if (moved) yiq.moved_coverage_radius else 0;
@@ -399,7 +400,6 @@ fn compareSpan(allocator: Allocator, collector: *Collector, scope: Scope, aligne
             const rows = paired + top + bottom;
             const a: Raster = .{ .image = before, .left = left, .top = band.before - top, .width = width, .height = rows };
             const b: Raster = .{ .image = after, .left = left, .top = band.after - top, .width = width, .height = rows };
-            var grouped = false;
             if (yiq.mask(a, b, top, paired, mask)) {
                 const changed = mask[0 .. width * paired];
                 if (moved) yiq.clearMovedCoverage(a, b, top, changed);
@@ -408,12 +408,28 @@ fn compareSpan(allocator: Allocator, collector: *Collector, scope: Scope, aligne
             }
             if (band.mode == .replacement) compareReplacement(collector, scope, band, if (grouped) .single_row else .unreported);
         }
-        unpaired(collector, scope, scratch, .{ .side = .before, .y = band.before + paired, .count = band.removed - paired, .element = band.mode == .element, .opposite = band.after + paired });
+        const old_tail = band.before + paired;
+        const new_tail = band.after + paired;
+        unpaired(collector, scope, scratch, .{
+            .side = .before,
+            .y = old_tail,
+            .count = band.removed - paired,
+            .element = band.mode == .element,
+            .opposite = new_tail,
+            .background = if (band.mode == .regular and grouped and band.removed > paired)
+                sharedBackdrop(scope, band.before + band.removed, new_tail)
+            else
+                null,
+        });
         const background = switch (band.mode) {
             .revealed => |row| after.row(row),
+            .regular => if (grouped and band.added > paired)
+                sharedBackdrop(scope, old_tail, band.after + band.added)
+            else
+                null,
             else => null,
         };
-        unpaired(collector, scope, scratch, .{ .side = .after, .y = band.after + paired, .count = band.added - paired, .background = background, .element = band.mode == .element });
+        unpaired(collector, scope, scratch, .{ .side = .after, .y = new_tail, .count = band.added - paired, .background = background, .element = band.mode == .element });
     }
     if (aligned == null and extension != 0) {
         const old_is_taller = before.height > after.height;
@@ -430,6 +446,25 @@ fn compareSpan(allocator: Allocator, collector: *Collector, scope: Scope, aligne
             collector.addOn(if (old_is_taller) .before else .after, box);
         }
     }
+}
+
+// A resized edit can leave an unpaired tail against an unchanged background.
+// Verify the paint across both images before reusing it, including any vertical border.
+fn sharedBackdrop(scope: Scope, old_y: usize, new_y: usize) ?[]const Pixel {
+    if (old_y >= scope.before.height or new_y >= scope.after.height) return null;
+    const span = scope.span;
+    const new = rowRun(scope.after, new_y, span);
+    // The ordinary gap comparison already handles flat paint. Reuse a row
+    // across the edit when both sides of the span show the same card edge.
+    const edge = new[0];
+    const fill = new[new.len / 2];
+    if (pixel_ops.same(edge, fill) or !pixel_ops.same(edge, new[new.len - 1])) return null;
+    var border: usize = 1;
+    while (pixel_ops.same(edge, new[border])) : (border += 1) {}
+    for (new[new.len - border ..]) |p| if (!pixel_ops.same(p, edge)) return null;
+    for (new[border .. new.len - border]) |p| if (!pixel_ops.same(p, fill)) return null;
+    if (!pixel_ops.sameRun(rowRun(scope.before, old_y, span), new)) return null;
+    return scope.after.row(new_y);
 }
 
 // Edge filtering can hide pieces of a replacement stroke. Recover the
@@ -695,6 +730,45 @@ test "an equal unpaired bottom margin does not produce a removal" {
         unpaired(&collector, scope, scratch, margin);
         try std.testing.expectEqual(@as(usize, 1), collector.len);
     }
+}
+
+test "a taller button excludes unchanged card borders on unpaired rows" {
+    const allocator = std.testing.allocator;
+    const width = 360;
+    const height = 280;
+    const before = try sample.Canvas.init(width, height);
+    defer before.deinit();
+    const after = try sample.Canvas.init(width, height);
+    defer after.deinit();
+    const border = sample.inkShade(170, 4);
+    const button: Pixel = .{ 37, 99, 235, 255 };
+    for ([_]sample.Canvas{ before, after }, [_]usize{ 0, 14 }) |canvas, growth| {
+        canvas.fill(24, 20, 2, 146 + growth, border);
+        canvas.fill(320, 20, 2, 146 + growth, border);
+        canvas.fill(24, 20, 298, 2, border);
+        canvas.fill(24, 164 + growth, 298, 2, border);
+        canvas.line(48, 222, 48, 2, 28);
+        canvas.fill(48, 107, 100 + growth, 26 + growth, button);
+        canvas.line(60, 126, 114 + growth / 2, 4, 255);
+        canvas.line(40, 305, 199 + growth, 5, 28);
+        canvas.line(40, 300, 220 + growth, 6, 28);
+    }
+    const span: columns.Span = .{ .left = 24, .width = 298 };
+    const scope: Scope = .{ .before = before.view, .after = after.view, .span = span, .bounds = span };
+    var storage: [regions.max_regions]regions.Candidate = undefined;
+    var collector: Collector = .{ .boxes = &storage, .gap_px = 4, .max_gap_px = 20 };
+    var buffers: CompareBuffers = .{};
+    defer buffers.deinit(allocator);
+    var bands = [_]row_diff.Band{.{ .before = 107, .after = 107, .removed = 26, .added = 40 }};
+    try compareSpan(allocator, &collector, scope, &bands, &buffers);
+    const retained = collector.retain();
+    try std.testing.expectEqual(@as(usize, 1), retained.count);
+    const region = retained.buffer[0].region;
+    const old = region.before.?;
+    const new = region.after.?;
+    try std.testing.expect(new.bottom() > old.bottom());
+    try std.testing.expect(new.x > 25 and new.right() < 320);
+    try std.testing.expect(new.right() >= 162);
 }
 
 test "an aligned blank tail contributes no phantom move" {
