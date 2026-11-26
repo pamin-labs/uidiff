@@ -3,3 +3,8 @@
 *.jpg -text
 *.jpeg -text
 *.webp -text
+# Development tooling and installers are not the product; keep GitHub's language bar to Zig and C.
+scripts/** linguist-vendored
+npm/** linguist-vendored
+install.sh linguist-vendored
+install.ps1 linguist-vendored
