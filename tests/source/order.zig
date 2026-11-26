@@ -3,11 +3,11 @@
 //! every type declared before another type uses it and file imports named
 //! after their basenames.
 const std = @import("std");
-const sources = @import("sources.zig");
+const files = @import("files.zig");
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
 const Ast = std.zig.Ast;
-const Source = sources.Source;
+const Source = files.Source;
 
 /// Declaration kinds in the order a container lists them.
 const Kind = enum(u8) { import, field, type, constant, lifecycle, public_function, private_function, @"test" };
@@ -93,7 +93,7 @@ fn checkImportNames(allocator: Allocator, tree: *const Ast, finding: *Finding) C
         errdefer finding.* = .{ .line = tree.tokenLocation(0, name_token).line + 1, .name = name };
         const path = try std.zig.string_literal.parseAlloc(allocator, literal);
         defer allocator.free(path);
-        if (!sources.isZig(path)) continue;
+        if (!files.isZig(path)) continue;
         const basename = std.fs.path.basenamePosix(path);
         const stem = basename[0 .. basename.len - ".zig".len];
         if (!snakeCaseIdentifier(stem)) return error.InvalidImportBasename;
@@ -158,7 +158,7 @@ fn checkText(text: [:0]const u8) !void {
     var source = parsed: {
         const copy = try allocator.dupeSentinel(u8, text, 0);
         errdefer allocator.free(copy);
-        break :parsed try sources.fromText(allocator, "case.zig", copy);
+        break :parsed try files.fromText(allocator, "case.zig", copy);
     };
     defer source.deinit(allocator);
     var finding: Finding = .{};
@@ -181,15 +181,15 @@ fn checkSource(allocator: Allocator, source: *const Source, comptime check: fn (
 test "every Zig file declares in order" {
     const io = testing.io;
     const allocator = testing.allocator;
-    const files = try sources.listFiles(io, allocator);
-    defer sources.freeFiles(allocator, files);
-    for (files) |path| {
-        if (!sources.isZig(path)) continue;
-        var source = try sources.parse(io, allocator, path);
+    const paths = try files.listFiles(io, allocator);
+    defer files.freeFiles(allocator, paths);
+    for (paths) |path| {
+        if (!files.isZig(path)) continue;
+        var source = try files.parse(io, allocator, path);
         defer source.deinit(allocator);
         try checkSource(allocator, &source, checkDeclarations);
     }
-    var build = try sources.parse(io, allocator, "build.zig");
+    var build = try files.parse(io, allocator, "build.zig");
     defer build.deinit(allocator);
     try checkSource(allocator, &build, checkImportNames);
 }

@@ -22,7 +22,7 @@ const styled_sheet_fuzz_source = fuzz_directory ++ "/sheet.zig";
 // fuzzer's PC tables. The coverage runners need LLVM even in Debug.
 const fuzz_use_llvm = true;
 /// Tests that read source files outside the compiler's import graph.
-const source_tests = [_][]const u8{ "tests/layers.zig", "tests/order.zig" };
+const source_tests = [_][]const u8{ "tests/source/layers.zig", "tests/source/order.zig" };
 
 /// Configures the installed binary and verification steps.
 pub fn build(b: *Build) void {

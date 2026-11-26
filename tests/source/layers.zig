@@ -1,11 +1,11 @@
 //! Checks the layout named in AGENTS.md, the import direction between layers
 //! and which files may reach named modules, all read from AGENTS.md's tables.
 const std = @import("std");
-const sources = @import("sources.zig");
+const files = @import("files.zig");
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
 const Ast = std.zig.Ast;
-const Source = sources.Source;
+const Source = files.Source;
 
 /// One row of the layer table: its paths and the layers it may import.
 const Layer = struct {
@@ -51,7 +51,7 @@ const Rules = struct {
 
     /// The unit holding a path, or null outside the tiered directories.
     fn unitOf(self: Rules, path: []const u8) !?*const Unit {
-        if (!sources.inDirectory(path, diff_directory) and !sources.inDirectory(path, annotate_directory)) return null;
+        if (!files.inDirectory(path, diff_directory) and !files.inDirectory(path, annotate_directory)) return null;
         for (self.units) |*unit| if (covered(unit.paths, path)) return unit;
         return error.UntieredSource;
     }
@@ -216,7 +216,7 @@ fn words(allocator: Allocator, cell: []const u8) ![]const []const u8 {
 fn covered(named: []const []const u8, path: []const u8) bool {
     for (named) |prefix| {
         if (std.mem.eql(u8, prefix, path)) return true;
-        if (sources.inDirectory(path, prefix)) return true;
+        if (files.inDirectory(path, prefix)) return true;
     }
     return false;
 }
@@ -228,7 +228,7 @@ fn contains(list: []const []const u8, item: []const u8) bool {
 
 /// Reports whether path is the layer's root: its first path naming a file.
 fn isRoot(row: *const Layer, path: []const u8) bool {
-    for (row.paths) |named| if (sources.isZig(named)) return std.mem.eql(u8, named, path);
+    for (row.paths) |named| if (files.isZig(named)) return std.mem.eql(u8, named, path);
     return false;
 }
 
@@ -244,7 +244,7 @@ fn allowedImport(allocator: Allocator, rules: Rules, source: *const Source, node
     if (std.mem.eql(u8, target, "std") or std.mem.eql(u8, target, "builtin")) return true;
     const from_path = source.path;
     const from = rules.layerOf(from_path) orelse return error.UnclassifiedSource;
-    if (!sources.isZig(target)) {
+    if (!files.isZig(target)) {
         if (std.mem.eql(u8, target, "uidiff_test_canvas") and !std.mem.eql(u8, from.paths[0], testing_root)) {
             const decl = enclosingDeclaration(&source.tree, node) orelse return false;
             if (source.tree.nodeTag(decl) != .test_decl) return false;
@@ -266,10 +266,10 @@ fn allowedImport(allocator: Allocator, rules: Rules, source: *const Source, node
         }
     };
     for (rules.submodules) |submodule| {
-        const inside = sources.inDirectory(from_path, submodule.directory);
+        const inside = files.inDirectory(from_path, submodule.directory);
         const facade = std.mem.eql(u8, from_path, submodule.facade);
         if (inside and std.mem.eql(u8, resolved, submodule.facade)) return false;
-        if (sources.inDirectory(resolved, submodule.directory) and !inside and !facade) return false;
+        if (files.inDirectory(resolved, submodule.directory) and !inside and !facade) return false;
     }
     // A file under a layer never imports that layer's own root.
     if (to == from) return !isRoot(to, resolved);
@@ -316,7 +316,7 @@ fn checkWithText(path: []const u8, text: [:0]const u8) !void {
     const allocator = testing.allocator;
     var rules = try parseRules(allocator, sample_agents);
     defer rules.deinit();
-    var source = try sources.fromText(allocator, path, try allocator.dupeSentinel(u8, text, 0));
+    var source = try files.fromText(allocator, path, try allocator.dupeSentinel(u8, text, 0));
     defer source.deinit(allocator);
     try checkSource(allocator, rules, &source);
 }
@@ -339,9 +339,9 @@ test "every file sits under a path AGENTS.md names, and every named path exists"
             return err;
         };
     }
-    const files = try sources.listFiles(io, allocator);
-    defer sources.freeFiles(allocator, files);
-    for (files) |path| if (!covered(named, path)) {
+    const paths = try files.listFiles(io, allocator);
+    defer files.freeFiles(allocator, paths);
+    for (paths) |path| if (!covered(named, path)) {
         std.debug.print("{s} is not under a path {s} names\n", .{ path, agents_path });
         return error.UnlistedFile;
     };
@@ -354,12 +354,12 @@ test "every source imports only its layer and permitted lower layers" {
     defer allocator.free(text);
     var rules = try parseRules(allocator, text);
     defer rules.deinit();
-    const files = try sources.listFiles(io, allocator);
-    defer sources.freeFiles(allocator, files);
+    const paths = try files.listFiles(io, allocator);
+    defer files.freeFiles(allocator, paths);
     var seen: usize = 0;
-    for (files) |path| {
-        if (!sources.isZig(path)) continue;
-        var source = try sources.parse(io, allocator, path);
+    for (paths) |path| {
+        if (!files.isZig(path)) continue;
+        var source = try files.parse(io, allocator, path);
         defer source.deinit(allocator);
         checkSource(allocator, rules, &source) catch |err| {
             std.debug.print("{s}: {t}\n", .{ path, err });
