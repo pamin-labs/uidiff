@@ -61,15 +61,15 @@ fn run(io: Io, allocator: Allocator, input: std.process.Args, arena: Allocator, 
     diagnostics.path = stdout_name;
     var buffer: [4096]u8 = undefined;
     var stdout = Io.File.stdout().writerStreaming(io, &buffer);
-    write(allocator, &stdout.interface, command.output, result) catch |err| return stdout.err orelse err;
+    write(&stdout.interface, command.output, result) catch |err| return stdout.err orelse err;
     stdout.interface.flush() catch |err| return stdout.err orelse err;
     diagnostics.path = null;
     return if (result.regions.len == 0) .unchanged else .changed;
 }
 
-fn write(allocator: Allocator, output: *Io.Writer, format: args.Output, result: uidiff.Comparison) uidiff.report.PixelWriteError!void {
+fn write(output: *Io.Writer, format: args.Output, result: uidiff.Comparison) uidiff.report.PixelWriteError!void {
     switch (format) {
-        .json => try uidiff.report.writeWholePixels(allocator, output, result.regions, result.canvas(), result.moves),
+        .json => try uidiff.report.writeWholePixels(output, result.regions, result.canvas(), result.moves),
         .count => {
             const count = result.regions.len;
             try output.print("{d} {s}\n", .{ count, if (count == 1) "region" else "regions" });
