@@ -24,7 +24,7 @@ pub const drawMark = paint.drawMark;
 pub const badge = paint.badge;
 
 /// Whether the gutter carries an alignment ribbon.
-pub const Gutter = enum { plain, alignment };
+pub const Gutter = enum { plain, ribbons };
 
 const badge_r = 26;
 
@@ -87,7 +87,7 @@ fn placeOverview(details: []Detail, storage: []Rect, panes: [2]Rect, images: [2]
             const used = storage[0..len];
             const lanes = switch (gutter) {
                 .plain => outside[1..3],
-                .alignment => if (side == 0) outside[2..3] else outside[1..2],
+                .ribbons => if (side == 0) outside[2..3] else outside[1..2],
             };
             const preferred = if (mark.y == pane.y and pane.w >= diameter)
                 placement.placeOutside(mark, outside[0], diameter, used)

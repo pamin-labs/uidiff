@@ -10,7 +10,7 @@ const canvas = @import("canvas.zig");
 const focus_layout = @import("focus.zig");
 const crops = @import("crops.zig");
 const badges = @import("badges.zig");
-const alignment = @import("alignment.zig");
+const ribbons = @import("ribbons.zig");
 const Layout = geometry.Layout;
 const gutter = geometry.gutter;
 const max_sheet_width = geometry.max_sheet_width;
@@ -114,7 +114,7 @@ pub const Rows = struct {
         } else if (!ui.wide and y < sheet_plan.pane_end) {
             line.fill(0, left_x, page);
             line.fill(b.right(), pixels.len, page);
-            alignment.drawGutter(line, y - a.y, ui, sheet_plan.panes, sheet_plan.ribbons);
+            ribbons.drawGutter(line, y - a.y, ui, sheet_plan.panes, sheet_plan.ribbons);
         }
         const caption = sheet_plan.captions.bounds[1];
         if (caption.containsRow(y)) line.text(caption.x, caption.y, copy.after, .bold, sheet_plan.captions.size, secondary);

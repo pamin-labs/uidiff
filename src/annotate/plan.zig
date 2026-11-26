@@ -8,7 +8,7 @@ const text = @import("text.zig");
 const focus_layout = @import("focus.zig");
 const crops = @import("crops.zig");
 const badges = @import("badges.zig");
-const alignment = @import("alignment.zig");
+const ribbons = @import("ribbons.zig");
 const Rect = geometry.Rect;
 const Layout = geometry.Layout;
 const Pane = geometry.Pane;
@@ -28,11 +28,11 @@ const cropPair = crops.cropPair;
 const max_crop_w = crops.max_crop_w;
 const placeBadges = badges.placeBadges;
 const overviewDiameter = badges.overviewDiameter;
-const Ribbon = alignment.Ribbon;
-const displacement = alignment.displacement;
-const previewMove = alignment.previewMove;
-const earlierRibbonEnd = alignment.earlierRibbonEnd;
-const wedgeTop = alignment.wedgeTop;
+const Ribbon = ribbons.Ribbon;
+const displacement = ribbons.displacement;
+const previewMove = ribbons.previewMove;
+const earlierRibbonEnd = ribbons.earlierRibbonEnd;
+const wedgeTop = ribbons.wedgeTop;
 const Allocator = std.mem.Allocator;
 const Image = values.Image;
 const Size = values.Size;
@@ -121,18 +121,18 @@ pub const Plan = struct {
         errdefer allocator.free(details);
         errdefer allocator.free(focuses);
         const captions = layoutCaptions(layout, panes, size.width);
-        try placeBadges(allocator, details, focuses, panes, .{ before, after }, size, layout, captions.bounds, if (moves.len != 0 and !layout.wide) .alignment else .plain);
+        try placeBadges(allocator, details, focuses, panes, .{ before, after }, size, layout, captions.bounds, if (moves.len != 0 and !layout.wide) .ribbons else .plain);
         if (details.len != 0) size.height = content.end + layout.px(margin) - layout.px(detail_gap);
         if (size.width > max_sheet_width or size.pixelCount() == null) return error.SheetTooLarge;
 
-        const ribbons = try planRibbons(allocator, moves, details, before.size(), after.size(), layout);
-        errdefer allocator.free(ribbons);
+        const planned_ribbons = try planRibbons(allocator, moves, details, before.size(), after.size(), layout);
+        errdefer allocator.free(planned_ribbons);
         return .{
             .before = before_pane,
             .after = after_pane,
             .details = details,
             .focuses = focuses,
-            .ribbons = ribbons,
+            .ribbons = planned_ribbons,
             .size = size,
             .layout = layout,
             .panes = panes,
@@ -263,8 +263,8 @@ fn planRibbons(allocator: Allocator, moves: []const Move, details: []const Detai
             if (move.x == chosen.x and move.width == chosen.width and previewMove(move, layout) != null) count += 1;
         }
     };
-    const ribbons = try allocator.alloc(Ribbon, count);
-    errdefer allocator.free(ribbons);
+    const planned_ribbons = try allocator.alloc(Ribbon, count);
+    errdefer allocator.free(planned_ribbons);
     var index: usize = 0;
     if (!layout.wide) if (column) |chosen| {
         for (moves) |move| {
@@ -272,15 +272,15 @@ fn planRibbons(allocator: Allocator, moves: []const Move, details: []const Detai
             const drawn = previewMove(move, layout) orelse continue;
             const delta = displacement(move);
             const wedge = wedgeTop(details, move, delta > 0);
-            ribbons[index] = .{ .move = drawn, .wedge_top = if (wedge) |y| layout.position(y) else null, .label = if (delta >= 0)
+            planned_ribbons[index] = .{ .move = drawn, .wedge_top = if (wedge) |y| layout.position(y) else null, .label = if (delta >= 0)
                 try Text.format(copy.positive_shift_format, .{delta})
             else
                 try Text.format(copy.shift_format, .{delta}) };
             index += 1;
         }
     };
-    std.sort.heap(Ribbon, ribbons, {}, earlierRibbonEnd);
-    return ribbons;
+    std.sort.heap(Ribbon, planned_ribbons, {}, earlierRibbonEnd);
+    return planned_ribbons;
 }
 
 fn layoutHeading(region_count: usize, moves: []const Move) RenderError!Text {
