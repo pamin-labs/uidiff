@@ -54,30 +54,26 @@ irm https://uidiff.paminlabs.com/install.ps1 | iex
 
 ### The report
 
-`--json` prints one object for scripts, CI and agents. This is the report for the comparison at the top of this page, shortened to one move:
+`--json` prints one object for scripts, CI and agents. This is the report for the comparison at the top of this page:
 
 ```json
 {
   "version": 1,
+  "regions": [
+    {"number": 1, "kind": "removed", "before": {"x": 1531, "y": 787, "width": 857, "height": 165}, "after": null},
+    {"number": 2, "kind": "changed", "before": {"x": 1746, "y": 1114, "width": 642, "height": 204}, "after": {"x": 1746, "y": 924, "width": 642, "height": 204}},
+    {"number": 3, "kind": "inserted", "before": null, "after": {"x": 1346, "y": 1136, "width": 1042, "height": 100}}
+  ],
   "width": 2560,
   "height": 1600,
-  "regions": [
-    { "number": 1, "kind": "removed",
-      "before": { "x": 1531, "y": 787, "width": 857, "height": 165 }, "after": null },
-    { "number": 2, "kind": "changed",
-      "before": { "x": 1746, "y": 1114, "width": 642, "height": 204 },
-      "after":  { "x": 1746, "y": 924, "width": 642, "height": 204 } },
-    { "number": 3, "kind": "inserted",
-      "before": null, "after": { "x": 1346, "y": 1136, "width": 1042, "height": 100 } }
-  ],
   "moves": [
-    { "x": 860, "width": 1520,
-      "before": { "y": 968, "height": 366 }, "after": { "y": 778, "height": 366 } }
+    {"before": {"y": 968, "height": 366}, "after": {"y": 778, "height": 366}, "x": 860, "width": 1520},
+    {"before": {"y": 1334, "height": 99}, "after": {"y": 1252, "height": 99}, "x": 860, "width": 1520}
   ]
 }
 ```
 
-Boxes are in device pixels. A region has a box on each side where it exists. A move's offset is its after `y` minus its before `y`, here −190 px.
+Boxes are in device pixels. A region has a box on each side where it exists. A move's offset is its after `y` minus its before `y`, here −190 px and −82 px.
 
 ## How it compares
 
@@ -101,6 +97,7 @@ Boxes are in device pixels. A region has a box on each side where it exists. A m
 ```text
 uidiff <before> <after> [--scale N] [--json] [--annotate <out.png>]
 uidiff --help
+uidiff --version
 ```
 
 | Argument | Meaning |
@@ -110,12 +107,13 @@ uidiff --help
 | `--json` | Print the report as one JSON object instead of the region count. |
 | `--annotate <out.png>` | Also write the sheet to this PNG. The file is replaced only once the sheet is complete. |
 | `--help` | Print usage and exit 0. |
+| `--version` | Print the installed version and exit 0. |
 
 | Exit code | Meaning |
 | --- | --- |
 | `0` | No change regions detected. |
 | `1` | Change regions found. |
-| `2` | A comparison or usage error, reported on stderr. |
+| `2` | A comparison or usage error, reported on stderr. `SheetIsInput` means the sheet path names either input, including through a link. |
 
 For the best results, freeze animations, carets and timers, and keep fonts, locale and device scale the same for both captures.
 
@@ -137,7 +135,7 @@ brew install pamin-labs/tap/uidiff
 The install scripts download from uidiff.paminlabs.com, which also works where GitHub is unreachable. They verify the binary against `SHA256SUMS` and install it to `~/.local/bin` or `%LOCALAPPDATA%\Programs\uidiff`. Set `UIDIFF_VERSION` to pick a release, with or without the leading `v`:
 
 ```sh
-curl -fsSL https://uidiff.paminlabs.com/install.sh | UIDIFF_VERSION=0.0.1 sh
+curl -fsSL https://uidiff.paminlabs.com/install.sh | UIDIFF_VERSION=<version> sh
 ```
 
 The [releases page](https://github.com/pamin-labs/uidiff/releases) also has standalone binaries, archives with license notices and checksums.
