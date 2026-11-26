@@ -25,6 +25,7 @@
     // by the tests, so the source package omits the images and runners.
     .paths = .{
         "build.zig",
+        "build",
         "build.zig.zon",
         "src",
         "tests/fixtures.zig",
