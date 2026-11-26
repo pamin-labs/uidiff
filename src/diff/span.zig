@@ -1,65 +1,20 @@
-//! Compares validated images and emits numbered regions of change.
+//! Aligns changed columns and compares their paired and unpaired rows.
 const std = @import("std");
 const values = @import("../value.zig");
-const row_diff = @import("rows.zig");
 const columns = @import("columns.zig");
-const motion = @import("motion.zig");
-const pixel_ops = @import("pixel.zig");
-const yiq = @import("yiq.zig");
 const change_mask = @import("mask.zig");
+const motion = @import("motion.zig");
+const pixel = @import("pixel.zig");
 const regions = @import("regions.zig");
+const rows = @import("rows.zig");
 const unpaired = @import("unpaired.zig");
-const sample = @import("test_support.zig");
+const yiq = @import("yiq.zig");
 const Allocator = std.mem.Allocator;
-const Image = values.Image;
-const Raster = yiq.Raster;
 const Box = values.Box;
 const Collector = regions.Collector;
+const Image = values.Image;
 const Pixel = values.Pixel;
-/// The most regions a comparison reports; nearby ones merge to fit.
-pub const max_regions = regions.max_regions;
-
-const Scale = values.Scale;
-const ScaleError = error{InvalidScale};
-
-/// Options that passed Options.check, which alone makes them.
-pub const Checked = struct { scale: Scale };
-
-/// Parameters for comparing decoded images.
-pub const Options = struct {
-    /// Device pixels per CSS pixel.
-    scale: Scale = .one,
-
-    /// Rejects a non-positive or non-finite scale, once, before comparison.
-    pub fn check(self: Options) ScaleError!Checked {
-        if (!self.scale.isValid()) return error.InvalidScale;
-        return .{ .scale = self.scale };
-    }
-};
-
-/// The caller releases the region slice with deinit.
-pub const Comparison = struct {
-    regions: []const values.Region,
-    moves: []const values.Move = &.{},
-    /// The larger width of the two inputs, in device pixels.
-    width: usize,
-    /// The larger height of the two inputs, in device pixels.
-    height: usize,
-
-    /// Releases the region slice with the allocator passed to compare.
-    pub fn deinit(self: Comparison, allocator: Allocator) void {
-        allocator.free(self.regions);
-        allocator.free(self.moves);
-    }
-
-    /// Returns the combined canvas dimensions.
-    pub fn canvas(self: Comparison) values.Size {
-        return .{ .width = self.width, .height = self.height };
-    }
-};
-
-/// Input and scratch-space failures reported by the comparison domain.
-pub const CompareError = Allocator.Error || ScaleError || values.Image.Invalid;
+const Raster = yiq.Raster;
 
 /// Scratch reused by every band: one mask byte per pixel and the fill's seeds.
 const Scratch = struct { mask: []change_mask.Cell, seeds: []u32 };
@@ -67,7 +22,7 @@ const Scratch = struct { mask: []change_mask.Cell, seeds: []u32 };
 const CompareBuffers = struct {
     mask: []change_mask.Cell = &.{},
     seeds: std.ArrayList(u32) = .empty,
-    alignment: row_diff.Workspace = .{},
+    alignment: rows.Workspace = .{},
 
     fn deinit(self: *CompareBuffers, allocator: Allocator) void {
         self.alignment.deinit(allocator);
@@ -92,52 +47,13 @@ const CompareBuffers = struct {
     }
 };
 
-/// Space added around each reported box, in CSS pixels.
-pub const region_padding = regions.padding.count();
 // Short conflicting offsets can come from independent column groups.
 const short_shift_rows = 16;
 /// Rows on each side of a replacement that may hold part of a split edit.
 const replacement_context_rows = 4;
-/// Compares packed RGBA8 images. The caller owns the returned comparison.
-pub fn compare(allocator: Allocator, before: Image, after: Image, options: Options) CompareError!Comparison {
-    return compareChecked(allocator, before, after, try options.check());
-}
 
-/// Compares packed RGBA8 images with options already checked. The caller
-/// owns the returned comparison.
-pub fn compareChecked(allocator: Allocator, before: Image, after: Image, options: Checked) CompareError!Comparison {
-    if (!before.valid() or !after.valid()) return error.InvalidImage;
-    const width = @max(before.width, after.width);
-    const height = @max(before.height, after.height);
-    const max_gap_px: f64 = @floatFromInt(@max(width, height));
-    const gap_px = @min(options.scale.devicePixels(regions.merge_gap), max_gap_px);
-    const overlap_width = @min(before.width, after.width);
-    const span = columns.span(before, after, overlap_width);
-    if (span.width == 0 and before.width == after.width) {
-        return .{ .regions = &.{}, .width = width, .height = height };
-    }
-    // The integer gap and scroll tolerance are clamped to validated image dimensions.
-    const capacity = if (span.width == 0) 1 else Collector.capacity(before.size(), after.size(), @intFromFloat(gap_px));
-    const storage = try allocator.alloc(regions.Candidate, capacity);
-    defer allocator.free(storage);
-    var collector = Collector.init(storage, before.size(), after.size(), gap_px, max_gap_px);
-    var moves: std.ArrayList(values.Move) = .empty;
-    defer moves.deinit(allocator);
-    if (span.width != 0) {
-        const scope: columns.Scope = .{ .before = before, .after = after, .span = span, .bounds = .{ .left = 0, .width = overlap_width } };
-        try spanRegions(allocator, &collector, &moves, scope, @intFromFloat(@min(max_gap_px, options.scale.devicePixels(motion.scroll_shift))));
-    }
-    if (before.width != after.width) {
-        const old = before.width > after.width;
-        const box = Box.fromPixels(overlap_width, 0, width - overlap_width, if (old) before.height else after.height);
-        collector.addOn(if (old) .before else .after, box);
-    }
-    const out = try regions.resolve(allocator, &collector, &moves, before, after, options.scale, options.scale.devicePixels(motion.scroll_shift));
-    errdefer allocator.free(out);
-    return .{ .regions = out, .moves = try moves.toOwnedSlice(allocator), .width = width, .height = height };
-}
-
-fn spanRegions(allocator: Allocator, collector: *Collector, moves: *std.ArrayList(values.Move), scope: columns.Scope, scroll_limit_px: usize) !void {
+/// Collects changed bands and moves across the changed columns.
+pub fn collect(allocator: Allocator, collector: *Collector, moves: *std.ArrayList(values.Move), scope: columns.Scope, scroll_limit_px: usize) Allocator.Error!void {
     const before = scope.before;
     const after = scope.after;
     const row_count = before.height + after.height;
@@ -145,7 +61,7 @@ fn spanRegions(allocator: Allocator, collector: *Collector, moves: *std.ArrayLis
     defer allocator.free(storage);
     const keys = storage[0..row_count];
     const filtered = storage[row_count..];
-    const bands = try allocator.alloc(row_diff.Band, row_count + 1);
+    const bands = try allocator.alloc(rows.Band, row_count + 1);
     defer allocator.free(bands);
 
     var buffers: CompareBuffers = .{};
@@ -164,7 +80,7 @@ fn spanRegions(allocator: Allocator, collector: *Collector, moves: *std.ArrayLis
                 buffers.alignment.deinit(allocator);
                 return compareSpan(allocator, collector, scope, null, &buffers);
             }
-            const preserved = if (aligned) |global| try allocator.dupe(row_diff.Band, global) else &.{};
+            const preserved = if (aligned) |global| try allocator.dupe(rows.Band, global) else &.{};
             defer allocator.free(preserved);
             const empty = collector.*;
             var has_movement = false;
@@ -200,7 +116,7 @@ fn spanRegions(allocator: Allocator, collector: *Collector, moves: *std.ArrayLis
     try compareSpan(allocator, collector, scope, aligned, &buffers);
 }
 
-fn mixedShifts(bands: []const row_diff.Band) bool {
+fn mixedShifts(bands: []const rows.Band) bool {
     var shift: ?isize = null;
     var brief = false;
     var different = false;
@@ -243,11 +159,11 @@ fn hasWideColumn(first: columns.Group, tail: columns.Partition, limit: usize) bo
     return true;
 }
 
-fn alignSpan(allocator: Allocator, scope: columns.Scope, scroll_limit_px: usize, local_limit_px: usize, keys: []u64, bands: []row_diff.Band, filtered: []u64, workspace: *row_diff.Workspace) Allocator.Error!?[]row_diff.Band {
+fn alignSpan(allocator: Allocator, scope: columns.Scope, scroll_limit_px: usize, local_limit_px: usize, keys: []u64, bands: []rows.Band, filtered: []u64, workspace: *rows.Workspace) Allocator.Error!?[]rows.Band {
     const old_keys = keys[0..scope.before.height];
     const new_keys = keys[scope.before.height..];
-    row_diff.keys(scope.before, scope.span.left, scope.span.width, old_keys);
-    row_diff.keys(scope.after, scope.span.left, scope.span.width, new_keys);
+    rows.keys(scope.before, scope.span.left, scope.span.width, old_keys);
+    rows.keys(scope.after, scope.span.left, scope.span.width, new_keys);
     if (scope.frame != null and (std.mem.allEqual(u64, old_keys, old_keys[0]) or
         std.mem.allEqual(u64, new_keys, new_keys[0]))) return null;
     // A compact change is local motion, even if re-pairing its two edges
@@ -258,9 +174,9 @@ fn alignSpan(allocator: Allocator, scope: columns.Scope, scroll_limit_px: usize,
         var end = @min(old_keys.len, new_keys.len);
         const first = std.mem.indexOfDiff(u64, old_keys[0..end], new_keys[0..end]) orelse return null;
         while (end > first and old_keys[end - 1] == new_keys[end - 1]) end -= 1;
-        if (end - first <= local_limit_px) return row_diff.compactInsertion(old_keys, new_keys, scroll_limit_px, bands);
+        if (end - first <= local_limit_px) return rows.compactInsertion(old_keys, new_keys, scroll_limit_px, bands);
     }
-    const limits: row_diff.Limits = .{
+    const limits: rows.Limits = .{
         .scroll = scroll_limit_px,
         .replacement = 2 * local_limit_px,
         // Unchanged columns on the same rows are additional evidence of a
@@ -270,18 +186,18 @@ fn alignSpan(allocator: Allocator, scope: columns.Scope, scroll_limit_px: usize,
         .left = scope.span.left,
         .width = scope.span.width,
     };
-    const aligned = try row_diff.matchBands(allocator, old_keys, new_keys, limits, bands, filtered, workspace) orelse return null;
-    row_diff.refineElements(old_keys, new_keys, limits, aligned);
+    const aligned = try rows.matchBands(allocator, old_keys, new_keys, limits, bands, filtered, workspace) orelse return null;
+    rows.refineElements(old_keys, new_keys, limits, aligned);
     return aligned;
 }
 
-fn compareSpan(allocator: Allocator, collector: *Collector, scope: columns.Scope, aligned: ?[]row_diff.Band, buffers: *CompareBuffers) !void {
+fn compareSpan(allocator: Allocator, collector: *Collector, scope: columns.Scope, aligned: ?[]rows.Band, buffers: *CompareBuffers) !void {
     const before = scope.before;
     const after = scope.after;
     const left = scope.span.left;
     const width = scope.span.width;
     const overlap = @min(before.height, after.height);
-    const changes: []const row_diff.Band = if (aligned) |value| pruneMatched(scope, value) else &.{.{ .before = 0, .after = 0, .removed = overlap, .added = overlap }};
+    const changes: []const rows.Band = if (aligned) |value| pruneMatched(scope, value) else &.{.{ .before = 0, .after = 0, .removed = overlap, .added = overlap }};
 
     const extension = @max(before.height, after.height) - overlap;
     var max_rows: usize = if (scope.frame != null and aligned == null) extension else 0;
@@ -300,9 +216,9 @@ fn compareSpan(allocator: Allocator, collector: *Collector, scope: columns.Scope
             const context: usize = if (moved) yiq.moved_coverage_radius else 0;
             const top = @min(context, band.before, band.after);
             const bottom = @min(context, before.height - band.before - paired, after.height - band.after - paired);
-            const rows = paired + top + bottom;
-            const a: Raster = .{ .image = before, .left = left, .top = band.before - top, .width = width, .height = rows };
-            const b: Raster = .{ .image = after, .left = left, .top = band.after - top, .width = width, .height = rows };
+            const raster_rows = paired + top + bottom;
+            const a: Raster = .{ .image = before, .left = left, .top = band.before - top, .width = width, .height = raster_rows };
+            const b: Raster = .{ .image = after, .left = left, .top = band.after - top, .width = width, .height = raster_rows };
             if (yiq.mask(a, b, top, paired, mask)) {
                 const changed = mask[0 .. width * paired];
                 if (moved) yiq.clearMovedCoverage(a, b, top, changed);
@@ -354,7 +270,7 @@ fn compareSpan(allocator: Allocator, collector: *Collector, scope: columns.Scope
 // Edge filtering can hide pieces of a replacement stroke. Recover the
 // raw threshold bounds when no component survives or when the edit is
 // confined to one row.
-fn compareReplacement(collector: *Collector, scope: columns.Scope, band: row_diff.Band, evidence: enum { unreported, single_row }) void {
+fn compareReplacement(collector: *Collector, scope: columns.Scope, band: rows.Band, evidence: enum { unreported, single_row }) void {
     const left = scope.span.left;
     const width = scope.span.width;
     // Equal-displacement anchors can include edited rows alongside the
@@ -373,7 +289,7 @@ fn compareReplacement(collector: *Collector, scope: columns.Scope, band: row_dif
     for (0..height) |y| {
         const before = scope.before.rowSegment(first_old + y, left, width);
         const after = scope.after.rowSegment(first_new + y, left, width);
-        if (pixel_ops.sameRun(before, after)) continue;
+        if (pixel.sameRun(before, after)) continue;
         const offset = ((first_old + y) * scope.before.width + left) * @sizeOf(Pixel);
         for (before, after, 0..) |old, new, x| {
             if (!yiq.aboveThreshold(old, new, offset + x * @sizeOf(Pixel))) continue;
@@ -394,7 +310,7 @@ fn compareReplacement(collector: *Collector, scope: columns.Scope, band: row_dif
     });
 }
 
-fn pruneMatched(scope: columns.Scope, bands: []row_diff.Band) []row_diff.Band {
+fn pruneMatched(scope: columns.Scope, bands: []rows.Band) []rows.Band {
     var len: usize = 0;
     for (bands) |band| {
         if (band.mode == .hash_match and sameBandPixels(scope, band)) continue;
@@ -404,23 +320,16 @@ fn pruneMatched(scope: columns.Scope, bands: []row_diff.Band) []row_diff.Band {
     return bands[0..len];
 }
 
-fn sameBandPixels(scope: columns.Scope, band: row_diff.Band) bool {
+fn sameBandPixels(scope: columns.Scope, band: rows.Band) bool {
     const left = scope.span.left;
     const width = scope.span.width;
     // Check the actual bytes before dropping the band, including hash collisions.
     for (0..band.removed) |row| {
         const before = scope.before.rowSegment(band.before + row, left, width);
         const after = scope.after.rowSegment(band.after + row, left, width);
-        if (!pixel_ops.sameRun(before, after)) return false;
+        if (!pixel.sameRun(before, after)) return false;
     }
     return true;
-}
-
-fn comparePair(allocator: Allocator, before: Image, after: Image) !void {
-    const result = try compare(allocator, before, after, .{});
-    defer result.deinit(allocator);
-    try std.testing.expectEqual(@as(usize, 1), result.regions.len);
-    try std.testing.expectEqual(values.Kind.inserted, result.regions[0].kind);
 }
 
 test "mask growth avoids having both sizes live on a remapping allocator" {
@@ -467,6 +376,7 @@ test "a taller button excludes unchanged card borders on unpaired rows" {
     const allocator = std.testing.allocator;
     const width = 360;
     const height = 280;
+    const sample = @import("test_support.zig");
     const before = try sample.Canvas.init(width, height);
     defer before.deinit();
     const after = try sample.Canvas.init(width, height);
@@ -490,7 +400,7 @@ test "a taller button excludes unchanged card borders on unpaired rows" {
     var collector: Collector = .{ .boxes = &storage, .gap_px = 4, .max_gap_px = 20 };
     var buffers: CompareBuffers = .{};
     defer buffers.deinit(allocator);
-    var bands = [_]row_diff.Band{.{ .before = 107, .after = 107, .removed = 26, .added = 40 }};
+    var bands = [_]rows.Band{.{ .before = 107, .after = 107, .removed = 26, .added = 40 }};
     try compareSpan(allocator, &collector, scope, &bands, &buffers);
     const retained = collector.retain();
     try std.testing.expectEqual(@as(usize, 1), retained.count);
@@ -500,21 +410,6 @@ test "a taller button excludes unchanged card borders on unpaired rows" {
     try std.testing.expect(new.bottom() > old.bottom());
     try std.testing.expect(new.x > 25 and new.right() < 320);
     try std.testing.expect(new.right() >= 162);
-}
-
-test "invalid borrowed shapes and non-finite scales fail at the comparison boundary" {
-    const one: Image = .{ .width = 1, .height = 1, .pixels = &.{@splat(255)} };
-    const wrong: Image = .{ .width = std.math.maxInt(usize), .height = 2, .pixels = one.pixels };
-    try std.testing.expectError(error.InvalidImage, compare(std.testing.allocator, wrong, one, .{}));
-    try std.testing.expectError(error.InvalidScale, compare(std.testing.allocator, one, one, .{ .scale = .{ .factor = std.math.nan(f64) } }));
-}
-
-test "comparison releases each allocation on failure" {
-    const old = [_]values.Pixel{ .{ 0, 0, 0, 255 }, .{ 10, 0, 0, 255 }, .{ 20, 0, 0, 255 }, .{ 30, 0, 0, 255 } };
-    const new = old[0..2].* ++ [_]values.Pixel{.{ 64, 0, 0, 255 }} ++ old[2..].*;
-    const before = Image{ .width = 1, .height = old.len, .pixels = &old };
-    const after = Image{ .width = 1, .height = new.len, .pixels = &new };
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, comparePair, .{ before, after });
 }
 
 test {

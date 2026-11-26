@@ -191,6 +191,8 @@ fn allowedImport(allocator: Allocator, rules: Rules, from_path: []const u8, targ
     const resolved = try std.fs.path.resolvePosix(allocator, &.{ std.fs.path.dirnamePosix(from_path) orelse ".", target });
     defer allocator.free(resolved);
     const to = rules.layerOf(resolved) orelse return false;
+    // Only the standalone comparison test helper may call back through its facade.
+    if (std.mem.eql(u8, from_path, "src/diff/test_support.zig") and std.mem.eql(u8, resolved, "src/diff.zig")) return true;
     for (rules.submodules) |submodule| {
         const inside = sources.inDirectory(from_path, submodule.directory);
         const facade = std.mem.eql(u8, from_path, submodule.facade);
@@ -297,7 +299,7 @@ test "every source imports only its layer and permitted lower layers" {
 
 test "the guard rejects reverse imports, submodule imports and foreign bindings" {
     const cases = [_]struct { path: []const u8, text: [:0]const u8 }{
-        .{ .path = "src/diff/compare.zig", .text = "const groups = @import(\"regions/grouping.zig\");" },
+        .{ .path = "src/diff/span.zig", .text = "const groups = @import(\"regions/grouping.zig\");" },
         .{ .path = "src/diff/regions/grouping.zig", .text = "const regions = @import(\"../regions.zig\");" },
         .{ .path = "src/diff/rows.zig", .text = "const cli = @import(\"../cli/main.zig\");" },
         .{ .path = "src/diff/rows.zig", .text = "const diff = @import(\"../diff.zig\");" },
@@ -320,7 +322,7 @@ test "the guard rejects reverse imports, submodule imports and foreign bindings"
     try checkWithText("src/codec/stb.zig", "const c = @import(\"stb_c\");\nexport fn hook() void {}");
     try checkWithText("src/diff/regions.zig", "const groups = @import(\"regions/grouping.zig\");");
     try checkWithText("src/diff/regions/grouping.zig", "const pending = @import(\"candidate.zig\");");
-    try checkWithText("src/diff/compare.zig", "const regions = @import(\"regions.zig\");");
+    try checkWithText("src/diff/span.zig", "const regions = @import(\"regions.zig\");");
     try checkWithText("src/diff/rows.zig", "const values = @import(\"../value.zig\");");
     try checkWithText("src/diff.zig", "const rows = @import(\"diff/rows.zig\");");
     try checkWithText("src/root.zig", "const diff = @import(\"diff.zig\");");
