@@ -507,6 +507,16 @@ fn zlibDispatch(b: *Build, zlib: *Build.Dependency) Build.LazyPath {
         .{ "    FUNCTABLE_VERIFY_ASSIGN(ft, crc32_fold);\n    FUNCTABLE_VERIFY_ASSIGN(ft, crc32_fold_copy);\n    FUNCTABLE_VERIFY_ASSIGN(ft, crc32_fold_final);\n    FUNCTABLE_VERIFY_ASSIGN(ft, crc32_fold_reset);\n", 1 },
     };
     for (removed) |edit| source.replaceExactly(b.allocator, edit[0], "", edit[1]);
+    // deflate_fast, the only compiled strategy, uses longest_match alone;
+    // the slow matcher and compare256 serve the dropped strategies.
+    for ([_][]const u8{ "longest_match_slow", "compare256" }) |name| {
+        source.replaceExactly(b.allocator, b.fmt("    FUNCTABLE_VERIFY_ASSIGN(ft, {s});\n", .{name}), "", 1);
+        source.replaceExactly(b.allocator, b.fmt("    {s}_stub,\n", .{name}), "    NULL,\n", 1);
+        // One assignment per CPU variant; the kernels stay referenced, unused.
+        source.replaceExactly(b.allocator, b.fmt("ft.{s} = &", .{name}), "(void)&", 10);
+    }
+    source.replaceRange(b.allocator, "static uint32_t compare256_stub(", "static uint32_t crc32_stub(", "");
+    source.replaceRange(b.allocator, "static uint32_t longest_match_slow_stub(", "static void slide_hash_stub(", "");
     // The PCLMUL kernel also extracts lanes with SSE4.1.
     source.replaceExactly(b.allocator, "if (cf.x86.has_pclmulqdq) {", "if (cf.x86.has_pclmulqdq && cf.x86.has_sse41) {", 1);
     const fold_callbacks =
