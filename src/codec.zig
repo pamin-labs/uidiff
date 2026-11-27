@@ -22,7 +22,8 @@ pub const EncodeError = png.EncodeError;
 /// The largest encoded input file or byte stream accepted, in bytes.
 pub const max_encoded_bytes = value.max_encoded_bytes;
 
-const Format = std.meta.FieldEnum(@TypeOf(formats));
+/// The encoded format identified by the decoder.
+pub const Format = std.meta.FieldEnum(@TypeOf(formats));
 
 // The memory module exports the allocation hooks the C codecs call, so it is
 // analyzed in every build that links the decoders, decoding or not.
@@ -38,8 +39,11 @@ comptime {
 
 /// An image with decoder-owned pixels, released by deinit.
 pub const Decoded = struct {
+    /// View of the decoded RGBA8 pixels, valid until deinit.
     image: Image,
+    /// Format identified in the encoded input.
     format: Format,
+    /// Allocator retained for releasing the decoder's pixels.
     allocator: Allocator,
 
     /// Releases pixels with the decoder that allocated them.

@@ -165,7 +165,10 @@ test "a tall image against its reverse stops at the edit budget" {
     defer std.testing.allocator.free(new);
     for (old, 0..) |*pixel, row| pixel.* = .{ @intCast(row % 256), @intCast(row / 256 % 256), 0, 255 };
     for (new, 0..) |*pixel, row| pixel.* = old[height - 1 - row];
-    const result = try compare(std.testing.allocator, .{ .width = 1, .height = height, .pixels = old }, .{ .width = 1, .height = height, .pixels = new }, .{});
+    const result = try compare(std.testing.allocator, .{
+        .before = .{ .width = 1, .height = height, .pixels = old },
+        .after = .{ .width = 1, .height = height, .pixels = new },
+    }, .{});
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.regions.len > 0);
 }

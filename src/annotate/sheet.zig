@@ -55,11 +55,14 @@ pub const RenderError = plan.RenderError;
 
 /// An owned RGBA8 sheet in whole sheet pixels, released by deinit.
 pub const Sheet = struct {
+    /// Owned RGBA8 pixels in row-major order.
     pixels: []Pixel,
+    /// Number of sheet pixels in each row.
     width: usize,
+    /// Number of rows in the sheet.
     height: usize,
 
-    /// Releases the pixels with the allocator passed to render.
+    /// Releases the pixels with the allocator passed to renderSheet.
     pub fn deinit(self: Sheet, allocator: Allocator) void {
         allocator.free(self.pixels);
     }
@@ -189,8 +192,8 @@ pub const Rows = struct {
 };
 
 /// Renders the same rows as the streaming sheet for in-memory consumers.
-pub fn render(allocator: Allocator, before: Image, after: Image, regions: []const Region, moves: []const Move) RenderError!Sheet {
-    const rows = try Rows.init(allocator, before, after, regions, moves);
+pub fn render(allocator: Allocator, pair: value.Pair, regions: []const Region, moves: []const Move) RenderError!Sheet {
+    const rows = try Rows.init(allocator, pair.before, pair.after, regions, moves);
     defer rows.deinit(allocator);
     const size = rows.size();
     const pixels = try allocator.alloc(Pixel, size.pixelCount().?);

@@ -18,6 +18,7 @@ pub const CssPx = enum(usize) {
 
 /// Device pixels per CSS pixel.
 pub const Scale = struct {
+    /// Device pixels per CSS pixel. A usable factor is finite and positive.
     factor: f64,
 
     /// One device pixel per CSS pixel.
@@ -36,7 +37,7 @@ pub const Scale = struct {
     /// Parses a device scale written as plain decimal digits with an optional
     /// fraction ("2", "1.25"). Returns null for anything else: hexadecimal, digit
     /// separators, exponents, signs, special values, and numbers past f64's
-    /// range. Options.check still refuses zero.
+    /// range. A parsed zero is invalid for comparison.
     pub fn parse(text: []const u8) ?Scale {
         const point = std.mem.indexOfScalar(u8, text, '.') orelse text.len;
         if (!digits(text[0..point])) return null;

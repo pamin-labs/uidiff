@@ -27,8 +27,10 @@ fn checkTallInsertion(height: usize, inserted: usize, viewport: enum { fixed, gr
     @memcpy(new[at + inserted ..], old[at .. height - inserted]);
     const result = try compare(
         std.testing.allocator,
-        .{ .width = 1, .height = old.len, .pixels = old },
-        .{ .width = 1, .height = height, .pixels = new },
+        .{
+            .before = .{ .width = 1, .height = old.len, .pixels = old },
+            .after = .{ .width = 1, .height = height, .pixels = new },
+        },
         .{},
     );
     defer result.deinit(std.testing.allocator);

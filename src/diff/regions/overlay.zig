@@ -41,7 +41,7 @@ pub fn classifyOverlay(region: *Region, pair: value.Pair, scale: value.Scale) vo
     const new = region.after orelse return;
     if (!std.meta.eql(old, viewport) or !std.meta.eql(new, viewport)) return;
     const radius: usize = bounds.deviceIndex(@min(scale.devicePixels(scrim_shadow_radius), max_scrim_shadow_radius));
-    if (overlaid(pair, radius)) region.before = null else if (overlaid(pair.reversed(), radius)) region.after = null;
+    if (overlaid(pair, radius)) region.before = null else if (overlaid(value.reversePair(pair), radius)) region.after = null;
 }
 
 fn checkScrimShadow(pair: value.Pair, panel: value.PixelRect, radius: usize, shade: scrim.Scrim) bool {

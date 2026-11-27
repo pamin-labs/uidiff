@@ -10,41 +10,38 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 /// Configures the comparison and limits each file decode.
-pub const Options = struct {
-    scale: value.Scale = .one,
+pub const FileCompareOptions = struct {
+    /// Settings used by the comparison after decoding the inputs.
+    compare: diff.Options = .{},
+    /// Per-image decode memory budget in bytes, clamped to uidiff.max_decode_bytes.
     max_decode_bytes: usize = value.max_decode_bytes,
-
-    /// Returns the settings used by the pixel comparison.
-    pub fn comparison(self: Options) diff.Options {
-        return .{ .scale = self.scale };
-    }
-
-    /// Checks the comparison settings before opening the inputs.
-    pub fn check(self: Options) error{InvalidScale}!diff.Checked {
-        return self.comparison().check();
-    }
 };
 
 /// The files one comparison reads and writes. Slices borrow the caller's.
 pub const Paths = struct {
+    /// Path to the before image.
     before: []const u8,
+    /// Path to the after image.
     after: []const u8,
     /// Where to write the annotated sheet, if requested.
     annotate: ?[]const u8 = null,
 };
 
 /// Holds the path of the file a failure concerns, borrowed from Paths.
-pub const Diagnostics = struct { path: ?[]const u8 = null };
+pub const Diagnostics = struct {
+    /// Borrowed input or sheet path associated with a failure, or null.
+    path: ?[]const u8 = null,
+};
 
 /// Failures laying out or encoding a streamed comparison sheet.
 pub const EncodeSheetError = annotate.RenderError || codec.EncodeError;
 
 /// Failures rendering, encoding or writing the annotated sheet.
-pub const WriteError = EncodeSheetError || Io.Dir.CreateFileAtomicError ||
+const WriteError = EncodeSheetError || Io.Dir.CreateFileAtomicError ||
     Io.File.Atomic.ReplaceError || Io.File.Writer.Error || Io.Dir.StatFileError || error{ IsDir, SheetIsInput };
 
 /// File, codec, comparison and sheet failures.
-pub const CompareError = codec.ReadError || codec.DecodeError || diff.CompareError || WriteError;
+pub const FileCompareError = codec.ReadError || codec.DecodeError || diff.CompareError || WriteError;
 
 const DecodedPair = struct { before: codec.Decoded, after: codec.Decoded };
 
@@ -97,42 +94,43 @@ const write_buffer_bytes = 64 * 1024;
 /// Checks the options, decodes both files, compares them, and writes the
 /// sheet when paths.annotate is set. On failure, diagnostics names the file
 /// concerned, or null when no file is. The caller owns the comparison.
-pub fn compareFiles(io: Io, allocator: Allocator, paths: Paths, options: Options, diagnostics: *Diagnostics) CompareError!diff.Comparison {
+pub fn compareFiles(io: Io, allocator: Allocator, paths: Paths, options: FileCompareOptions, diagnostics: *Diagnostics) FileCompareError!diff.Comparison {
     diagnostics.path = null;
-    const checked = try options.check();
+    const checked = try diff.checkOptions(options.compare);
     if (paths.annotate) |path| try preflightSheet(io, allocator, paths, path, options.max_decode_bytes, diagnostics);
     var shared: SharedAllocator = .{ .io = io, .backing = allocator };
-    var pair = try loadPair(io, &shared, paths, options.max_decode_bytes, diagnostics);
-    defer pair.before.deinit();
-    defer pair.after.deinit();
+    var decoded = try loadPair(io, &shared, paths, options.max_decode_bytes, diagnostics);
+    defer decoded.before.deinit();
+    defer decoded.after.deinit();
+    const pair: value.Pair = .{ .before = decoded.before.image, .after = decoded.after.image };
     if (paths.annotate) |path| {
         // A file may have changed since its header was checked.
         diagnostics.path = path;
-        _ = try annotate.minimumSheetSize(pair.before.image.size(), pair.after.image.size());
+        _ = try annotate.minimumSheetSize(pair.before.size(), pair.after.size());
     }
     diagnostics.path = null;
-    const result = try diff.compareChecked(allocator, pair.before.image, pair.after.image, checked);
+    const result = try diff.compareChecked(allocator, pair.before, pair.after, checked);
     errdefer result.deinit(allocator);
     if (paths.annotate) |path| {
         diagnostics.path = path;
-        try writeSheet(io, allocator, path, pair.before.image, pair.after.image, result);
+        try writeSheet(io, allocator, path, pair, result);
         diagnostics.path = null;
     }
     return result;
 }
 
 /// Streams a comparison sheet as PNG into a caller-supplied writer.
-pub fn encodeComparisonSheet(allocator: Allocator, before: value.Image, after: value.Image, result: diff.Comparison, output: *Io.Writer) EncodeSheetError!void {
-    return encodeSheet(null, allocator, before, after, result, output);
+pub fn encodeSheet(allocator: Allocator, pair: value.Pair, regions: []const value.Region, moves: []const value.Move, output: *Io.Writer) EncodeSheetError!void {
+    return encodeSheetWithIo(null, allocator, pair, regions, moves, output);
 }
 
-fn encodeSheet(io: ?Io, allocator: Allocator, before: value.Image, after: value.Image, result: diff.Comparison, output: *Io.Writer) EncodeSheetError!void {
-    const sheet = try annotate.SheetRows.init(allocator, before, after, result.regions, result.moves);
+fn encodeSheetWithIo(io: ?Io, allocator: Allocator, pair: value.Pair, regions: []const value.Region, moves: []const value.Move, output: *Io.Writer) EncodeSheetError!void {
+    const sheet = try annotate.SheetRows.init(allocator, pair.before, pair.after, regions, moves);
     defer sheet.deinit(allocator);
     try codec.encodePngRowsWithIo(io, allocator, sheet.size(), sheet, output);
 }
 
-fn loadPair(io: Io, shared: *SharedAllocator, paths: Paths, cap: usize, diagnostics: *Diagnostics) CompareError!DecodedPair {
+fn loadPair(io: Io, shared: *SharedAllocator, paths: Paths, cap: usize, diagnostics: *Diagnostics) FileCompareError!DecodedPair {
     const allocator = shared.backing;
     diagnostics.path = paths.before;
     const first = try codec.FileInput.open(io, paths.before);
@@ -159,7 +157,7 @@ fn loadPair(io: Io, shared: *SharedAllocator, paths: Paths, cap: usize, diagnost
     return .{ .before = before, .after = try second_result };
 }
 
-fn decodeInOrder(io: Io, allocator: Allocator, first: codec.FileInput, second: ?codec.FileInput, paths: Paths, cap: usize, diagnostics: *Diagnostics) CompareError!DecodedPair {
+fn decodeInOrder(io: Io, allocator: Allocator, first: codec.FileInput, second: ?codec.FileInput, paths: Paths, cap: usize, diagnostics: *Diagnostics) FileCompareError!DecodedPair {
     diagnostics.path = paths.before;
     var before = try first.decode(io, allocator, cap);
     errdefer before.deinit();
@@ -168,7 +166,7 @@ fn decodeInOrder(io: Io, allocator: Allocator, first: codec.FileInput, second: ?
     return .{ .before = before, .after = after };
 }
 
-fn preflightSheet(io: Io, allocator: Allocator, paths: Paths, sheet_path: []const u8, cap: usize, diagnostics: *Diagnostics) CompareError!void {
+fn preflightSheet(io: Io, allocator: Allocator, paths: Paths, sheet_path: []const u8, cap: usize, diagnostics: *Diagnostics) FileCompareError!void {
     diagnostics.path = sheet_path;
     try checkSheetDestination(io, .cwd(), paths, sheet_path);
     diagnostics.path = paths.before;
@@ -179,13 +177,13 @@ fn preflightSheet(io: Io, allocator: Allocator, paths: Paths, sheet_path: []cons
     _ = try annotate.minimumSheetSize(before, after);
 }
 
-fn writeSheet(io: Io, allocator: Allocator, path: []const u8, before: value.Image, after: value.Image, result: diff.Comparison) WriteError!void {
+fn writeSheet(io: Io, allocator: Allocator, path: []const u8, pair: value.Pair, result: diff.Comparison) WriteError!void {
     var file = try Io.Dir.cwd().createFileAtomic(io, path, .{ .replace = true });
     defer file.deinit(io);
     const buffer = try allocator.alloc(u8, write_buffer_bytes);
     defer allocator.free(buffer);
     var writer = file.file.writer(io, buffer);
-    encodeSheet(io, allocator, before, after, result, &writer.interface) catch |err| switch (err) {
+    encodeSheetWithIo(io, allocator, pair, result.regions, result.moves, &writer.interface) catch |err| switch (err) {
         error.WriteFailed => return writer.err orelse err,
         else => |other| return other,
     };
@@ -239,7 +237,7 @@ test "sheet destination refuses both inputs and their hard links" {
 
 test "an invalid scale clears file diagnostics before loading" {
     var diagnostics: Diagnostics = .{ .path = "stale" };
-    try std.testing.expectError(error.InvalidScale, compareFiles(std.testing.io, std.testing.allocator, .{ .before = "before", .after = "after" }, .{ .scale = .{ .factor = 0 } }, &diagnostics));
+    try std.testing.expectError(error.InvalidScale, compareFiles(std.testing.io, std.testing.allocator, .{ .before = "before", .after = "after" }, .{ .compare = .{ .scale = .{ .factor = 0 } } }, &diagnostics));
     try std.testing.expectEqual(@as(?[]const u8, null), diagnostics.path);
 }
 
