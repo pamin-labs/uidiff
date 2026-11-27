@@ -189,8 +189,8 @@ pub const Rows = struct {
 };
 
 /// Renders the same rows as the streaming sheet for in-memory consumers.
-pub fn render(allocator: Allocator, before: Image, after: Image, regions: []const Region, moves: []const Move) RenderError!Sheet {
-    const rows = try Rows.init(allocator, before, after, regions, moves);
+pub fn render(allocator: Allocator, pair: value.Pair, regions: []const Region, moves: []const Move) RenderError!Sheet {
+    const rows = try Rows.init(allocator, pair.before, pair.after, regions, moves);
     defer rows.deinit(allocator);
     const size = rows.size();
     const pixels = try allocator.alloc(Pixel, size.pixelCount().?);

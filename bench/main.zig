@@ -107,7 +107,7 @@ fn measureStages(io: Io, clock: Io.Clock, allocator: std.mem.Allocator, before_p
     for (&stages.sheet) |*sheet_time| {
         encoded.clearRetainingCapacity();
         const sheet_start = Io.Clock.Timestamp.now(io, clock);
-        try uidiff.encodeComparisonSheet(allocator, before.image, after.image, result, &encoded.writer);
+        try uidiff.encodeComparisonSheet(allocator, .{ .before = before.image, .after = after.image }, result.regions, result.moves, &encoded.writer);
         sheet_time.* = elapsed(sheet_start, io);
         stages.sheet_bytes = encoded.written().len;
     }

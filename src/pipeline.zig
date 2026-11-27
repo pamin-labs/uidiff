@@ -92,32 +92,33 @@ pub fn compareFiles(io: Io, allocator: Allocator, paths: Paths, options: FileCom
     const checked = try diff.checkOptions(options.compare);
     if (paths.annotate) |path| try preflightSheet(io, allocator, paths, path, options.max_decode_bytes, diagnostics);
     var shared: SharedAllocator = .{ .io = io, .backing = allocator };
-    var pair = try loadPair(io, &shared, paths, options.max_decode_bytes, diagnostics);
-    defer pair.before.deinit();
-    defer pair.after.deinit();
+    var decoded = try loadPair(io, &shared, paths, options.max_decode_bytes, diagnostics);
+    defer decoded.before.deinit();
+    defer decoded.after.deinit();
+    const pair: value.Pair = .{ .before = decoded.before.image, .after = decoded.after.image };
     if (paths.annotate) |path| {
         // A file may have changed since its header was checked.
         diagnostics.path = path;
-        _ = try annotate.minimumSheetSize(pair.before.image.size(), pair.after.image.size());
+        _ = try annotate.minimumSheetSize(pair.before.size(), pair.after.size());
     }
     diagnostics.path = null;
-    const result = try diff.compareChecked(allocator, pair.before.image, pair.after.image, checked);
+    const result = try diff.compareChecked(allocator, pair.before, pair.after, checked);
     errdefer result.deinit(allocator);
     if (paths.annotate) |path| {
         diagnostics.path = path;
-        try writeSheet(io, allocator, path, pair.before.image, pair.after.image, result);
+        try writeSheet(io, allocator, path, pair, result);
         diagnostics.path = null;
     }
     return result;
 }
 
 /// Streams a comparison sheet as PNG into a caller-supplied writer.
-pub fn encodeComparisonSheet(allocator: Allocator, before: value.Image, after: value.Image, result: diff.Comparison, output: *Io.Writer) EncodeSheetError!void {
-    return encodeSheet(null, allocator, before, after, result, output);
+pub fn encodeComparisonSheet(allocator: Allocator, pair: value.Pair, regions: []const value.Region, moves: []const value.Move, output: *Io.Writer) EncodeSheetError!void {
+    return encodeSheet(null, allocator, pair, regions, moves, output);
 }
 
-fn encodeSheet(io: ?Io, allocator: Allocator, before: value.Image, after: value.Image, result: diff.Comparison, output: *Io.Writer) EncodeSheetError!void {
-    const sheet = try annotate.SheetRows.init(allocator, before, after, result.regions, result.moves);
+fn encodeSheet(io: ?Io, allocator: Allocator, pair: value.Pair, regions: []const value.Region, moves: []const value.Move, output: *Io.Writer) EncodeSheetError!void {
+    const sheet = try annotate.SheetRows.init(allocator, pair.before, pair.after, regions, moves);
     defer sheet.deinit(allocator);
     try codec.encodePngRowsWithIo(io, allocator, sheet.size(), sheet, output);
 }
@@ -169,13 +170,13 @@ fn preflightSheet(io: Io, allocator: Allocator, paths: Paths, sheet_path: []cons
     _ = try annotate.minimumSheetSize(before, after);
 }
 
-fn writeSheet(io: Io, allocator: Allocator, path: []const u8, before: value.Image, after: value.Image, result: diff.Comparison) WriteError!void {
+fn writeSheet(io: Io, allocator: Allocator, path: []const u8, pair: value.Pair, result: diff.Comparison) WriteError!void {
     var file = try Io.Dir.cwd().createFileAtomic(io, path, .{ .replace = true });
     defer file.deinit(io);
     const buffer = try allocator.alloc(u8, write_buffer_bytes);
     defer allocator.free(buffer);
     var writer = file.file.writer(io, buffer);
-    encodeSheet(io, allocator, before, after, result, &writer.interface) catch |err| switch (err) {
+    encodeSheet(io, allocator, pair, result.regions, result.moves, &writer.interface) catch |err| switch (err) {
         error.WriteFailed => return writer.err orelse err,
         else => |other| return other,
     };
