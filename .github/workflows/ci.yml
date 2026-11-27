@@ -67,6 +67,10 @@ jobs:
 
       - run: zig build test-png-rows
         if: matrix.rows_only
+      # windows-latest already runs e2e on the ReleaseSafe CLI, which links
+      # the codecs with LTO; run the same on Windows on Arm.
+      - run: zig build e2e
+        if: runner.os == 'Windows' && matrix.rows_only
 
   clean-build:
     if: github.event_name == 'pull_request'
