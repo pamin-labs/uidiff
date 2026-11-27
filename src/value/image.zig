@@ -44,12 +44,15 @@ pub const Image = struct {
 
     /// Reports whether every pixel has full alpha coverage.
     pub fn isOpaque(self: Image) bool {
-        const Words = @Vector(pixel_lanes, u32);
-        const alpha: Words = @splat(@bitCast(Pixel{ 0, 0, 0, 255 }));
+        // One alpha test per block of four vectors instead of one per vector:
+        // AND keeps an alpha byte at 255 only if every pixel's alpha is 255.
+        const block = 4 * pixel_lanes;
+        const Words = @Vector(block, u32);
+        const alpha: u32 = @bitCast(Pixel{ 0, 0, 0, 255 });
         var i: usize = 0;
-        while (i + pixel_lanes <= self.pixels.len) : (i += pixel_lanes) {
-            const rgba: Words = @bitCast(self.pixels[i..][0..pixel_lanes].*);
-            if (!@reduce(.And, rgba & alpha == alpha)) return false;
+        while (i + block <= self.pixels.len) : (i += block) {
+            const rgba: Words = @bitCast(self.pixels[i..][0..block].*);
+            if (@reduce(.And, rgba) & alpha != alpha) return false;
         }
         for (self.pixels[i..]) |p| if (p[3] != 255) return false;
         return true;
@@ -122,6 +125,18 @@ test "rows use the packed stride" {
     try std.testing.expectEqualSlices(Pixel, pixels[2..], image.row(1));
     try std.testing.expectEqualSlices(Pixel, pixels[3..], image.rowSegment(1, 1, 1));
     try std.testing.expectEqualSlices(u8, &.{}, image.rowBytes(1, 2, 0));
+}
+
+test "opacity finds a translucent pixel in any block and in the tail" {
+    var pixels: [8 * pixel_lanes + 3]Pixel = undefined;
+    @memset(&pixels, .{ 9, 8, 7, 255 });
+    const image: Image = .{ .width = pixels.len, .height = 1, .pixels = &pixels };
+    try std.testing.expect(image.isOpaque());
+    for (&pixels) |*p| {
+        p[3] = 254;
+        try std.testing.expect(!image.isOpaque());
+        p[3] = 255;
+    }
 }
 
 test {

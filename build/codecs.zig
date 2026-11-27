@@ -73,7 +73,7 @@ pub const fixture_mode: Optimize = .safe;
 const header_mode: Optimize = .safe;
 const codec_mode: Optimize = .fast;
 const jpeg_public_config = "#define UIDIFF_JPEG_PUBLIC_CONFIG 1\n#include \"build_config.h\"\n#undef UIDIFF_JPEG_PUBLIC_CONFIG\n";
-const png_compression_level = 3;
+const png_compression_level = 2;
 const max_pinned_source_bytes = 256 * 1024;
 /// Keeps clang's coverage instrumentation out of the C decoders under
 /// `zig build test --fuzz`. Zig 0.17's fuzzer reads one PC per edge counter
@@ -465,18 +465,19 @@ fn readDependencySource(b: *Build, dependency: *Build.Dependency, name: []const 
 fn zlibDeflate(b: *Build, zlib: *Build.Dependency) Build.LazyPath {
     var source = readDependencySource(b, zlib, "deflate.c");
     const table_anchor = "static const config configuration_table[10] = {";
-    const medium_anchor = "#else\n/* 3 */";
+    // Levels 1 and 2 of upstream's default build, where NO_QUICK_STRATEGY is unset.
+    const levels_anchor = "#else\n/* 1 */";
     const table_end = " /* max compression */\n\n/* Note: the deflate()";
     source.requireMatches(table_anchor, 1);
-    source.requireMatches(medium_anchor, 1);
+    source.requireMatches(levels_anchor, 1);
     const table = source.indexFrom(table_anchor, 0);
-    const medium = source.indexFrom(medium_anchor, table);
+    const levels = source.indexFrom(levels_anchor, table);
     const tag = b.fmt("/* {d} */ ", .{png_compression_level});
-    const medium_end = source.indexFrom("#endif", medium);
-    const section: PinnedSource = .{ .name = source.name, .text = source.text[medium..medium_end] };
+    const levels_end = source.indexFrom("#endif", levels);
+    const section: PinnedSource = .{ .name = source.name, .text = source.text[levels..levels_end] };
     const entry = section.valueBetween(tag, '}');
     const strategy: PinnedSource = .{ .name = source.name, .text = entry };
-    strategy.requireMatches("deflate_medium", 1);
+    strategy.requireMatches("deflate_fast", 1);
     source.replaceRange(b.allocator, table_anchor, table_end, b.fmt("static const config configuration = {s}}};", .{entry}));
     const dispatch =
         \\s->level == 0 ? deflate_stored(s, flush) :
@@ -484,7 +485,7 @@ fn zlibDeflate(b: *Build, zlib: *Build.Dependency) Build.LazyPath {
         \\                 s->strategy == Z_RLE ? deflate_rle(s, flush) :
         \\                 (*(configuration_table[s->level].func))(s, flush);
     ;
-    source.replaceExactly(b.allocator, dispatch, "deflate_medium(s, flush);", 1);
+    source.replaceExactly(b.allocator, dispatch, "deflate_fast(s, flush);", 1);
     source.replaceExactly(b.allocator, "configuration_table[s->level]", "configuration", 1);
     source.replaceExactly(b.allocator, "configuration_table[level]", "configuration", 5);
     source.replaceExactly(b.allocator, "level < 0 || level > 9 || strategy < 0 || strategy > Z_FIXED", "level != UIDIFF_PNG_COMPRESSION_LEVEL || strategy != Z_DEFAULT_STRATEGY", 2);
@@ -531,7 +532,7 @@ fn addZlibNg(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, x86
     const stream = [_][]const u8{
         "adler32.c",
         "crc32.c",
-        "deflate_medium.c",
+        "deflate_fast.c",
         "inflate.c",
         "insert_string.c",
         "insert_string_roll.c",
