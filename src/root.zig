@@ -76,9 +76,9 @@ pub const Move = value.Move;
 /// One horizontal position or extent in source device pixels.
 pub const DevicePx = value.DevicePx;
 /// Renders the same styled comparison sheet as file annotation.
-pub const renderComparisonSheet = annotate.renderSheet;
+pub const renderSheet = annotate.renderSheet;
 /// Streams a styled comparison sheet as PNG without a full canvas allocation.
-pub const encodeComparisonSheet = pipeline.encodeComparisonSheet;
+pub const encodeSheet = pipeline.encodeSheet;
 /// The files one comparison reads and writes.
 pub const Paths = pipeline.Paths;
 /// The path of the file a failure concerns.
@@ -86,7 +86,7 @@ pub const Diagnostics = pipeline.Diagnostics;
 /// Failures rendering, encoding or writing the annotated sheet.
 pub const WriteError = pipeline.WriteError;
 /// File, codec, comparison and sheet failures.
-pub const CompareFilesError = pipeline.CompareError;
+pub const FileCompareError = pipeline.FileCompareError;
 /// Decodes two files, compares them and writes the sheet if asked. The caller owns the result.
 pub const compareFiles = pipeline.compareFiles;
 

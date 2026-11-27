@@ -12,7 +12,7 @@ test "the halo and color stroke leave the changed pixels uncovered" {
     const pixels: [160 * 100]Pixel = @splat(source);
     const image: Image = .{ .width = 160, .height = 100, .pixels = &pixels };
     const changed: Region = .{ .number = 1, .kind = .changed, .before = .fromPixels(80, 48, 30, 30) };
-    const sheet = try uidiff.renderComparisonSheet(allocator, .{ .before = image, .after = image }, &.{changed}, &.{});
+    const sheet = try uidiff.renderSheet(allocator, .{ .before = image, .after = image }, &.{changed}, &.{});
     defer sheet.deinit(allocator);
 
     // Screen-space samples capture the original halo and its protected interior.
@@ -31,7 +31,7 @@ test "top corner badges stay above the pane and clear of the caption" {
     const pixels: [80 * 80]Pixel = @splat(background);
     const image: Image = .{ .width = 80, .height = 80, .pixels = &pixels };
     const insert: Region = .{ .number = 1, .kind = .inserted, .after = .fromPixels(0, 0, 4, 4) };
-    const sheet = try uidiff.renderComparisonSheet(allocator, .{ .before = image, .after = image }, &.{insert}, &.{});
+    const sheet = try uidiff.renderSheet(allocator, .{ .before = image, .after = image }, &.{insert}, &.{});
     defer sheet.deinit(allocator);
 
     const view = sheet.image();
@@ -45,7 +45,7 @@ test "thin wide strips and crops draw full badges above their pixels" {
     const pixels: [900 * 12]Pixel = @splat(.{ 244, 244, 245, 255 });
     const image: Image = .{ .width = 900, .height = 12, .pixels = &pixels };
     const region: Region = .{ .number = 1, .kind = .changed, .after = .fromPixels(400, 0, 12, 12) };
-    const sheet = try uidiff.renderComparisonSheet(allocator, .{ .before = image, .after = image }, &.{region}, &.{});
+    const sheet = try uidiff.renderSheet(allocator, .{ .before = image, .after = image }, &.{region}, &.{});
     defer sheet.deinit(allocator);
 
     const view = sheet.image();

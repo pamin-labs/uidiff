@@ -112,7 +112,7 @@ test "an annotated sheet is written atomically beside a normal report" {
     defer target.deinit();
     const changes = try uidiff.compare(allocator, .{ .before = source.image, .after = target.image }, .{ .scale = .{ .factor = fixtures.scale } });
     defer changes.deinit(allocator);
-    const expected = try uidiff.renderComparisonSheet(allocator, .{ .before = source.image, .after = target.image }, changes.regions, changes.moves);
+    const expected = try uidiff.renderSheet(allocator, .{ .before = source.image, .after = target.image }, changes.regions, changes.moves);
     defer expected.deinit(allocator);
     try testing.expectEqual(expected.width, sheet.image.width);
     try testing.expectEqual(expected.height, sheet.image.height);
@@ -190,7 +190,7 @@ test "sheet encoding keeps nonopaque pixels and their RGB channels" {
     defer allocator.free(bytes);
     var decoded = try uidiff.decode(allocator, bytes);
     defer decoded.deinit();
-    const expected = try uidiff.renderComparisonSheet(allocator, .{ .before = image, .after = image }, &.{}, &.{});
+    const expected = try uidiff.renderSheet(allocator, .{ .before = image, .after = image }, &.{}, &.{});
     defer expected.deinit(allocator);
     try testing.expectEqualSlices(uidiff.Pixel, expected.pixels, decoded.image.pixels);
 }

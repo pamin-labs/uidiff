@@ -10,7 +10,7 @@ const Allocator = std.mem.Allocator;
 pub const panic = std.debug.simple_panic;
 
 const Exit = enum(u8) { unchanged = 0, changed = 1, failed = 2 };
-const RunError = std.process.Args.ToSliceError || uidiff.CompareFilesError || uidiff.report.PixelWriteError ||
+const RunError = std.process.Args.ToSliceError || uidiff.FileCompareError || uidiff.report.PixelWriteError ||
     Io.File.Writer.Error;
 
 /// Empty: main maps every failure to exit status 2 and a log line, because an

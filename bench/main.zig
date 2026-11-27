@@ -5,7 +5,7 @@ const uidiff = @import("uidiff");
 const Io = std.Io;
 
 /// Bad arguments, or a failure of the measured pipeline or the report.
-pub const BenchError = std.process.Args.ToSliceError || uidiff.CompareFilesError || uidiff.EncodeError ||
+pub const BenchError = std.process.Args.ToSliceError || uidiff.FileCompareError || uidiff.EncodeError ||
     Io.Writer.Error || Io.Clock.ResolutionError || error{InvalidArguments};
 
 /// Per-round timings of each stage, in milliseconds.
@@ -107,7 +107,7 @@ fn measureStages(io: Io, clock: Io.Clock, allocator: std.mem.Allocator, before_p
     for (&stages.sheet) |*sheet_time| {
         encoded.clearRetainingCapacity();
         const sheet_start = Io.Clock.Timestamp.now(io, clock);
-        try uidiff.encodeComparisonSheet(allocator, .{ .before = before.image, .after = after.image }, result.regions, result.moves, &encoded.writer);
+        try uidiff.encodeSheet(allocator, .{ .before = before.image, .after = after.image }, result.regions, result.moves, &encoded.writer);
         sheet_time.* = elapsed(sheet_start, io);
         stages.sheet_bytes = encoded.written().len;
     }

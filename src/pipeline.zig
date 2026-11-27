@@ -34,7 +34,7 @@ pub const WriteError = EncodeSheetError || Io.Dir.CreateFileAtomicError ||
     Io.File.Atomic.ReplaceError || Io.File.Writer.Error || Io.Dir.StatFileError || error{ IsDir, SheetIsInput };
 
 /// File, codec, comparison and sheet failures.
-pub const CompareError = codec.ReadError || codec.DecodeError || diff.CompareError || WriteError;
+pub const FileCompareError = codec.ReadError || codec.DecodeError || diff.CompareError || WriteError;
 
 const DecodedPair = struct { before: codec.Decoded, after: codec.Decoded };
 
@@ -87,7 +87,7 @@ const write_buffer_bytes = 64 * 1024;
 /// Checks the options, decodes both files, compares them, and writes the
 /// sheet when paths.annotate is set. On failure, diagnostics names the file
 /// concerned, or null when no file is. The caller owns the comparison.
-pub fn compareFiles(io: Io, allocator: Allocator, paths: Paths, options: FileCompareOptions, diagnostics: *Diagnostics) CompareError!diff.Comparison {
+pub fn compareFiles(io: Io, allocator: Allocator, paths: Paths, options: FileCompareOptions, diagnostics: *Diagnostics) FileCompareError!diff.Comparison {
     diagnostics.path = null;
     const checked = try diff.checkOptions(options.compare);
     if (paths.annotate) |path| try preflightSheet(io, allocator, paths, path, options.max_decode_bytes, diagnostics);
@@ -113,17 +113,17 @@ pub fn compareFiles(io: Io, allocator: Allocator, paths: Paths, options: FileCom
 }
 
 /// Streams a comparison sheet as PNG into a caller-supplied writer.
-pub fn encodeComparisonSheet(allocator: Allocator, pair: value.Pair, regions: []const value.Region, moves: []const value.Move, output: *Io.Writer) EncodeSheetError!void {
-    return encodeSheet(null, allocator, pair, regions, moves, output);
+pub fn encodeSheet(allocator: Allocator, pair: value.Pair, regions: []const value.Region, moves: []const value.Move, output: *Io.Writer) EncodeSheetError!void {
+    return encodeSheetWithIo(null, allocator, pair, regions, moves, output);
 }
 
-fn encodeSheet(io: ?Io, allocator: Allocator, pair: value.Pair, regions: []const value.Region, moves: []const value.Move, output: *Io.Writer) EncodeSheetError!void {
+fn encodeSheetWithIo(io: ?Io, allocator: Allocator, pair: value.Pair, regions: []const value.Region, moves: []const value.Move, output: *Io.Writer) EncodeSheetError!void {
     const sheet = try annotate.SheetRows.init(allocator, pair.before, pair.after, regions, moves);
     defer sheet.deinit(allocator);
     try codec.encodePngRowsWithIo(io, allocator, sheet.size(), sheet, output);
 }
 
-fn loadPair(io: Io, shared: *SharedAllocator, paths: Paths, cap: usize, diagnostics: *Diagnostics) CompareError!DecodedPair {
+fn loadPair(io: Io, shared: *SharedAllocator, paths: Paths, cap: usize, diagnostics: *Diagnostics) FileCompareError!DecodedPair {
     const allocator = shared.backing;
     diagnostics.path = paths.before;
     const first = try codec.FileInput.open(io, paths.before);
@@ -150,7 +150,7 @@ fn loadPair(io: Io, shared: *SharedAllocator, paths: Paths, cap: usize, diagnost
     return .{ .before = before, .after = try second_result };
 }
 
-fn decodeInOrder(io: Io, allocator: Allocator, first: codec.FileInput, second: ?codec.FileInput, paths: Paths, cap: usize, diagnostics: *Diagnostics) CompareError!DecodedPair {
+fn decodeInOrder(io: Io, allocator: Allocator, first: codec.FileInput, second: ?codec.FileInput, paths: Paths, cap: usize, diagnostics: *Diagnostics) FileCompareError!DecodedPair {
     diagnostics.path = paths.before;
     var before = try first.decode(io, allocator, cap);
     errdefer before.deinit();
@@ -159,7 +159,7 @@ fn decodeInOrder(io: Io, allocator: Allocator, first: codec.FileInput, second: ?
     return .{ .before = before, .after = after };
 }
 
-fn preflightSheet(io: Io, allocator: Allocator, paths: Paths, sheet_path: []const u8, cap: usize, diagnostics: *Diagnostics) CompareError!void {
+fn preflightSheet(io: Io, allocator: Allocator, paths: Paths, sheet_path: []const u8, cap: usize, diagnostics: *Diagnostics) FileCompareError!void {
     diagnostics.path = sheet_path;
     try checkSheetDestination(io, .cwd(), paths, sheet_path);
     diagnostics.path = paths.before;
@@ -176,7 +176,7 @@ fn writeSheet(io: Io, allocator: Allocator, path: []const u8, pair: value.Pair, 
     const buffer = try allocator.alloc(u8, write_buffer_bytes);
     defer allocator.free(buffer);
     var writer = file.file.writer(io, buffer);
-    encodeSheet(io, allocator, pair, result.regions, result.moves, &writer.interface) catch |err| switch (err) {
+    encodeSheetWithIo(io, allocator, pair, result.regions, result.moves, &writer.interface) catch |err| switch (err) {
         error.WriteFailed => return writer.err orelse err,
         else => |other| return other,
     };
