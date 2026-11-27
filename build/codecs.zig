@@ -265,8 +265,9 @@ fn addDecoderSources(b: *Build, module: *Build.Module, target: Build.ResolvedTar
     module.addIncludePath(webp.path(""));
     const extra_flags: []const []const u8 = switch (mode) {
         .fixture => &.{ "-DHAVE_CONFIG_H", "-ffp-contract=off" },
-        .checked => &.{"-DWEBP_REDUCE_CSP"},
-        .shipped, .shipped_lto => &.{ "-DWEBP_REDUCE_CSP", "-Oz" },
+        // uidiff decodes WebP at full size only, so the rescaler is omitted.
+        .checked => &.{ "-DWEBP_REDUCE_CSP", "-DWEBP_REDUCE_SIZE" },
+        .shipped, .shipped_lto => &.{ "-DWEBP_REDUCE_CSP", "-DWEBP_REDUCE_SIZE", "-Oz" },
     };
     const webp_flags = webpFlags(b, extra_flags);
     const source: []const []const u8 = if (mode == .fixture)
