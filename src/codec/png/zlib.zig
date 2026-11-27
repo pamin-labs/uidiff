@@ -272,6 +272,44 @@ test "strip checksums describe the uncompressed bytes in stream order" {
     try std.testing.expectEqual(stream.adler, std.mem.readInt(u32, footer, .big));
 }
 
+test "a reused strip compresses as a fresh one does" {
+    // Matching reads up to a match length past the data in the window; a
+    // reused stream must find there only bytes it wrote for this strip, or
+    // a strip's output would depend on which worker compressed it.
+    var backing = std.testing.allocator;
+    var fresh: Strip = undefined;
+    try fresh.init(&backing);
+    defer fresh.deinit();
+    var reused: Strip = undefined;
+    try reused.init(&backing);
+    defer reused.deinit();
+    var prng: std.Random.DefaultPrng = .init(0x5715);
+    const random = prng.random();
+    const allocator = std.testing.allocator;
+    // The window is 64 KiB, so longer inputs reach nothing new.
+    const window = 64 * 1024;
+    const history = try allocator.alloc(u8, window / 2);
+    defer allocator.free(history);
+    const previous = try allocator.alloc(u8, window);
+    defer allocator.free(previous);
+    const input = try allocator.alloc(u8, window);
+    defer allocator.free(input);
+    const expected = try allocator.alloc(u8, Strip.outputBound(window));
+    defer allocator.free(expected);
+    const actual = try allocator.alloc(u8, Strip.outputBound(window));
+    defer allocator.free(actual);
+    for (previous) |*byte| byte.* = 'a' + random.uintLessThan(u8, 3);
+    for (0..8) |_| {
+        for (history) |*byte| byte.* = 'a' + random.uintLessThan(u8, 3);
+        const len = random.intRangeAtMost(usize, 8, input.len);
+        for (input[0..len]) |*byte| byte.* = 'a' + random.uintLessThan(u8, 3);
+        const want = try fresh.compress(history, input[0..len], expected, .sync);
+        _ = try reused.compress(history, previous, actual, .sync);
+        const got = try reused.compress(history, input[0..len], actual, .sync);
+        try std.testing.expectEqualSlices(u8, want.bytes, got.bytes);
+    }
+}
+
 test {
     std.testing.refAllDecls(@This());
 }

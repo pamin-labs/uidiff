@@ -490,6 +490,11 @@ fn zlibDeflate(b: *Build, zlib: *Build.Dependency) Build.LazyPath {
     source.replaceExactly(b.allocator, "configuration_table[s->level]", "configuration", 1);
     source.replaceExactly(b.allocator, "configuration_table[level]", "configuration", 5);
     source.replaceExactly(b.allocator, "level < 0 || level > 9 || strategy < 0 || strategy > Z_FIXED", "level != UIDIFF_PNG_COMPRESSION_LEVEL || strategy != Z_DEFAULT_STRATEGY", 2);
+    // deflateReset keeps the window's high-water mark, so matching read the
+    // bytes a stream's previous strip left past the lookahead, and a strip's
+    // output depended on which worker, and so how many CPUs, compressed it.
+    // Clearing the mark makes fill_window zero them as for a fresh stream.
+    source.replaceExactly(b.allocator, "    if (ret == Z_OK)\n        lm_init(strm->state);", "    if (ret == Z_OK) {\n        strm->state->high_water = 0;\n        lm_init(strm->state);\n    }", 1);
     return b.addWriteFiles().add("deflate.c", source.text);
 }
 
