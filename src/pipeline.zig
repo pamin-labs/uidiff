@@ -11,20 +11,27 @@ const Allocator = std.mem.Allocator;
 
 /// Configures the comparison and limits each file decode.
 pub const FileCompareOptions = struct {
+    /// Settings used by the comparison after decoding the inputs.
     compare: diff.Options = .{},
+    /// Per-image decode memory budget in bytes, clamped to uidiff.max_decode_bytes.
     max_decode_bytes: usize = value.max_decode_bytes,
 };
 
 /// The files one comparison reads and writes. Slices borrow the caller's.
 pub const Paths = struct {
+    /// Path to the before image.
     before: []const u8,
+    /// Path to the after image.
     after: []const u8,
     /// Where to write the annotated sheet, if requested.
     annotate: ?[]const u8 = null,
 };
 
 /// Holds the path of the file a failure concerns, borrowed from Paths.
-pub const Diagnostics = struct { path: ?[]const u8 = null };
+pub const Diagnostics = struct {
+    /// Borrowed input or sheet path associated with a failure, or null.
+    path: ?[]const u8 = null,
+};
 
 /// Failures laying out or encoding a streamed comparison sheet.
 pub const EncodeSheetError = annotate.RenderError || codec.EncodeError;

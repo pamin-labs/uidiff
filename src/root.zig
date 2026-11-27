@@ -1,4 +1,4 @@
-//! The byte-oriented comparison, report and annotation API.
+//! Compares images in memory or on disk and produces reports and annotated sheets.
 const std = @import("std");
 const value = @import("value.zig");
 const diff = @import("diff.zig");
@@ -21,35 +21,36 @@ pub const Pixel = value.Pixel;
 pub const Size = value.Size;
 /// Rectangle in device pixels.
 pub const Box = value.Box;
-/// The sides affected by a change.
+/// Classifies a region. This enum is non-exhaustive and switches must handle `_`.
 pub const Kind = value.Kind;
 /// A numbered change with boxes on the affected sides.
 pub const Region = value.Region;
 /// Selects the source image for a region or annotation.
 pub const Side = value.Side;
-/// The borrowed before and after images for a comparison.
+/// Borrows both images for the call. The returned Comparison holds no pixel references.
 pub const Pair = value.Pair;
 /// Settings for comparing decoded images.
 pub const CompareOptions = diff.Options;
 /// Settings for comparing files and limiting each decode.
 pub const FileCompareOptions = pipeline.FileCompareOptions;
-/// An owned set of numbered changes and the combined canvas dimensions.
+/// Owns numbered regions and moves and records the combined canvas dimensions.
 pub const Comparison = diff.Comparison;
-/// Input and scratch-space failures from diff.
+/// Invalid images, invalid scale, or an allocation failure during comparison.
 pub const CompareError = diff.CompareError;
 /// Device pixels per CSS pixel.
 pub const Scale = value.Scale;
-/// Space added around each reported box, in CSS pixels.
+/// Padding added around each reported box, in CSS pixels, before conversion
+/// to device pixels and clipping to the corresponding image.
 pub const region_padding = diff.region_padding;
-/// The most regions a comparison reports; nearby ones merge to fit.
+/// Upper bound on the number of reported regions after grouping.
 pub const max_regions = diff.max_regions;
 /// The encoded format identified by the decoder.
 pub const Format = codec.Format;
 /// An image with decoder-owned pixels, released by deinit.
 pub const Decoded = codec.Decoded;
-/// Malformed, unsupported, or over-limit encoded image inputs.
+/// Malformed, unsupported, or over-limit image inputs and decode allocation failures.
 pub const DecodeError = codec.DecodeError;
-/// Failures opening or reading an input file.
+/// Failures opening or reading an encoded file, including size and allocation failures.
 pub const ReadError = codec.ReadError;
 /// Allocation, invalid image or output failures while encoding.
 pub const EncodeError = codec.EncodeError;
@@ -57,19 +58,22 @@ pub const EncodeError = codec.EncodeError;
 pub const max_encoded_bytes = codec.max_encoded_bytes;
 /// Maximum source dimension in device pixels.
 pub const max_extent = value.max_extent;
-/// Maximum source area in device pixels.
+/// Maximum source pixel count.
 pub const max_pixels = value.max_pixels;
-/// Default per-image decode memory budget.
+/// Default and largest per-image decode memory budget, in bytes.
 pub const max_decode_bytes = value.max_decode_bytes;
-/// Decodes bounded PNG, JPEG, or WebP bytes. The caller owns the result.
+/// Decodes PNG, JPEG, or WebP bytes within max_encoded_bytes and max_decode_bytes.
+/// Release the result with Decoded.deinit.
 pub const decode = codec.decode;
-/// Reads and decodes a bounded image file. The caller owns the result.
+/// Reads and decodes a PNG, JPEG, or WebP file within max_encoded_bytes and
+/// max_decode_bytes. Release the result with Decoded.deinit.
 pub const decodeFile = codec.decodeFile;
-/// Reads a bounded image file without decoding it. The caller owns the bytes.
+/// Reads an image file without decoding it, up to max_encoded_bytes.
+/// Free the returned bytes with the supplied allocator.
 pub const readFile = codec.readFile;
-/// Writes a valid image as PNG.
+/// Encodes an RGBA8 image as PNG. The caller owns the writer and its flush.
 pub const encodePng = codec.encodePng;
-/// An owned side-by-side image of both inputs with their marks.
+/// Owns the RGBA8 pixels of an annotated sheet.
 pub const Sheet = annotate.Sheet;
 /// Invalid inputs, an oversized sheet, or an allocation failure from rendering.
 pub const RenderError = annotate.RenderError;
@@ -81,22 +85,26 @@ pub const DevicePx = value.DevicePx;
 pub const RowRange = value.RowRange;
 /// A length in CSS pixels.
 pub const CssPx = value.CssPx;
-/// Renders the same styled comparison sheet as file annotation.
+/// Renders an RGBA8 sheet from the source images, regions, and moves.
+/// Release the result with Sheet.deinit and the supplied allocator.
 pub const renderSheet = annotate.renderSheet;
-/// Streams a styled comparison sheet as PNG without a full canvas allocation.
+/// Streams a comparison sheet as PNG without allocating the full sheet.
+/// The caller owns the writer and its flush.
 pub const encodeSheet = pipeline.encodeSheet;
-/// The files one comparison reads and writes.
+/// Borrows the two input paths and the optional sheet destination.
 pub const Paths = pipeline.Paths;
-/// The path of the file a failure concerns.
+/// Borrows the path of the file a failure concerns, when one is known.
 pub const Diagnostics = pipeline.Diagnostics;
 /// Failures laying out or encoding a streamed sheet.
 pub const EncodeSheetError = pipeline.EncodeSheetError;
-/// File, codec, comparison and sheet failures.
+/// Failures reading or decoding the inputs, comparing them, or producing the sheet.
 pub const FileCompareError = pipeline.FileCompareError;
-/// Decodes two files, compares them and writes the sheet if asked. The caller owns the result.
+/// Decodes two files, compares them, and optionally writes the sheet atomically.
+/// Release the result with Comparison.deinit and the supplied allocator.
 pub const compareFiles = pipeline.compareFiles;
 
-/// Compares a pair of borrowed RGBA8 values. The caller owns the result.
+/// Compares borrowed RGBA8 images. Release the result with Comparison.deinit
+/// and the supplied allocator.
 pub fn compare(allocator: std.mem.Allocator, pair: Pair, options: CompareOptions) CompareError!Comparison {
     return diff.compare(allocator, pair.before, pair.after, options);
 }

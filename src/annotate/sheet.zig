@@ -55,11 +55,14 @@ pub const RenderError = plan.RenderError;
 
 /// An owned RGBA8 sheet in whole sheet pixels, released by deinit.
 pub const Sheet = struct {
+    /// Owned RGBA8 pixels in row-major order.
     pixels: []Pixel,
+    /// Number of sheet pixels in each row.
     width: usize,
+    /// Number of rows in the sheet.
     height: usize,
 
-    /// Releases the pixels with the allocator passed to render.
+    /// Releases the pixels with the allocator passed to renderSheet.
     pub fn deinit(self: Sheet, allocator: Allocator) void {
         allocator.free(self.pixels);
     }

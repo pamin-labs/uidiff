@@ -7,7 +7,9 @@ pub const Pixel = [4]u8;
 
 /// Image dimensions in device pixels.
 pub const Size = struct {
+    /// Number of columns in device pixels.
     width: usize,
+    /// Number of rows in device pixels.
     height: usize,
 
     /// Returns the pixel count if both axes and their product are supported.
@@ -20,8 +22,11 @@ pub const Size = struct {
 
 /// A borrowed, tightly packed, row-major RGBA8 image in device pixels.
 pub const Image = struct {
+    /// Number of pixels in each row.
     width: usize,
+    /// Number of rows in the image.
     height: usize,
+    /// Borrowed row-major data with exactly width * height pixels for a valid image.
     pixels: []const Pixel,
 
     /// A malformed packed image or encoded stream.
@@ -50,17 +55,17 @@ pub const Image = struct {
         return true;
     }
 
-    /// Returns row y. Asserts y is less than height on a valid image.
+    /// Borrows row y. Requires a valid image and y less than height.
     pub fn row(self: Image, y: usize) []const Pixel {
         return self.pixels[y * self.width ..][0..self.width];
     }
 
-    /// Borrows a horizontal segment of a row in a validated image.
+    /// Borrows a segment wholly within row y of a valid image.
     pub fn rowSegment(self: Image, y: usize, left: usize, width: usize) []const Pixel {
         return self.row(y)[left..][0..width];
     }
 
-    /// Borrows bytes of a row segment within a validated image.
+    /// Borrows the RGBA bytes of a segment wholly within row y of a valid image.
     pub fn rowBytes(self: Image, y: usize, left: usize, width: usize) []const u8 {
         return std.mem.sliceAsBytes(self.rowSegment(y, left, width));
     }
@@ -68,9 +73,12 @@ pub const Image = struct {
 
 /// The borrowed source images in comparison order.
 pub const Pair = struct {
+    /// Borrowed image from before the change.
     before: Image,
+    /// Borrowed image from after the change.
     after: Image,
 
+    /// Returns the borrowed image for the selected side.
     pub fn get(self: Pair, side: region.Side) Image {
         return switch (side) {
             .before => self.before,

@@ -27,14 +27,16 @@ pub const Options = struct {
 
 /// Owns the returned regions and moves.
 pub const Comparison = struct {
+    /// Numbered regions in reading order.
     regions: []const value.Region,
+    /// Aligned blocks detected at different vertical positions.
     moves: []const value.Move = &.{},
     /// The larger width of the two inputs, in device pixels.
     width: usize,
     /// The larger height of the two inputs, in device pixels.
     height: usize,
 
-    /// Releases the regions and moves with the allocator passed to compare.
+    /// Releases the regions and moves with the allocator passed to compare or compareFiles.
     pub fn deinit(self: Comparison, allocator: Allocator) void {
         allocator.free(self.regions);
         allocator.free(self.moves);

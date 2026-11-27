@@ -39,8 +39,11 @@ comptime {
 
 /// An image with decoder-owned pixels, released by deinit.
 pub const Decoded = struct {
+    /// View of the decoded RGBA8 pixels, valid until deinit.
     image: Image,
+    /// Format identified in the encoded input.
     format: Format,
+    /// Allocator retained for releasing the decoder's pixels.
     allocator: Allocator,
 
     /// Releases pixels with the decoder that allocated them.

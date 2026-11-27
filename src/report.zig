@@ -3,19 +3,46 @@ const std = @import("std");
 const value = @import("value.zig");
 
 /// Version-one coordinates in device pixels.
-pub const Box = struct { x: f64, y: f64, width: f64, height: f64 };
+pub const Box = struct {
+    /// Left edge in source device pixels.
+    x: f64,
+    /// Top edge in source device pixels.
+    y: f64,
+    /// Horizontal extent in source device pixels.
+    width: f64,
+    /// Vertical extent in source device pixels.
+    height: f64,
+};
 
 /// Version-one region. An absent side is serialized as null.
-pub const Region = struct { number: usize, kind: value.Kind, before: ?Box, after: ?Box };
+pub const Region = struct {
+    /// One-based region number in reading order.
+    number: usize,
+    /// Classification of the region.
+    kind: value.Kind,
+    /// Box on the before image, or null when absent on that side.
+    before: ?Box,
+    /// Box on the after image, or null when absent on that side.
+    after: ?Box,
+};
 
 /// Version-one row start and length in source device pixels.
-pub const RowRange = struct { y: usize, height: usize };
+pub const RowRange = struct {
+    /// First row of the range in source device pixels.
+    y: usize,
+    /// Number of rows in the half-open range.
+    height: usize,
+};
 
 /// Version-one alignment record in source device pixels.
 pub const Move = struct {
+    /// Aligned rows on the before image.
     before: RowRange,
+    /// Aligned rows on the after image.
     after: RowRange,
+    /// Left edge of the source columns shared by both sides.
     x: usize,
+    /// Number of source columns in the block.
     width: usize,
 
     fn convert(move: value.Move) Move {
@@ -29,7 +56,18 @@ pub const Move = struct {
 };
 
 /// Versioned response envelope with the combined canvas dimensions.
-pub const Report = struct { version: u32, regions: []const Region, width: usize, height: usize, moves: []const Move = &.{} };
+pub const Report = struct {
+    /// Version of the wire schema.
+    version: u32,
+    /// Numbered regions in reading order.
+    regions: []const Region,
+    /// Larger source width, in device pixels.
+    width: usize,
+    /// Larger source height, in device pixels.
+    height: usize,
+    /// Aligned blocks detected at different vertical positions.
+    moves: []const Move = &.{},
+};
 
 /// Report failures, including a coordinate outside the whole-pixel domain.
 pub const PixelWriteError = std.Io.Writer.Error || error{InvalidRegionBox};

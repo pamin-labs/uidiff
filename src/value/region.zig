@@ -80,9 +80,13 @@ pub const DevicePx = enum(usize) {
 
 /// A block aligned at different vertical positions, within the given columns.
 pub const Move = struct {
+    /// Aligned rows on the before image.
     before: RowRange,
+    /// Aligned rows on the after image.
     after: RowRange,
+    /// Left edge of the source columns shared by both sides.
     x: DevicePx,
+    /// Number of source columns in the block.
     width: DevicePx,
 
     /// Returns the absolute vertical displacement in source pixels.
@@ -112,7 +116,9 @@ pub const Region = struct {
 
 fn PixelRows(comptime _: PixelSpace) type {
     return struct {
+        /// First row in the range.
         y: usize,
+        /// Number of rows in the half-open range.
         height: usize,
     };
 }
