@@ -30,7 +30,7 @@ pub const Diagnostics = struct { path: ?[]const u8 = null };
 pub const EncodeSheetError = annotate.RenderError || codec.EncodeError;
 
 /// Failures rendering, encoding or writing the annotated sheet.
-pub const WriteError = EncodeSheetError || Io.Dir.CreateFileAtomicError ||
+const WriteError = EncodeSheetError || Io.Dir.CreateFileAtomicError ||
     Io.File.Atomic.ReplaceError || Io.File.Writer.Error || Io.Dir.StatFileError || error{ IsDir, SheetIsInput };
 
 /// File, codec, comparison and sheet failures.

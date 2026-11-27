@@ -36,7 +36,7 @@ pub fn pairCardGrid(boxes: []candidate.Candidate, pair: value.Pair, scale: value
         bottom = @max(bottom, slot.bottom());
     }
     const old_to_left = shiftedGrid(pair, row, bounds.deviceIndex(top), bounds.deviceIndex(bottom));
-    if (!old_to_left and !shiftedGrid(pair.reversed(), row, bounds.deviceIndex(top), bounds.deviceIndex(bottom))) return;
+    if (!old_to_left and !shiftedGrid(value.reversePair(pair), row, bounds.deviceIndex(top), bounds.deviceIndex(bottom))) return;
     // Each translated slot has an exact counterpart. The only unpaired
     // slot is the card at the start of the row, in either direction.
     boxes[0].region = if (old_to_left) .{ .before = first } else .{ .after = first };

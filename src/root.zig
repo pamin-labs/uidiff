@@ -43,6 +43,8 @@ pub const Scale = value.Scale;
 pub const region_padding = diff.region_padding;
 /// The most regions a comparison reports; nearby ones merge to fit.
 pub const max_regions = diff.max_regions;
+/// The encoded format identified by the decoder.
+pub const Format = codec.Format;
 /// An image with decoder-owned pixels, released by deinit.
 pub const Decoded = codec.Decoded;
 /// Malformed, unsupported, or over-limit encoded image inputs.
@@ -75,6 +77,10 @@ pub const RenderError = annotate.RenderError;
 pub const Move = value.Move;
 /// One horizontal position or extent in source device pixels.
 pub const DevicePx = value.DevicePx;
+/// A row range in source device pixels.
+pub const RowRange = value.RowRange;
+/// A length in CSS pixels.
+pub const CssPx = value.CssPx;
 /// Renders the same styled comparison sheet as file annotation.
 pub const renderSheet = annotate.renderSheet;
 /// Streams a styled comparison sheet as PNG without a full canvas allocation.
@@ -83,8 +89,8 @@ pub const encodeSheet = pipeline.encodeSheet;
 pub const Paths = pipeline.Paths;
 /// The path of the file a failure concerns.
 pub const Diagnostics = pipeline.Diagnostics;
-/// Failures rendering, encoding or writing the annotated sheet.
-pub const WriteError = pipeline.WriteError;
+/// Failures laying out or encoding a streamed sheet.
+pub const EncodeSheetError = pipeline.EncodeSheetError;
 /// File, codec, comparison and sheet failures.
 pub const FileCompareError = pipeline.FileCompareError;
 /// Decodes two files, compares them and writes the sheet if asked. The caller owns the result.

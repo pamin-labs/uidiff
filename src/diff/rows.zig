@@ -57,7 +57,7 @@ pub fn matchBands(allocator: Allocator, before: band.Keys, after: band.Keys, lim
         if (limits.sample) |sample| {
             if (insertion.panelInsertion(before, after, main.prefix, limits, bands)) |aligned| return aligned;
             var reversed = limits;
-            const reversed_sample: band.Sample = .{ .pair = sample.pair.reversed(), .columns = sample.columns };
+            const reversed_sample: band.Sample = .{ .pair = value.reversePair(sample.pair), .columns = sample.columns };
             reversed.sample = &reversed_sample;
             if (insertion.panelInsertion(after, before, main.prefix, reversed, bands)) |aligned| {
                 for (aligned) |*row_band| {

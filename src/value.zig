@@ -48,6 +48,9 @@ pub const max_encoded_bytes = image.max_encoded_bytes;
 /// The most memory one decode may hold, in bytes.
 pub const max_decode_bytes = image.max_decode_bytes;
 
+/// Returns the same borrowed images with their sides exchanged.
+pub const reversePair = image.reversePair;
+
 /// Allocates storage that its owner will fully initialize.
 pub const allocUnfilled = unfilled.allocUnfilled;
 /// Releases storage obtained from allocUnfilled.

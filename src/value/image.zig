@@ -77,10 +77,6 @@ pub const Pair = struct {
             .after => self.after,
         };
     }
-
-    pub fn reversed(self: Pair) Pair {
-        return .{ .before = self.after, .after = self.before };
-    }
 };
 
 /// Packed RGBA8 lanes are 4 on SSE2 and NEON, and 8 on AVX2. Without SIMD the compiler splits the 4-lane fallback into scalars.
@@ -100,6 +96,11 @@ pub const max_encoded_bytes = max_pixels * @sizeOf(Pixel) / 100 * 101;
 /// refuses a header whose budget is larger and charges every allocation
 /// against that budget. WebP uses this cap for the output and scratch buffers.
 pub const max_decode_bytes = 3 * 1024 * 1024 * 1024;
+
+/// Returns the same borrowed images with their sides exchanged.
+pub fn reversePair(pair: Pair) Pair {
+    return .{ .before = pair.after, .after = pair.before };
+}
 
 test "pixel count accepts a 4K tall page and rejects overflow or empty axes" {
     try std.testing.expectEqual(@as(?usize, max_pixels), (Size{ .width = 4096, .height = max_pixels / 4096 }).pixelCount());
