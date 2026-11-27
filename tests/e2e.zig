@@ -110,7 +110,7 @@ test "an annotated sheet is written atomically beside a normal report" {
     defer source.deinit();
     var target = try uidiff.decodeFile(testing.io, allocator, after);
     defer target.deinit();
-    const changes = try uidiff.compare(allocator, source.image, target.image, .{ .scale = .{ .factor = fixtures.scale } });
+    const changes = try uidiff.compare(allocator, .{ .before = source.image, .after = target.image }, .{ .scale = .{ .factor = fixtures.scale } });
     defer changes.deinit(allocator);
     const expected = try uidiff.renderComparisonSheet(allocator, source.image, target.image, changes.regions, changes.moves);
     defer expected.deinit(allocator);

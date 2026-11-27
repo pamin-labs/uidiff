@@ -239,7 +239,7 @@ test "subpixel glyph coverage changes preserve borders and pale recolours" {
 test "a whole-image change smaller than the noise minimum is reported" {
     const white: Image = .{ .width = 1, .height = 1, .pixels = &.{canvas.white} };
     const black: Image = .{ .width = 1, .height = 1, .pixels = &.{.{ 0, 0, 0, 255 }} };
-    const result = try compare(std.testing.allocator, white, black, .{});
+    const result = try compare(std.testing.allocator, .{ .before = white, .after = black }, .{});
     defer result.deinit(std.testing.allocator);
     try expect.checkRegions(result.regions, &.{.{ .before = Box.fromPixels(0, 0, 1, 1), .after = Box.fromPixels(0, 0, 1, 1) }});
 }

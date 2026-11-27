@@ -16,19 +16,13 @@ pub const max_regions = regions.max_regions;
 
 const ScaleError = error{InvalidScale};
 
-/// The validated comparison scale returned by Options.check.
+/// The validated scale consumed by compareChecked.
 pub const Checked = struct { scale: Scale };
 
 /// Parameters for comparing decoded images.
 pub const Options = struct {
     /// Device pixels per CSS pixel.
     scale: Scale = .one,
-
-    /// Rejects a non-positive or non-finite scale, once, before comparison.
-    pub fn check(self: Options) ScaleError!Checked {
-        if (!self.scale.isValid()) return error.InvalidScale;
-        return .{ .scale = self.scale };
-    }
 };
 
 /// Owns the returned regions and moves.
@@ -58,9 +52,15 @@ pub const CompareError = Allocator.Error || ScaleError || value.Image.Invalid;
 /// Space added around each reported box, in CSS pixels.
 pub const region_padding = regions.padding.count();
 
+/// Rejects a non-positive or non-finite scale before comparison.
+pub fn checkOptions(options: Options) ScaleError!Checked {
+    if (!options.scale.isValid()) return error.InvalidScale;
+    return .{ .scale = options.scale };
+}
+
 /// Compares packed RGBA8 images. The caller owns the returned comparison.
 pub fn compare(allocator: Allocator, before: Image, after: Image, options: Options) CompareError!Comparison {
-    return compareChecked(allocator, before, after, try options.check());
+    return compareChecked(allocator, before, after, try checkOptions(options));
 }
 
 /// Compares packed RGBA8 images with options already checked. The caller

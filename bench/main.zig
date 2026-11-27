@@ -36,8 +36,8 @@ const rounds = 15;
 pub fn main(init: std.process.Init) BenchError!void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     if (args.len != 4 and args.len != 5) return error.InvalidArguments;
-    var options: uidiff.Options = .{};
-    if (args.len == 5) options.scale = uidiff.Scale.parse(args[4]) orelse return error.InvalidArguments;
+    var options: uidiff.FileCompareOptions = .{};
+    if (args.len == 5) options.compare.scale = uidiff.Scale.parse(args[4]) orelse return error.InvalidArguments;
     // The CLI's allocator, so the pipeline figure is the command's own.
     const allocator = std.heap.c_allocator;
     const io = init.io;
@@ -47,7 +47,7 @@ pub fn main(init: std.process.Init) BenchError!void {
     };
     const clock: Io.Clock = if (resolution.nanoseconds == 0) .awake else .cpu_process;
     var stages: Stages = .{};
-    try measureStages(io, clock, allocator, args[2], args[3], options, &stages);
+    try measureStages(io, clock, allocator, args[2], args[3], options.compare, &stages);
     var pipeline_ms: [rounds]f64 = undefined;
     for (&pipeline_ms) |*total| {
         const start = Io.Clock.Timestamp.now(io, clock);
@@ -75,7 +75,7 @@ pub fn main(init: std.process.Init) BenchError!void {
     try stdout.interface.flush();
 }
 
-fn measureStages(io: Io, clock: Io.Clock, allocator: std.mem.Allocator, before_path: []const u8, after_path: []const u8, options: uidiff.Options, stages: *Stages) BenchError!void {
+fn measureStages(io: Io, clock: Io.Clock, allocator: std.mem.Allocator, before_path: []const u8, after_path: []const u8, options: uidiff.CompareOptions, stages: *Stages) BenchError!void {
     const before_bytes = try uidiff.readFile(io, allocator, before_path);
     defer allocator.free(before_bytes);
     const after_bytes = try uidiff.readFile(io, allocator, after_path);
@@ -91,7 +91,7 @@ fn measureStages(io: Io, clock: Io.Clock, allocator: std.mem.Allocator, before_p
         defer after.deinit();
         dec_time.* = elapsed(start, io);
         const compare_start = Io.Clock.Timestamp.now(io, clock);
-        const result = try uidiff.compare(allocator, before.image, after.image, options);
+        const result = try uidiff.compare(allocator, .{ .before = before.image, .after = after.image }, options);
         defer result.deinit(allocator);
         cmp_time.* = elapsed(compare_start, io);
     }
@@ -102,7 +102,7 @@ fn measureStages(io: Io, clock: Io.Clock, allocator: std.mem.Allocator, before_p
     defer before.deinit();
     var after = try uidiff.decode(allocator, after_bytes);
     defer after.deinit();
-    const result = try uidiff.compare(allocator, before.image, after.image, options);
+    const result = try uidiff.compare(allocator, .{ .before = before.image, .after = after.image }, options);
     defer result.deinit(allocator);
     for (&stages.sheet) |*sheet_time| {
         encoded.clearRetainingCapacity();

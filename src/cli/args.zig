@@ -33,7 +33,7 @@ pub const Info = enum { help, version };
 /// Parsed paths and output options. Path slices borrow the arguments.
 pub const Command = struct {
     paths: uidiff.Paths,
-    options: uidiff.Options = .{},
+    options: uidiff.FileCompareOptions = .{},
     output: Output = .count,
 };
 
@@ -117,7 +117,7 @@ pub fn parse(args: []const [:0]const u8) ParseResult {
         if (i == args.len or args[i].len == 0 or std.mem.startsWith(u8, args[i], "--")) return invalid(arg, .missing_value);
         if (flag == .scale) {
             const scale = parseScale(args[i]) orelse return invalid(args[i], .invalid_scale);
-            parsed.options.scale = scale;
+            parsed.options.compare.scale = scale;
         } else parsed.paths.annotate = args[i];
     }
     return .{ .command = parsed };
@@ -151,7 +151,7 @@ fn fuzzParse(_: void, smith: *std.testing.Smith) !void {
     };
     try std.testing.expectEqualStrings(args[1], command.paths.before);
     try std.testing.expectEqualStrings(args[2], command.paths.after);
-    try std.testing.expect(command.options.scale.isValid());
+    try std.testing.expect(command.options.compare.scale.isValid());
 }
 
 test "usage agrees with every flag spelling" {
@@ -166,7 +166,7 @@ test "argument order preserves scale and rejects repeated flags" {
     const result = parse(&.{ "uidiff", "before", "after", "--json", "--scale", "2", "--annotate", "sheet.png" });
     try std.testing.expect(result == .command);
     const args = result.command;
-    try std.testing.expectEqual(@as(f64, 2), args.options.scale.factor);
+    try std.testing.expectEqual(@as(f64, 2), args.options.compare.scale.factor);
     try std.testing.expect(args.output == .json);
     try std.testing.expectEqualStrings("sheet.png", args.paths.annotate.?);
     const repeated = parse(&.{ "uidiff", "before", "after", "--annotate", "a.png", "--annotate", "b.png" });
@@ -191,7 +191,7 @@ test "argument order preserves scale and rejects repeated flags" {
 test "a scale that is not a plain decimal is a usage error" {
     const valid = parse(&.{ "uidiff", "a", "b", "--scale", "1.5" });
     try std.testing.expect(valid == .command);
-    try std.testing.expectEqual(@as(f64, 1.5), valid.command.options.scale.factor);
+    try std.testing.expectEqual(@as(f64, 1.5), valid.command.options.compare.scale.factor);
     const huge: [400:0]u8 = @splat('9');
     for ([_][:0]const u8{ "1e2", "nan", "-1", &huge }) |text| {
         const result = parse(&.{ "uidiff", "a", "b", "--scale", text });

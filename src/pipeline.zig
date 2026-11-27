@@ -10,19 +10,9 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 /// Configures the comparison and limits each file decode.
-pub const Options = struct {
-    scale: value.Scale = .one,
+pub const FileCompareOptions = struct {
+    compare: diff.Options = .{},
     max_decode_bytes: usize = value.max_decode_bytes,
-
-    /// Returns the settings used by the pixel comparison.
-    pub fn comparison(self: Options) diff.Options {
-        return .{ .scale = self.scale };
-    }
-
-    /// Checks the comparison settings before opening the inputs.
-    pub fn check(self: Options) error{InvalidScale}!diff.Checked {
-        return self.comparison().check();
-    }
 };
 
 /// The files one comparison reads and writes. Slices borrow the caller's.
@@ -97,9 +87,9 @@ const write_buffer_bytes = 64 * 1024;
 /// Checks the options, decodes both files, compares them, and writes the
 /// sheet when paths.annotate is set. On failure, diagnostics names the file
 /// concerned, or null when no file is. The caller owns the comparison.
-pub fn compareFiles(io: Io, allocator: Allocator, paths: Paths, options: Options, diagnostics: *Diagnostics) CompareError!diff.Comparison {
+pub fn compareFiles(io: Io, allocator: Allocator, paths: Paths, options: FileCompareOptions, diagnostics: *Diagnostics) CompareError!diff.Comparison {
     diagnostics.path = null;
-    const checked = try options.check();
+    const checked = try diff.checkOptions(options.compare);
     if (paths.annotate) |path| try preflightSheet(io, allocator, paths, path, options.max_decode_bytes, diagnostics);
     var shared: SharedAllocator = .{ .io = io, .backing = allocator };
     var pair = try loadPair(io, &shared, paths, options.max_decode_bytes, diagnostics);
@@ -239,7 +229,7 @@ test "sheet destination refuses both inputs and their hard links" {
 
 test "an invalid scale clears file diagnostics before loading" {
     var diagnostics: Diagnostics = .{ .path = "stale" };
-    try std.testing.expectError(error.InvalidScale, compareFiles(std.testing.io, std.testing.allocator, .{ .before = "before", .after = "after" }, .{ .scale = .{ .factor = 0 } }, &diagnostics));
+    try std.testing.expectError(error.InvalidScale, compareFiles(std.testing.io, std.testing.allocator, .{ .before = "before", .after = "after" }, .{ .compare = .{ .scale = .{ .factor = 0 } } }, &diagnostics));
     try std.testing.expectEqual(@as(?[]const u8, null), diagnostics.path);
 }
 

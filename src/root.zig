@@ -27,8 +27,12 @@ pub const Kind = value.Kind;
 pub const Region = value.Region;
 /// Selects the source image for a region or annotation.
 pub const Side = value.Side;
-/// Parameters for comparison and file decoding.
-pub const Options = pipeline.Options;
+/// The borrowed before and after images for a comparison.
+pub const Pair = value.Pair;
+/// Settings for comparing decoded images.
+pub const CompareOptions = diff.Options;
+/// Settings for comparing files and limiting each decode.
+pub const FileCompareOptions = pipeline.FileCompareOptions;
 /// An owned set of numbered changes and the combined canvas dimensions.
 pub const Comparison = diff.Comparison;
 /// Input and scratch-space failures from diff.
@@ -87,8 +91,8 @@ pub const CompareFilesError = pipeline.CompareError;
 pub const compareFiles = pipeline.compareFiles;
 
 /// Compares a pair of borrowed RGBA8 values. The caller owns the result.
-pub fn compare(allocator: std.mem.Allocator, before: Image, after: Image, options: Options) CompareError!Comparison {
-    return diff.compare(allocator, before, after, options.comparison());
+pub fn compare(allocator: std.mem.Allocator, pair: Pair, options: CompareOptions) CompareError!Comparison {
+    return diff.compare(allocator, pair.before, pair.after, options);
 }
 
 test "module roots expose their API" {

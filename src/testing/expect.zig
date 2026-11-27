@@ -37,7 +37,7 @@ pub fn checkRegions(actual: []const uidiff.Region, expected: []const uidiff.Regi
 
 /// Compares two procedural canvases at the supplied scale.
 pub fn compareCanvases(before: Canvas, after: Canvas, scale: f64) uidiff.CompareError!uidiff.Comparison {
-    return uidiff.compare(std.testing.allocator, before.view, after.view, .{ .scale = .{ .factor = scale } });
+    return uidiff.compare(std.testing.allocator, .{ .before = before.view, .after = after.view }, .{ .scale = .{ .factor = scale } });
 }
 
 /// Checks all reported regions against the expected boxes.
