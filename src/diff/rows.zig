@@ -54,17 +54,18 @@ pub fn matchBands(allocator: Allocator, before: band.Keys, after: band.Keys, lim
     const viewport = before.len == after.len;
     if (viewport and main.prefix != 0) {
         if (recolour.positionalPaintBands(before, after, main.prefix, limits, bands)) |aligned| return aligned;
-    }
-    if (viewport and main.prefix != 0 and limits.images != null) {
-        if (insertion.panelInsertion(before, after, main.prefix, limits, bands)) |aligned| return aligned;
-        var reversed = limits;
-        reversed.images = .{ limits.images.?[1], limits.images.?[0] };
-        if (insertion.panelInsertion(after, before, main.prefix, reversed, bands)) |aligned| {
-            for (aligned) |*row_band| {
-                std.mem.swap(usize, &row_band.before, &row_band.after);
-                std.mem.swap(usize, &row_band.removed, &row_band.added);
+        if (limits.sample) |sample| {
+            if (insertion.panelInsertion(before, after, main.prefix, limits, bands)) |aligned| return aligned;
+            var reversed = limits;
+            const reversed_sample: band.Sample = .{ .pair = sample.pair.reversed(), .columns = sample.columns };
+            reversed.sample = &reversed_sample;
+            if (insertion.panelInsertion(after, before, main.prefix, reversed, bands)) |aligned| {
+                for (aligned) |*row_band| {
+                    std.mem.swap(usize, &row_band.before, &row_band.after);
+                    std.mem.swap(usize, &row_band.removed, &row_band.added);
+                }
+                return aligned;
             }
-            return aligned;
         }
     }
     const positional = if (viewport)
@@ -107,8 +108,8 @@ pub fn matchBands(allocator: Allocator, before: band.Keys, after: band.Keys, lim
         // reaching the end of the column can be an insertion and clipping.
         for (before[edit.end..], after[edit.end..], edit.end..) |old, new, y| {
             if (old == new and anchors.isContent(old, old_background, new_background)) {
-                if (limits.images) |images| {
-                    if (y >= before.len - before.len / chrome.footer_zone_divisor and recolour.flatPaint(images[0], y, y + 1, 0, images[0].width)) break;
+                if (limits.sample) |sample| {
+                    if (y >= before.len - before.len / chrome.footer_zone_divisor and recolour.flatPaint(sample.pair.before, y, y + 1, 0, sample.pair.before.width)) break;
                 }
                 if (edit.cost <= distance + 2 * edit.limit) return null;
                 break;
@@ -275,11 +276,11 @@ test "inserting and deleting above a divider preserves the deletion" {
     }
     const a: value.Image = .{ .width = width, .height = height, .pixels = std.mem.bytesAsSlice(value.Pixel, std.mem.asBytes(&old)) };
     const b: value.Image = .{ .width = width, .height = height, .pixels = std.mem.bytesAsSlice(value.Pixel, std.mem.asBytes(&new)) };
-    const limits: band.Limits = .{ .scroll = 2, .replacement = 24, .images = .{ a, b }, .left = 24, .width = 48 };
+    const limits: band.Limits = .{ .scroll = 2, .replacement = 24, .sample = &.{ .pair = .{ .before = a, .after = b }, .columns = .{ .left = 24, .width = 48 } } };
     var before: [height]u64 = undefined;
     var after: [height]u64 = undefined;
-    keys(a, limits.left, limits.width, &before);
-    keys(b, limits.left, limits.width, &after);
+    keys(a, limits.sample.?.columns.left, limits.sample.?.columns.width, &before);
+    keys(b, limits.sample.?.columns.left, limits.sample.?.columns.width, &after);
     var bands: [2 * height + 1]band.Band = undefined;
     try std.testing.expect(insertion.panelInsertion(&before, &after, first, limits, &bands) == null);
     var workspace: Workspace = .{};

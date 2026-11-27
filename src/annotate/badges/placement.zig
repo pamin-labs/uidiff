@@ -17,7 +17,7 @@ pub fn placeOutside(mark: Rect, bounds: Rect, diameter: usize, obstacles: []cons
 }
 
 fn placeWithin(mark: Rect, bounds: Rect, diameter: usize, obstacles: []const Rect, limit: usize) ?Rect {
-    if (bounds.w < diameter or bounds.h < diameter) return null;
+    if (bounds.width < diameter or bounds.height < diameter) return null;
     const d: isize = @intCast(diameter);
     const max_x: isize = @intCast(bounds.right() - diameter);
     const max_y: isize = @intCast(bounds.bottom() - diameter);
@@ -83,7 +83,7 @@ fn consider(mark: Rect, bounds: Rect, diameter: usize, x: isize, y: isize, obsta
     const left = std.math.cast(usize, x) orelse return;
     const top = std.math.cast(usize, y) orelse return;
     if (left < bounds.x or top < bounds.y or left + diameter > bounds.right() or top + diameter > bounds.bottom()) return;
-    const candidate: Rect = .{ .x = left, .y = top, .w = diameter, .h = diameter };
+    const candidate: Rect = .{ .x = left, .y = top, .width = diameter, .height = diameter };
     const distance = candidate.distanceSquared(mark);
     if (distance >= best.distance or candidate.overlaps(mark)) return;
     for (obstacles) |obstacle| if (candidate.overlaps(obstacle)) return;
@@ -91,19 +91,19 @@ fn consider(mark: Rect, bounds: Rect, diameter: usize, x: isize, y: isize, obsta
 }
 
 test "blocked badge ties preserve top, left, bottom and right probe order" {
-    const mark: Rect = .{ .x = 10, .y = 10, .w = 6, .h = 6 };
-    const bounds: Rect = .{ .x = 0, .y = 0, .w = 30, .h = 30 };
+    const mark: Rect = .{ .x = 10, .y = 10, .width = 6, .height = 6 };
+    const bounds: Rect = .{ .x = 0, .y = 0, .width = 30, .height = 30 };
     const diameter = 4;
     const expected = [_]Rect{
-        .{ .x = 10, .y = 0, .w = diameter, .h = diameter },
-        .{ .x = 0, .y = 10, .w = diameter, .h = diameter },
-        .{ .x = 10, .y = 22, .w = diameter, .h = diameter },
-        .{ .x = 22, .y = 10, .w = diameter, .h = diameter },
+        .{ .x = 10, .y = 0, .width = diameter, .height = diameter },
+        .{ .x = 0, .y = 10, .width = diameter, .height = diameter },
+        .{ .x = 10, .y = 22, .width = diameter, .height = diameter },
+        .{ .x = 22, .y = 10, .width = diameter, .height = diameter },
     };
     const blocked = [_]Rect{
-        .{ .x = 0, .y = 0, .w = bounds.w, .h = diameter },
-        .{ .x = 0, .y = 0, .w = diameter, .h = bounds.h },
-        .{ .x = 0, .y = 22, .w = bounds.w, .h = bounds.h - 22 },
+        .{ .x = 0, .y = 0, .width = bounds.width, .height = diameter },
+        .{ .x = 0, .y = 0, .width = diameter, .height = bounds.height },
+        .{ .x = 0, .y = 22, .width = bounds.width, .height = bounds.height - 22 },
     };
     for (expected, 0..) |spot, n| {
         try std.testing.expectEqual(@as(?Rect, spot), place(mark, bounds, diameter, blocked[0..n]));

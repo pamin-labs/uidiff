@@ -1,5 +1,6 @@
 //! Image dimensions and borrowed RGBA8 pixels shared across layers.
 const std = @import("std");
+const region = @import("region.zig");
 
 /// Red, green, blue and alpha channels in byte order.
 pub const Pixel = [4]u8;
@@ -38,12 +39,11 @@ pub const Image = struct {
 
     /// Reports whether every pixel has full alpha coverage.
     pub fn isOpaque(self: Image) bool {
-        const lanes = std.simd.suggestVectorLength(u32) orelse 4;
-        const Words = @Vector(lanes, u32);
+        const Words = @Vector(pixel_lanes, u32);
         const alpha: Words = @splat(@bitCast(Pixel{ 0, 0, 0, 255 }));
         var i: usize = 0;
-        while (i + lanes <= self.pixels.len) : (i += lanes) {
-            const rgba: Words = @bitCast(self.pixels[i..][0..lanes].*);
+        while (i + pixel_lanes <= self.pixels.len) : (i += pixel_lanes) {
+            const rgba: Words = @bitCast(self.pixels[i..][0..pixel_lanes].*);
             if (!@reduce(.And, rgba & alpha == alpha)) return false;
         }
         for (self.pixels[i..]) |p| if (p[3] != 255) return false;
@@ -65,6 +65,26 @@ pub const Image = struct {
         return std.mem.sliceAsBytes(self.rowSegment(y, left, width));
     }
 };
+
+/// The borrowed source images in comparison order.
+pub const Pair = struct {
+    before: Image,
+    after: Image,
+
+    pub fn get(self: Pair, side: region.Side) Image {
+        return switch (side) {
+            .before => self.before,
+            .after => self.after,
+        };
+    }
+
+    pub fn reversed(self: Pair) Pair {
+        return .{ .before = self.after, .after = self.before };
+    }
+};
+
+/// Packed RGBA8 lanes are 4 on SSE2 and NEON, and 8 on AVX2. Without SIMD the compiler splits the 4-lane fallback into scalars.
+pub const pixel_lanes = std.simd.suggestVectorLength(u32) orelse 4;
 
 /// Bounds a 4K-wide capture to 32,768 rows and keeps individual RGBA8 buffers at most 512 MiB.
 pub const max_pixels = 128 * 1024 * 1024;

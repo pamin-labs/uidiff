@@ -7,12 +7,20 @@ const scale = @import("value/scale.zig");
 
 /// Borrowed packed pixels and their source dimensions.
 pub const Image = image.Image;
+/// Borrowed images in comparison order.
+pub const Pair = image.Pair;
 /// Four channels in RGBA byte order.
 pub const Pixel = image.Pixel;
+/// The native vector width in packed RGBA8 pixels.
+pub const pixel_lanes = image.pixel_lanes;
 /// Source dimensions in device pixels.
 pub const Size = image.Size;
 /// Rectangle in device pixels.
 pub const Box = region.Box;
+/// Whole-pixel rectangle in device coordinates.
+pub const PixelRect = region.PixelRect;
+/// Whole-pixel rectangle in the rendered sheet.
+pub const SheetRect = region.SheetRect;
 /// Device pixels per CSS pixel.
 pub const Scale = scale.Scale;
 /// CSS-pixel length.

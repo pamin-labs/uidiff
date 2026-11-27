@@ -72,7 +72,8 @@ pub fn compareChecked(allocator: Allocator, before: Image, after: Image, options
     const max_gap_px: f64 = @floatFromInt(@max(width, height));
     const gap_px = @min(options.scale.devicePixels(regions.merge_gap), max_gap_px);
     const overlap_width = @min(before.width, after.width);
-    const changed = columns.span(before, after, overlap_width);
+    const pair: value.Pair = .{ .before = before, .after = after };
+    const changed = columns.span(pair, overlap_width);
     if (changed.width == 0 and before.width == after.width) {
         return .{ .regions = &.{}, .width = width, .height = height };
     }
@@ -84,7 +85,7 @@ pub fn compareChecked(allocator: Allocator, before: Image, after: Image, options
     var moves: std.ArrayList(value.Move) = .empty;
     defer moves.deinit(allocator);
     if (changed.width != 0) {
-        const scope: columns.Scope = .{ .before = before, .after = after, .span = changed, .bounds = .{ .left = 0, .width = overlap_width } };
+        const scope: columns.Scope = .{ .pair = pair, .span = changed, .bounds = .{ .left = 0, .width = overlap_width } };
         try span.collect(allocator, &collector, &moves, scope, @intFromFloat(@min(max_gap_px, options.scale.devicePixels(regions.scroll_shift))));
     }
     if (before.width != after.width) {
@@ -92,7 +93,7 @@ pub fn compareChecked(allocator: Allocator, before: Image, after: Image, options
         const box = Box.fromPixels(overlap_width, 0, width - overlap_width, if (old) before.height else after.height);
         collector.addOn(if (old) .before else .after, box);
     }
-    const out = try regions.resolve(allocator, &collector, &moves, before, after, options.scale, options.scale.devicePixels(regions.scroll_shift));
+    const out = try regions.resolve(allocator, &collector, &moves, pair, options.scale, options.scale.devicePixels(regions.scroll_shift));
     errdefer allocator.free(out);
     return .{ .regions = out, .moves = try moves.toOwnedSlice(allocator), .width = width, .height = height };
 }

@@ -41,18 +41,18 @@ pub fn footerStart(matches_: []const band.Match, before: band.Keys, after: band.
     }
     // A return to offset zero can be a deletion in the body. Require
     // separate viewport chrome at the boundary before clipping any rows.
-    const images = limits.images orelse return matches_.len;
+    const sample = limits.sample orelse return matches_.len;
     const start = matches_[first].before;
     if (first == 0 or start < before.len - before.len / footer_zone_divisor) return matches_.len;
-    const image = images[0];
+    const image = sample.pair.before;
     // Chrome begins at a shared horizontal edge. Compare the paint on
     // either side of that edge instead of assuming a single backdrop.
-    const shared_width = @min(image.width, images[1].width);
+    const shared_width = @min(image.width, sample.pair.after.width);
     var edge: usize = 0;
-    for (image.row(start - 1)[0..shared_width], image.row(start)[0..shared_width], images[1].row(start - 1)[0..shared_width], images[1].row(start)[0..shared_width]) |above, below, new_above, new_below| {
+    for (image.row(start - 1)[0..shared_width], image.row(start)[0..shared_width], sample.pair.after.row(start - 1)[0..shared_width], sample.pair.after.row(start)[0..shared_width]) |above, below, new_above, new_below| {
         edge += @intFromBool(!std.meta.eql(above, below) and !std.meta.eql(new_above, new_below));
     }
-    if (limits.width != 0 and columns.closesPanel(image, .{ .left = limits.left, .width = limits.width }, start)) return first;
+    if (sample.columns.width != 0 and columns.closesPanel(image, sample.columns, start)) return first;
     if (insetStripe(before, old_background, image, start)) return matches_.len;
     if (footer_edge_divisor * edge >= shared_width) return first;
     // Clipping can put paint from the moving pane immediately above the
@@ -67,7 +67,7 @@ pub fn footerStart(matches_: []const band.Match, before: band.Keys, after: band.
 
 /// Reports whether a short run contains visible foreground paint.
 pub fn hasVisibleStripe(keys_: band.Keys, background_key: ?u64, limits: band.Limits, start: usize, count: usize) bool {
-    const image = (limits.images orelse return false)[0];
+    const image = (limits.sample orelse return false).pair.before;
     const background_row = background_key orelse return false;
     for (keys_[start..][0..count], start..) |key, y| {
         if (key != background_row) return insetStripe(keys_, background_row, image, y);
@@ -99,13 +99,13 @@ pub fn markSpacing(bands: []band.Band, keys_: band.Keys, background_key: ?u64, i
 
 /// Checks whether the leading clipped rows are fixed header paint.
 pub fn fixedHeaderPadding(limits: band.Limits, start: usize, end: usize) bool {
-    const images = limits.images orelse return false;
-    if (limits.width < 2 or start == 0 or !recolour.flatPaint(images[0], start, end, limits.left, limits.width)) return false;
-    const left = limits.left;
-    const right = left + limits.width - 1;
-    const header = images[0].row(start - 1);
-    const old = images[0].row(start);
-    const new = images[1].row(start);
+    const sample = limits.sample orelse return false;
+    if (sample.columns.width < 2 or start == 0 or !recolour.flatPaint(sample.pair.before, start, end, sample.columns.left, sample.columns.width)) return false;
+    const left = sample.columns.left;
+    const right = left + sample.columns.width - 1;
+    const header = sample.pair.before.row(start - 1);
+    const old = sample.pair.before.row(start);
+    const new = sample.pair.after.row(start);
     if (pixel.same(header[left], old[left]) or pixel.same(header[right], old[right])) return false;
     // The stationary header and the unclipped paint meet at the same
     // position on both sides of the moving content.

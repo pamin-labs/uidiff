@@ -95,7 +95,7 @@ pub fn assembleBands(before: band.Keys, after: band.Keys, limits: band.Limits, a
                 // A new solid band still counts if its paint differs from the backdrop.
                 const flat_tail = clipped_scroll != 0 and old_y -| new_y == clipped_scroll and
                     (after[start] == new_background or after[start] == after[start -| 1]) and
-                    if (limits.images) |images| recolour.flatPaint(images[1], start, m.after, limits.left, limits.width) else false;
+                    if (limits.sample) |sample| recolour.flatPaint(sample.pair.after, start, m.after, sample.columns.left, sample.columns.width) else false;
                 if (!flat_tail) reveal(bands, &len, after[0..m.after], old_y + paired, start, new_background);
             }
         } else {
@@ -194,7 +194,7 @@ test "fixed-header scroll reveals content and skips flat paint" {
             @memset(row[4..36], .{ 112, 96, 60, 255 });
         };
         band.keys(scrolled, 0, width, &b);
-        const result = assembleBands(&a, &b, .{ .scroll = 2, .replacement = 24, .images = .{ original, scrolled }, .width = width }, .{
+        const result = assembleBands(&a, &b, .{ .scroll = 2, .replacement = 24, .sample = &.{ .pair = .{ .before = original, .after = scrolled }, .columns = .{ .left = 0, .width = width } } }, .{
             .rows = &matches,
             .footer = matches.len,
             .first_offset = 0,

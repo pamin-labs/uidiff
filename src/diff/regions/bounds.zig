@@ -11,31 +11,15 @@ pub const RailAxis = enum { horizontal, vertical };
 /// Selects the start or end edge along an axis.
 pub const RailEnd = enum { start, end };
 
-/// Exclusive device-pixel bounds for a rectangular pixel run.
-pub const PixelRect = struct {
-    left: usize,
-    right: usize,
-    top: usize,
-    bottom: usize,
-
-    /// Returns bounds expressed along the selected axis.
-    pub fn oriented(self: PixelRect, axis: RailAxis) PixelRect {
-        return if (axis == .horizontal) self else .{
-            .left = self.top,
-            .right = self.bottom,
-            .top = self.left,
-            .bottom = self.right,
-        };
-    }
-
-    /// Converts device-pixel box edges into integer bounds.
-    pub fn fromBox(box: Box) PixelRect {
-        return .{ .left = deviceIndex(box.x), .right = deviceIndex(box.right()), .top = deviceIndex(box.y), .bottom = deviceIndex(box.bottom()) };
-    }
-};
-
 /// Converts a validated device coordinate to a pixel index.
 pub const deviceIndex = if (builtin.cpu.arch == .x86_64) sharedDeviceIndex else directDeviceIndex;
+
+/// Converts validated device-pixel box edges into integer bounds.
+pub fn pixelRect(box: Box) value.PixelRect {
+    const x = deviceIndex(box.x);
+    const y = deviceIndex(box.y);
+    return .{ .x = x, .y = y, .width = deviceIndex(box.right()) - x, .height = deviceIndex(box.bottom()) - y };
+}
 
 inline fn directDeviceIndex(coordinate: f64) usize {
     return @intFromFloat(coordinate);

@@ -5,11 +5,13 @@ const value = @import("../../value.zig");
 const format = @import("png_format");
 const memory = @import("codec_memory");
 const zlib = @import("zlib.zig");
+const simd = @import("simd.zig");
 
 const Filter = format.Filter;
-const Range = struct { first: usize, end: usize };
-const Block = @Vector(vector_bytes, u8);
-const BlockBytes = [vector_bytes]u8;
+const scanline_bytes = simd.scanline_bytes;
+const ByteSpan = struct { start: usize, length: usize };
+const Block = @Vector(scanline_bytes, u8);
+const BlockBytes = [scanline_bytes]u8;
 
 /// Colour types accepted by the noninterlaced 8-bit decoder.
 pub const Profile = enum(u8) {
@@ -28,7 +30,7 @@ pub const Profile = enum(u8) {
 };
 
 const Chunks = struct {
-    idat: Range,
+    idat: ByteSpan,
     palette: []const value.Pixel,
 };
 
@@ -112,9 +114,7 @@ const Rows = struct {
 
 const channels = @sizeOf(value.Pixel);
 const rgb_channels = 3;
-const vector_bytes = 16;
-const block_bytes = vector_bytes;
-const rgb_block_bytes = block_bytes / channels * rgb_channels;
+const rgb_block_bytes = scanline_bytes / channels * rgb_channels;
 // The larger span amortizes dictionary updates on Apple silicon.
 const inflate_bytes = if (builtin.os.tag == .macos and builtin.cpu.arch == .aarch64) 64 * 1024 else 32 * 1024;
 
@@ -168,7 +168,7 @@ pub fn decode(bytes: []const u8, size: value.Size) memory.Error!?[]value.Pixel {
         },
         .stride = stride,
     };
-    if (!try zlib.inflateRows(bytes[chunks.idat.first..chunks.idat.end], inflate_bytes, scratch[0..inflate_bytes], &rows)) return null;
+    if (!try zlib.inflateRows(bytes[chunks.idat.start..][0..chunks.idat.length], inflate_bytes, scratch[0..inflate_bytes], &rows)) return null;
     keep = true;
     return std.mem.bytesAsSlice(value.Pixel, pixels);
 }
@@ -176,7 +176,7 @@ pub fn decode(bytes: []const u8, size: value.Size) memory.Error!?[]value.Pixel {
 fn collectChunks(bytes: []const u8, profile: Profile, palette: *[256]value.Pixel) ?Chunks {
     if (format.header_end > bytes.len) return null;
     var chunks: format.Chunks = .{ .remaining = bytes[format.header_end..] };
-    var range: ?Range = null;
+    var range: ?ByteSpan = null;
     var palette_len: usize = 0;
     var has_alpha = false;
     var start = format.header_end;
@@ -189,9 +189,9 @@ fn collectChunks(bytes: []const u8, profile: Profile, palette: *[256]value.Pixel
             @as(u32, @bitCast(@as([4]u8, format.idat_type.*))) => {
                 if (profile == .indexed and palette_len == 0) return null;
                 if (range) |prior| {
-                    if (prior.end != start) return null;
-                    range = .{ .first = prior.first, .end = end };
-                } else range = .{ .first = start, .end = end };
+                    if (prior.start + prior.length != start) return null;
+                    range = .{ .start = prior.start, .length = end - prior.start };
+                } else range = .{ .start = start, .length = end - start };
             },
             @as(u32, @bitCast(@as([4]u8, format.iend_type.*))) => {
                 if (size != 0) return null;
@@ -231,7 +231,7 @@ fn unfilter(comptime lanes: usize, dst: []u8, src: []const u8, above: ?[]const u
 }
 
 fn sub(comptime lanes: usize, dst: []u8, src: []const u8) void {
-    const end = dst.len - dst.len % block_bytes;
+    const end = dst.len - dst.len % scanline_bytes;
     var carry: Block = @splat(0);
     for (blocks(dst[0..end]), blocks(src[0..end])) |*out, *raw| {
         carry = prefixAdd(lanes, out, raw, carry);
@@ -244,7 +244,7 @@ fn sub(comptime lanes: usize, dst: []u8, src: []const u8) void {
 }
 
 fn addUp(dst: []u8, src: []const u8, up: []const u8) void {
-    const end = dst.len - dst.len % block_bytes;
+    const end = dst.len - dst.len % scanline_bytes;
     for (blocks(dst[0..end]), blocks(src[0..end]), blocks(up[0..end])) |*out, raw, prev| {
         out.* = @as(Block, raw) +% prev;
     }
@@ -299,15 +299,15 @@ fn paeth(comptime lanes: usize, dst: []u8, src: []const u8, above: []const u8) v
     var up = above[lanes..];
     while (out.len != 0) {
         const corner = repeatSample(lanes, upper_left);
-        if (out.len >= vector_bytes and @reduce(.And, @as(Block, up[0..vector_bytes].*) == corner)) {
+        if (out.len >= scanline_bytes and @reduce(.And, @as(Block, up[0..scanline_bytes].*) == corner)) {
             // Over a flat row above, Paeth predicts the left sample: keep the
             // carry in a vector for the whole run.
             var carry = repeatSample(lanes, left);
             var i: usize = 0;
             while (true) {
-                carry = prefixAdd(lanes, out[i..][0..vector_bytes], raw[i..][0..vector_bytes], carry);
-                i += vector_bytes;
-                if (out.len - i < vector_bytes or !@reduce(.And, @as(Block, up[i..][0..vector_bytes].*) == corner)) break;
+                carry = prefixAdd(lanes, out[i..][0..scanline_bytes], raw[i..][0..scanline_bytes], carry);
+                i += scanline_bytes;
+                if (out.len - i < scanline_bytes or !@reduce(.And, @as(Block, up[i..][0..scanline_bytes].*) == corner)) break;
             }
             left = @as(BlockBytes, carry)[0..lanes].*;
             out = out[i..];
@@ -331,7 +331,7 @@ fn blocks(bytes: anytype) @TypeOf(std.mem.bytesAsSlice(BlockBytes, bytes)) {
 
 fn repeatSample(comptime lanes: usize, sample: @Vector(lanes, u8)) Block {
     const mask = comptime mask: {
-        var indices: [vector_bytes]i32 = undefined;
+        var indices: [scanline_bytes]i32 = undefined;
         for (&indices, 0..) |*index, i| index.* = @intCast(i % lanes);
         break :mask indices;
     };
@@ -342,9 +342,9 @@ fn prefixAdd(comptime lanes: usize, dst: *BlockBytes, src: *const BlockBytes, ca
     const zero: Block = @splat(0);
     var v: Block = src.*;
     comptime var shift = lanes;
-    inline while (shift < vector_bytes) : (shift *= 2) {
+    inline while (shift < scanline_bytes) : (shift *= 2) {
         const mask = comptime mask: {
-            var indices: [vector_bytes]i32 = undefined;
+            var indices: [scanline_bytes]i32 = undefined;
             for (&indices, 0..) |*index, i| index.* = if (i < shift) @intCast(i) else -1 - @as(i32, @intCast(i - shift));
             break :mask indices;
         };
@@ -352,7 +352,7 @@ fn prefixAdd(comptime lanes: usize, dst: *BlockBytes, src: *const BlockBytes, ca
     }
     v +%= carry;
     dst.* = v;
-    return repeatSample(lanes, @as(BlockBytes, v)[vector_bytes - lanes ..][0..lanes].*);
+    return repeatSample(lanes, @as(BlockBytes, v)[scanline_bytes - lanes ..][0..lanes].*);
 }
 
 fn expandRgb(dst: []u8, src: []const u8) void {
@@ -361,7 +361,7 @@ fn expandRgb(dst: []u8, src: []const u8) void {
     const zero: @Vector(4, u8) = @splat(0);
     for (blocks(dst[0..rgb_end]), std.mem.bytesAsSlice([rgb_block_bytes]u8, src[0..end])) |*out, raw| {
         const rgb: @Vector(rgb_block_bytes, u8) = raw;
-        out.* = @shuffle(u8, rgb, zero, @Vector(16, i32){
+        out.* = @shuffle(u8, rgb, zero, @Vector(scanline_bytes, i32){
             0, 1, 2, -1, 3, 4, 5, -1, 6, 7, 8, -1, 9, 10, 11, -1,
         });
     }
@@ -372,7 +372,7 @@ fn expandRgb(dst: []u8, src: []const u8) void {
 
 fn setOpaque(dst: []u8) void {
     const alpha = repeatSample(channels, .{ 0, 0, 0, 255 });
-    const end = dst.len - dst.len % block_bytes;
+    const end = dst.len - dst.len % scanline_bytes;
     for (blocks(dst[0..end])) |*out| out.* = @as(Block, out.*) | alpha;
     for (std.mem.bytesAsSlice(value.Pixel, dst[end..])) |*out| out[3] = 255;
 }

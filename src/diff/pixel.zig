@@ -3,11 +3,6 @@ const std = @import("std");
 const value = @import("../value.zig");
 const Pixel = value.Pixel;
 
-/// Pixels compared per vector step: the target's widest vector of 32-bit
-/// words (4 on SSE2 and NEON, 8 with AVX2). Without SIMD registers the
-/// compiler splits a 4-wide vector into scalars.
-pub const lanes = std.simd.suggestVectorLength(u32) orelse 4;
-
 /// Sixteen packed RGBA pixels are 64 bytes.
 pub const block_pixels = 16;
 
@@ -33,14 +28,14 @@ pub inline fn sameBlock(a: *const [block_pixels]Pixel, b: *const [block_pixels]P
 }
 
 /// Loads one vector step of packed pixels as 32-bit words.
-pub fn load(block: *const [lanes]Pixel) @Vector(lanes, u32) {
+pub fn load(block: *const [value.pixel_lanes]Pixel) @Vector(value.pixel_lanes, u32) {
     return @bitCast(block.*);
 }
 
 test "same compares every channel" {
     try std.testing.expect(same(.{ 1, 2, 3, 4 }, .{ 1, 2, 3, 4 }));
     try std.testing.expect(!same(.{ 1, 2, 3, 4 }, .{ 1, 2, 3, 5 }));
-    const block: [lanes]Pixel = @splat(.{ 9, 9, 9, 9 });
+    const block: [value.pixel_lanes]Pixel = @splat(.{ 9, 9, 9, 9 });
     try std.testing.expect(@reduce(.And, load(&block) == load(&block)));
 }
 

@@ -22,7 +22,7 @@ const pixel = @import("pixel.zig");
 const mask = @import("mask.zig");
 const Image = value.Image;
 const Pixel = value.Pixel;
-const lanes = pixel.lanes;
+const lanes = value.pixel_lanes;
 const same = pixel.same;
 
 /// A strided crop or a virtual backdrop over an image.

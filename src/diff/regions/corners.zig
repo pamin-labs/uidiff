@@ -28,15 +28,15 @@ const corner_join_reach_px = 4;
 const max_corner_rail = value.CssPx.init(2048);
 
 /// Groups stationary corner changes when the unchanged straight edges connect them.
-pub noinline fn mergeCorners(boxes: []candidate.Candidate, before: Image, after: Image, scale: value.Scale) usize {
+pub noinline fn mergeCorners(boxes: []candidate.Candidate, pair: value.Pair, scale: value.Scale) usize {
     var len = boxes.len;
     const limit = scale.devicePixels(text_lines.line_height);
     const max_rail = scale.devicePixels(max_corner_rail);
-    if (len == 2 and croppedCorners(boxes, before, after, limit, scale.devicePixels(candidate.padding), max_rail)) return candidate.join(boxes, len, 0, 1);
+    if (len == 2 and croppedCorners(boxes, pair, limit, scale.devicePixels(candidate.padding), max_rail)) return candidate.join(boxes, len, 0, 1);
     var i: usize = 0;
     while (i + outline_corners <= len) : (i += 1) {
         const first = corner(boxes[i].region, limit) orelse continue;
-        if (outlineCorners(boxes[i + 1 .. len], before, after, first, limit, max_rail)) |others| {
+        if (outlineCorners(boxes[i + 1 .. len], pair, first, limit, max_rail)) |others| {
             // The indexes are relative to the suffix and sorted largest first.
             for (others) |j| len = candidate.join(boxes, len, i, i + 1 + j);
         }
@@ -49,7 +49,7 @@ fn corner(region: Region, limit: f64) ?Box {
     return if (@max(box.width, box.height) <= limit) box else null;
 }
 
-fn outlineCorners(boxes: []const candidate.Candidate, before: Image, after: Image, top: Box, limit: f64, max_rail: f64) ?[3]usize {
+fn outlineCorners(boxes: []const candidate.Candidate, pair: value.Pair, top: Box, limit: f64, max_rail: f64) ?[3]usize {
     for (boxes, 0..) |tr, j| {
         const right = corner(tr.region, limit) orelse continue;
         if (right.x <= top.right() or !sameRange(top.y, top.bottom(), right.y, right.bottom())) continue;
@@ -60,7 +60,7 @@ fn outlineCorners(boxes: []const candidate.Candidate, before: Image, after: Imag
                 const lower_right = corner(br.region, limit) orelse continue;
                 if (!sameRange(bottom.y, bottom.bottom(), lower_right.y, lower_right.bottom()) or
                     !sameRange(right.x, right.right(), lower_right.x, lower_right.right())) continue;
-                if (!tracedOutline(before, after, top, right, bottom, lower_right, max_rail)) continue;
+                if (!tracedOutline(pair, top, right, bottom, lower_right, max_rail)) continue;
                 var order = [3]usize{ j, k, l };
                 std.sort.insertion(usize, &order, {}, std.sort.desc(usize));
                 return order;
@@ -70,22 +70,22 @@ fn outlineCorners(boxes: []const candidate.Candidate, before: Image, after: Imag
     return null;
 }
 
-fn croppedCorners(boxes: []const candidate.Candidate, before: Image, after: Image, limit: f64, clip_slack: f64, max_rail: f64) bool {
-    if (before.height != after.height or before.width != after.width) return false;
+fn croppedCorners(boxes: []const candidate.Candidate, pair: value.Pair, limit: f64, clip_slack: f64, max_rail: f64) bool {
+    if (pair.before.height != pair.after.height or pair.before.width != pair.after.width) return false;
     const a = corner(boxes[0].region, limit) orelse return false;
     const b = corner(boxes[1].region, limit) orelse return false;
     const left, const right = if (a.x < b.x) .{ a, b } else .{ b, a };
-    const height: f64 = @floatFromInt(before.height);
+    const height: f64 = @floatFromInt(pair.before.height);
     if (height - @min(left.bottom(), right.bottom()) > clip_slack or
         !sameRange(left.y, left.bottom(), right.y, right.bottom())) return false;
-    return rail(before, after, left, right, .{ .axis = .horizontal, .exterior = .start }, max_rail);
+    return rail(pair, left, right, .{ .axis = .horizontal, .exterior = .start }, max_rail);
 }
 
-fn tracedOutline(before: Image, after: Image, top: Box, right: Box, bottom: Box, lower_right: Box, max_rail: f64) bool {
-    if (rail(before, after, top, right, .{ .axis = .horizontal, .exterior = .start }, max_rail) and
-        rail(before, after, bottom, lower_right, .{ .axis = .horizontal, .exterior = .end }, max_rail) and
-        rail(before, after, top, bottom, .{ .axis = .vertical, .exterior = .start }, max_rail) and
-        rail(before, after, right, lower_right, .{ .axis = .vertical, .exterior = .end }, max_rail)) return true;
+fn tracedOutline(pair: value.Pair, top: Box, right: Box, bottom: Box, lower_right: Box, max_rail: f64) bool {
+    if (rail(pair, top, right, .{ .axis = .horizontal, .exterior = .start }, max_rail) and
+        rail(pair, bottom, lower_right, .{ .axis = .horizontal, .exterior = .end }, max_rail) and
+        rail(pair, top, bottom, .{ .axis = .vertical, .exterior = .start }, max_rail) and
+        rail(pair, right, lower_right, .{ .axis = .vertical, .exterior = .end }, max_rail)) return true;
 
     // Collector boxes use whole non-negative coordinates within the source image.
     const mid_x: usize = bounds.deviceIndex((top.right() + right.x) / 2);
@@ -94,52 +94,52 @@ fn tracedOutline(before: Image, after: Image, top: Box, right: Box, bottom: Box,
     const top_end: usize = bounds.deviceIndex(top.bottom());
     const bottom_y: usize = bounds.deviceIndex(bottom.y);
     const bottom_end: usize = bounds.deviceIndex(bottom.bottom());
-    const row = before.row(mid_y);
+    const row = pair.before.row(mid_y);
     const left_x: usize = bounds.deviceIndex(top.x);
     const left_end: usize = bounds.deviceIndex(top.right());
     const right_x: usize = bounds.deviceIndex(right.x);
     const right_end: usize = bounds.deviceIndex(right.right());
-    const above = before.row(top_y -| 1)[mid_x];
+    const above = pair.before.row(top_y -| 1)[mid_x];
     const outside = row[left_x -| 1];
     for (top_y..top_end) |y| {
-        const ink = before.row(y)[mid_x];
+        const ink = pair.before.row(y)[mid_x];
         if ((pixel.same(ink, above) and pixel.same(ink, outside)) or
             !hasInk(row[left_x..left_end], ink) or !hasInk(row[right_x..right_end], ink)) continue;
         for (bottom_y..bottom_end) |end| {
-            if (pixel.same(before.row(end)[mid_x], ink)) return true;
+            if (pixel.same(pair.before.row(end)[mid_x], ink)) return true;
         }
     }
     return false;
 }
 
-fn rail(before: Image, after: Image, start: Box, end: Box, direction: RailDirection, max_rail: f64) bool {
-    const a = bounds.PixelRect.fromBox(start).oriented(direction.axis);
-    const b = bounds.PixelRect.fromBox(end).oriented(direction.axis);
-    if (a.right >= b.left or @as(f64, @floatFromInt(b.left - a.right)) > max_rail) return false;
-    const first = @max(a.top, b.top);
-    const last = @min(a.bottom, b.bottom);
-    if (first >= last) return false;
+fn rail(pair: value.Pair, start: Box, end: Box, direction: RailDirection, max_rail: f64) bool {
     const horizontal = direction.axis == .horizontal;
-    const extent = if (horizontal) before.height else before.width;
+    const rail_start = bounds.deviceIndex(if (horizontal) start.right() else start.bottom());
+    const rail_end = bounds.deviceIndex(if (horizontal) end.x else end.y);
+    if (rail_start >= rail_end or @as(f64, @floatFromInt(rail_end - rail_start)) > max_rail) return false;
+    const first = bounds.deviceIndex(if (horizontal) @max(start.y, end.y) else @max(start.x, end.x));
+    const last = bounds.deviceIndex(if (horizontal) @min(start.bottom(), end.bottom()) else @min(start.right(), end.right()));
+    if (first >= last) return false;
+    const extent = if (horizontal) pair.before.height else pair.before.width;
     const outside = switch (direction.exterior) {
         .start => if (first != 0) first - 1 else return false,
         .end => if (last < extent) last else return false,
     };
-    const along = if (horizontal) 1 else before.width;
-    const across = if (horizontal) before.width else 1;
+    const along = if (horizontal) 1 else pair.before.width;
+    const across = if (horizontal) pair.before.width else 1;
     for (first..last) |line| {
-        for (a.right..b.left) |x| {
+        for (rail_start..rail_end) |x| {
             const index = line * across + x * along;
-            const ink = before.pixels[index];
-            if (!pixel.same(ink, after.pixels[index]) or
-                scrim.toneDistance(ink, before.pixels[outside * across + x * along]) < corner_rail_contrast) break;
+            const ink = pair.before.pixels[index];
+            if (!pixel.same(ink, pair.after.pixels[index]) or
+                scrim.toneDistance(ink, pair.before.pixels[outside * across + x * along]) < corner_rail_contrast) break;
         } else {
             if (!horizontal) return true;
-            const old = before.row(line);
-            if ((railTurns(before, start, line, old[a.right], .left, direction.exterior) and
-                railTurns(before, end, line, old[b.left - 1], .right, direction.exterior)) or
-                (railTurns(after, start, line, old[a.right], .left, direction.exterior) and
-                    railTurns(after, end, line, old[b.left - 1], .right, direction.exterior))) return true;
+            const old = pair.before.row(line);
+            if ((railTurns(pair.before, start, line, old[rail_start], .left, direction.exterior) and
+                railTurns(pair.before, end, line, old[rail_end - 1], .right, direction.exterior)) or
+                (railTurns(pair.after, start, line, old[rail_start], .left, direction.exterior) and
+                    railTurns(pair.after, end, line, old[rail_end - 1], .right, direction.exterior))) return true;
         }
     }
     return false;
@@ -207,10 +207,10 @@ test "four corners follow a continuous outline even when its straight edges diff
         edit.* = .{ .region = .{ .before = box, .after = box }, .pixels = 8 };
     }
     var candidates = edits;
-    try std.testing.expectEqual(@as(usize, 1), mergeCorners(&candidates, before.view, after.view, .one));
+    try std.testing.expectEqual(@as(usize, 1), mergeCorners(&candidates, .{ .before = before.view, .after = after.view }, .one));
     for ([_]canvas.Canvas{ before, after }) |image| image.fill(104, 20, 16, 115, canvas.inkShade(255, 4));
     candidates = edits;
-    try std.testing.expectEqual(edits.len, mergeCorners(&candidates, before.view, after.view, .one));
+    try std.testing.expectEqual(edits.len, mergeCorners(&candidates, .{ .before = before.view, .after = after.view }, .one));
     try std.testing.expectEqualDeep(edits, candidates);
 }
 
@@ -234,10 +234,10 @@ test "viewport clipped corners join only across a continuous straight edge" {
         image.fill(205, 55, shape, 9, canvas.inkShade(68, 4));
     }
     var candidates = edits;
-    try std.testing.expectEqual(@as(usize, 1), mergeCorners(&candidates, before.view, after.view, .one));
+    try std.testing.expectEqual(@as(usize, 1), mergeCorners(&candidates, .{ .before = before.view, .after = after.view }, .one));
     for ([_]canvas.Canvas{ before, after }) |image| image.fill(116, 44, 18, 20, canvas.inkShade(255, 4));
     candidates = edits;
-    try std.testing.expectEqual(edits.len, mergeCorners(&candidates, before.view, after.view, .one));
+    try std.testing.expectEqual(edits.len, mergeCorners(&candidates, .{ .before = before.view, .after = after.view }, .one));
     try std.testing.expectEqualDeep(edits, candidates);
 }
 
@@ -259,7 +259,7 @@ test "audit: unrelated bottom-clipped labels on one footer stay separate" {
         .{ .region = .{ .before = b, .after = b }, .pixels = 8 },
     };
     var candidates = edits;
-    try std.testing.expectEqual(edits.len, mergeCorners(&candidates, before.view, after.view, .one));
+    try std.testing.expectEqual(edits.len, mergeCorners(&candidates, .{ .before = before.view, .after = after.view }, .one));
     try std.testing.expectEqualDeep(edits, candidates);
 }
 
@@ -283,7 +283,7 @@ test "round 25 audit: glyph stems below a divider do not close the corners" {
         .{ .region = .{ .before = a, .after = a }, .pixels = 8 },
         .{ .region = .{ .before = b, .after = b }, .pixels = 8 },
     };
-    try std.testing.expectEqual(edits.len, mergeCorners(&edits, before.view, after.view, .one));
+    try std.testing.expectEqual(edits.len, mergeCorners(&edits, .{ .before = before.view, .after = after.view }, .one));
 }
 
 test "corner rail reach follows logical scale at double density" {
@@ -300,8 +300,8 @@ test "corner rail reach follows logical scale at double density" {
         .{ .region = .{ .before = a, .after = a }, .pixels = 8 },
         .{ .region = .{ .before = b, .after = b }, .pixels = 8 },
     };
-    try std.testing.expectEqual(edits.len, mergeCorners(&edits, image.view, image.view, .one));
-    try std.testing.expectEqual(@as(usize, 1), mergeCorners(&edits, image.view, image.view, Scale.parse("2").?));
+    try std.testing.expectEqual(edits.len, mergeCorners(&edits, .{ .before = image.view, .after = image.view }, .one));
+    try std.testing.expectEqual(@as(usize, 1), mergeCorners(&edits, .{ .before = image.view, .after = image.view }, Scale.parse("2").?));
 }
 
 test {

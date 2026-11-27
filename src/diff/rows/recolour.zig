@@ -32,10 +32,10 @@ const repeated_badge_height_divisor = 2;
 
 /// Keeps separate positional paint edits between stationary rows.
 pub fn positionalPaintBands(before: band.Keys, after: band.Keys, first: usize, limits: band.Limits, bands: []band.Band) ?[]band.Band {
-    const images = limits.images orelse return null;
+    const sample = limits.sample orelse return null;
     const max_rows = @max(paint_cluster_rows, limits.replacement);
-    const bounds: columns.Span = .{ .left = limits.left, .width = limits.width };
-    const max_width = @min(images[0].width, images[1].width) / narrow_paint_width_divisor;
+    const bounds: columns.Span = sample.columns;
+    const max_width = @min(sample.pair.before.width, sample.pair.after.width) / narrow_paint_width_divisor;
     var len: usize = 0;
     var start = first;
     var interrupted_ink = false;
@@ -48,15 +48,15 @@ pub fn positionalPaintBands(before: band.Keys, after: band.Keys, first: usize, l
         }
         const bottom = end - stable;
         if (bottom == before.len) return null;
-        const span = columns.spanRows(images[0], images[1], bounds, start, bottom);
+        const span = columns.spanRows(sample.pair, bounds, start, bottom);
         if (span.width == 0 or span.width > max_width) return null;
-        const old_flat = flatPaint(images[0], start, bottom, span.left, span.width);
-        const new_flat = flatPaint(images[1], start, bottom, span.left, span.width);
+        const old_flat = flatPaint(sample.pair.before, start, bottom, span.left, span.width);
+        const new_flat = flatPaint(sample.pair.after, start, bottom, span.left, span.width);
         // Two distant overpaints can overlap vertically. In that case the
         // bounding rectangle includes paint and untouched space between them.
-        if (!old_flat and !new_flat and !flatChanges(images, span, start, bottom) and
-            (span.width > @min(images[0].width, images[1].width) / repeated_badge_width_divisor or bottom - start > limits.replacement / repeated_badge_height_divisor or
-                !stationaryContour(images, span, start, bottom))) return null;
+        if (!old_flat and !new_flat and !flatChanges(sample.pair, span, start, bottom) and
+            (span.width > @min(sample.pair.before.width, sample.pair.after.width) / repeated_badge_width_divisor or bottom - start > limits.replacement / repeated_badge_height_divisor or
+                !stationaryContour(sample.pair, span, start, bottom))) return null;
         interrupted_ink = interrupted_ink or !(old_flat and new_flat);
         band.append(bands, &len, .{ .before = start, .after = start, .removed = bottom - start, .added = bottom - start });
         start = end + (std.mem.indexOfDiff(u64, before[end..], after[end..]) orelse break);
@@ -77,8 +77,8 @@ pub fn localEditCost(before: band.Keys, after: band.Keys, first: usize, limits: 
     // between equal at their original positions.
     if (paint_density_denominator * replaced < paint_density_numerator * (end - first)) return null;
     if (!limits.narrow_edit) {
-        const images = limits.images orelse return null;
-        if (!flatPaint(images[0], first, end, limits.left, limits.width) and !flatPaint(images[1], first, end, limits.left, limits.width)) return null;
+        const sample = limits.sample orelse return null;
+        if (!flatPaint(sample.pair.before, first, end, sample.columns.left, sample.columns.width) and !flatPaint(sample.pair.after, first, end, sample.columns.left, sample.columns.width)) return null;
     }
     return .{ .cost = 2 * replaced, .end = end, .limit = limit };
 }
@@ -94,12 +94,12 @@ pub fn flatPaint(image: Image, first: usize, end: usize, left: usize, width: usi
     return true;
 }
 
-fn stationaryContour(images: [2]Image, span: columns.Span, top: usize, bottom: usize) bool {
+fn stationaryContour(pair: value.Pair, span: columns.Span, top: usize, bottom: usize) bool {
     const right = span.left + span.width;
-    if (span.left == 0 or right >= @min(images[0].width, images[1].width)) return false;
+    if (span.left == 0 or right >= @min(pair.before.width, pair.after.width)) return false;
     for (top..bottom) |y| {
-        const old = images[0].row(y);
-        const new = images[1].row(y);
+        const old = pair.before.row(y);
+        const new = pair.after.row(y);
         const backdrop = old[span.left - 1];
         if (!pixel.same(backdrop, old[right]) or !pixel.same(backdrop, new[span.left - 1]) or
             !pixel.same(backdrop, new[right])) return false;
@@ -110,13 +110,13 @@ fn stationaryContour(images: [2]Image, span: columns.Span, top: usize, bottom: u
     return true;
 }
 
-fn flatChanges(images: [2]Image, span: columns.Span, top: usize, bottom: usize) bool {
+fn flatChanges(pair: value.Pair, span: columns.Span, top: usize, bottom: usize) bool {
     var colors: ?[2]value.Pixel = null;
     var old_flat = true;
     var new_flat = true;
     for (top..bottom) |y| {
-        const before = images[0].rowSegment(y, span.left, span.width);
-        const after = images[1].rowSegment(y, span.left, span.width);
+        const before = pair.before.rowSegment(y, span.left, span.width);
+        const after = pair.after.rowSegment(y, span.left, span.width);
         for (before, after) |old, new| {
             if (std.meta.eql(old, new)) continue;
             if (colors == null) colors = .{ old, new };

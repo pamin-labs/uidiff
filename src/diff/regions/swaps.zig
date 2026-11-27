@@ -6,19 +6,18 @@ const bounds = @import("bounds.zig");
 const value = @import("../../value.zig");
 const pixel = @import("../pixel.zig");
 const Box = value.Box;
-const Image = value.Image;
 
 const max_swap_pitch = value.CssPx.init(128);
 
 /// Puts a byte-exact exchange of two adjacent row bands into one delta.
-pub fn mergeSwap(boxes: []candidate.Candidate, moves: []const value.Move, before: Image, after: Image, scale: value.Scale) ?usize {
-    if (before.width != after.width or before.height != after.height) return null;
-    if (moves.len == 1 and boxes.len == 2) return reciprocalMove(boxes, moves[0], before, after);
+pub fn mergeSwap(boxes: []candidate.Candidate, moves: []const value.Move, pair: value.Pair, scale: value.Scale) ?usize {
+    if (pair.before.width != pair.after.width or pair.before.height != pair.after.height) return null;
+    if (moves.len == 1 and boxes.len == 2) return reciprocalMove(boxes, moves[0], pair);
     if (moves.len != 0 or boxes.len < 3 or boxes.len > candidate.max_regions) return null;
-    return positionalSwap(boxes, before, after, scale.devicePixels(max_swap_pitch));
+    return positionalSwap(boxes, pair, scale.devicePixels(max_swap_pitch));
 }
 
-fn reciprocalMove(boxes: []candidate.Candidate, move: value.Move, before: Image, after: Image) ?usize {
+fn reciprocalMove(boxes: []candidate.Candidate, move: value.Move, pair: value.Pair) ?usize {
     const old, const new = if (boxes[0].region.before != null)
         .{ boxes[0].region, boxes[1].region }
     else
@@ -33,11 +32,11 @@ fn reciprocalMove(boxes: []candidate.Candidate, move: value.Move, before: Image,
     const upper = @min(move.before.y, move.after.y);
     const cover = Box.fromPixels(x, upper, right - x, 2 * pitch);
     if (cover.overlap(removed) != removed.width * removed.height or cover.overlap(inserted) != inserted.width * inserted.height) return null;
-    if (right > before.width or upper + 2 * pitch > before.height or !exchangedRows(before, after, cover, pitch, pitch)) return null;
+    if (right > pair.before.width or upper + 2 * pitch > pair.before.height or !exchangedRows(pair, cover, pitch, pitch)) return null;
     return candidate.collapse(boxes, cover);
 }
 
-fn positionalSwap(boxes: []candidate.Candidate, before: Image, after: Image, max_pitch: f64) ?usize {
+fn positionalSwap(boxes: []candidate.Candidate, pair: value.Pair, max_pitch: f64) ?usize {
     var storage: [candidate.max_regions]Box = undefined;
     const stationary = candidate.stationaryBoxes(boxes, &storage) orelse return null;
     var top = stationary[0];
@@ -53,7 +52,7 @@ fn positionalSwap(boxes: []candidate.Candidate, before: Image, after: Image, max
         const step: usize = bounds.deviceIndex(pitch);
         const rows = whole.height - pitch;
         if (!inSwapBands(stationary, top.y, opposite.y, rows)) continue;
-        if (!exchangedRows(before, after, whole, step, bounds.deviceIndex(rows))) continue;
+        if (!exchangedRows(pair, whole, step, bounds.deviceIndex(rows))) continue;
         return candidate.collapse(boxes, whole);
     }
     return null;
@@ -68,13 +67,13 @@ fn inSwapBands(boxes: []const Box, upper: f64, lower: f64, height: f64) bool {
     return true;
 }
 
-fn exchangedRows(before: Image, after: Image, bands: Box, pitch: usize, rows: usize) bool {
+fn exchangedRows(pair: value.Pair, bands: Box, pitch: usize, rows: usize) bool {
     const x: usize = bounds.deviceIndex(bands.x);
     const right: usize = bounds.deviceIndex(bands.right());
     const first: usize = bounds.deviceIndex(bands.y);
     for (first..first + rows) |y| {
-        if (!pixel.sameRun(before.row(y)[x..right], after.row(y + pitch)[x..right]) or
-            !pixel.sameRun(after.row(y)[x..right], before.row(y + pitch)[x..right])) return false;
+        if (!pixel.sameRun(pair.before.row(y)[x..right], pair.after.row(y + pitch)[x..right]) or
+            !pixel.sameRun(pair.after.row(y)[x..right], pair.before.row(y + pitch)[x..right])) return false;
     }
     return true;
 }
@@ -101,11 +100,11 @@ test "reciprocal row moves are grouped only when both rows exchange intact" {
         .width = .init(200),
     };
     var copy = candidates;
-    try std.testing.expectEqual(@as(?usize, 1), mergeSwap(&copy, &.{move}, before.view, after.view, .one));
+    try std.testing.expectEqual(@as(?usize, 1), mergeSwap(&copy, &.{move}, .{ .before = before.view, .after = after.view }, .one));
     try std.testing.expect(copy[0].region.before != null and copy[0].region.after != null);
     after.fill(22, upper + pitch + 11, 7, 7, .{ 180, 18, 36, 255 });
     copy = candidates;
-    try std.testing.expectEqual(@as(?usize, null), mergeSwap(&copy, &.{move}, before.view, after.view, .one));
+    try std.testing.expectEqual(@as(?usize, null), mergeSwap(&copy, &.{move}, .{ .before = before.view, .after = after.view }, .one));
     try std.testing.expectEqualDeep(candidates, copy);
 }
 
@@ -132,7 +131,7 @@ test "audit: a count edit between the exchanged rows remains a separate change" 
         .pixels = 8,
     };
     const original = candidates;
-    try std.testing.expectEqual(@as(?usize, null), mergeSwap(&candidates, &.{}, before.view, after.view, .one));
+    try std.testing.expectEqual(@as(?usize, null), mergeSwap(&candidates, &.{}, .{ .before = before.view, .after = after.view }, .one));
     try std.testing.expectEqualDeep(original, candidates);
 }
 

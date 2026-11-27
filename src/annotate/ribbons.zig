@@ -73,9 +73,9 @@ pub fn wedgeTop(details: []const Detail, move: Move, down: bool) ?usize {
 }
 
 /// Composites alignment ribbons for one row between the panes.
-pub fn drawGutter(line: Line, y: usize, pane_layout: PaneLayout, panes: [2]Rect, ribbons: []const Ribbon) void {
-    const x = panes[0].right();
-    const width = panes[1].x - x;
+pub fn drawGutter(line: Line, y: usize, pane_layout: PaneLayout, panes: geometry.SideRects, ribbons: []const Ribbon) void {
+    const x = panes.get(.before).right();
+    const width = panes.get(.after).x - x;
     line.fill(x, x + width, stationary);
     var lo: usize = 0;
     var hi = ribbons.len;
@@ -117,8 +117,8 @@ pub fn drawGutter(line: Line, y: usize, pane_layout: PaneLayout, panes: [2]Rect,
         }
         return;
     }
-    const before_h = panes[0].h;
-    const after_h = panes[1].h;
+    const before_h = panes.get(.before).height;
+    const after_h = panes.get(.after).height;
     const overlap = @min(before_h, after_h);
     if (y >= overlap and before_h != after_h) {
         const delta = @max(before_h, after_h) - overlap;
@@ -165,7 +165,7 @@ test "a three-digit shift label leaves space at both gutter edges" {
         for (pixels, 0..) |pixel, x| {
             if (!std.meta.eql(pixel, blue)) continue;
             painted = true;
-            try std.testing.expect(x >= panes[0].right() + pane_layout.px(8) and x < panes[1].x - pane_layout.px(8));
+            try std.testing.expect(x >= panes.get(.before).right() + pane_layout.px(8) and x < panes.get(.after).x - pane_layout.px(8));
         }
     }
     try std.testing.expect(painted);

@@ -6,12 +6,12 @@ const Size = value.Size;
 const Pixel = value.Pixel;
 const Allocator = std.mem.Allocator;
 
-const Space = enum { source, sheet };
-
-/// Whole source pixels before projection into a pane.
-pub const SourceRect = RectFor(.source);
-/// Whole pixels in the composed sheet.
-pub const Rect = RectFor(.sheet);
+/// The annotation layer's name for a rectangle in source device pixels.
+pub const SourceRect = value.PixelRect;
+/// The annotation layer's name for a rectangle in rendered sheet pixels.
+pub const Rect = value.SheetRect;
+/// Sheet rectangles indexed by source side.
+pub const SideRects = std.EnumArray(value.Side, Rect);
 
 /// Preview scale, UI scale, and pane arrangement for a sheet.
 pub const PaneLayout = struct {
@@ -70,17 +70,17 @@ pub const PaneLayout = struct {
     }
 
     /// Returns the two overview rectangles in sheet coordinates.
-    pub fn panes(self: PaneLayout, before: Size, after: Size) [2]Rect {
+    pub fn panes(self: PaneLayout, before: Size, after: Size) SideRects {
         const x = self.px(margin);
         const y = self.px(pane_top);
         const a = paneRect(x, y, self.preview(before));
         const after_size = self.preview(after);
         const b = paneRect(
-            if (self.panoramic) x else a.right() + self.gutterFor(a.w, after_size.width),
+            if (self.panoramic) x else a.right() + self.gutterFor(a.width, after_size.width),
             if (self.panoramic) a.bottom() + overview_caption_gap else y,
             after_size,
         );
-        return .{ a, b };
+        return .init(.{ .before = a, .after = b });
     }
 
     fn gutterFor(self: PaneLayout, before: usize, after: usize) usize {
@@ -154,7 +154,7 @@ pub const overview_caption_gap = 64;
 
 /// Creates a sheet rectangle at the supplied position and size.
 pub fn paneRect(x: usize, y: usize, size: Size) Rect {
-    return .{ .x = x, .y = y, .w = size.width, .h = size.height };
+    return .{ .x = x, .y = y, .width = size.width, .height = size.height };
 }
 
 /// Reports whether a row is close enough to paint the pane frame.
@@ -165,21 +165,21 @@ pub fn nearPane(y: usize, pane: Rect, pane_layout: PaneLayout) bool {
 /// Projects a source rectangle onto a pane showing the complete image.
 pub noinline fn offsetMark(box: ?SourceRect, pane: Rect, size: Size) ?Rect {
     const source = box orelse return null;
-    return mapMark(source, .{ .x = 0, .y = 0, .w = size.width, .h = size.height }, pane);
+    return mapMark(source, .{ .x = 0, .y = 0, .width = size.width, .height = size.height }, pane);
 }
 
 /// Projects a source rectangle onto the sheet, clipping to the shown window.
 pub fn mapMark(region: SourceRect, source: SourceRect, pane: Rect) ?Rect {
     if (!region.overlaps(source)) return null;
-    const left = (region.x -| source.x) * pane.w / source.w;
-    const top = (region.y -| source.y) * pane.h / source.h;
-    const right = (@min(region.right(), source.right()) - source.x) * pane.w;
-    const bottom = (@min(region.bottom(), source.bottom()) - source.y) * pane.h;
+    const left = (region.x -| source.x) * pane.width / source.width;
+    const top = (region.y -| source.y) * pane.height / source.height;
+    const right = (@min(region.right(), source.right()) - source.x) * pane.width;
+    const bottom = (@min(region.bottom(), source.bottom()) - source.y) * pane.height;
     return .{
         .x = pane.x + left,
         .y = pane.y + top,
-        .w = (right + source.w - 1) / source.w - left,
-        .h = (bottom + source.h - 1) / source.h - top,
+        .width = (right + source.width - 1) / source.width - left,
+        .height = (bottom + source.height - 1) / source.height - top,
     };
 }
 
@@ -196,57 +196,7 @@ pub noinline fn rectAtSize(size: Size, box: ?value.Box) ?SourceRect {
     if (!(b.x >= 0 and b.y >= 0 and b.width > 0 and b.height > 0 and b.right() <= w and b.bottom() <= h)) return null;
     const x: usize = @intFromFloat(@floor(b.x));
     const y: usize = @intFromFloat(@floor(b.y));
-    return .{ .x = x, .y = y, .w = @as(usize, @intFromFloat(@ceil(b.right()))) - x, .h = @as(usize, @intFromFloat(@ceil(b.bottom()))) - y };
-}
-
-fn RectFor(comptime _: Space) type {
-    return struct {
-        const Self = @This();
-
-        x: usize,
-        y: usize,
-        w: usize,
-        h: usize,
-
-        /// Expands the rectangle on every side, clipping at the origin.
-        pub fn outset(self: Self, n: usize) Self {
-            const x = self.x -| n;
-            const y = self.y -| n;
-            return .{ .x = x, .y = y, .w = self.x + self.w + n - x, .h = self.y + self.h + n - y };
-        }
-
-        /// Shrinks the rectangle by a uniform margin.
-        pub fn inset(self: Self, n: usize) Self {
-            return .{ .x = self.x + n, .y = self.y + n, .w = self.w -| (2 * n), .h = self.h -| (2 * n) };
-        }
-
-        /// Reports whether the rectangle covers the specified row.
-        pub fn containsRow(self: Self, y: usize) bool {
-            return y >= self.y and y - self.y < self.h;
-        }
-
-        /// Returns the exclusive right edge.
-        pub fn right(self: Self) usize {
-            return self.x + self.w;
-        }
-
-        /// Returns the exclusive bottom edge.
-        pub fn bottom(self: Self) usize {
-            return self.y + self.h;
-        }
-
-        /// Reports a positive-area overlap in the same pixel space.
-        pub fn overlaps(self: Self, other: Self) bool {
-            return self.x < other.right() and other.x < self.right() and self.y < other.bottom() and other.y < self.bottom();
-        }
-
-        /// Returns the squared gap in pixels between rectangles.
-        pub fn distanceSquared(self: Self, other: Self) usize {
-            const dx = @max(self.x -| other.right(), other.x -| self.right());
-            const dy = @max(self.y -| other.bottom(), other.y -| self.bottom());
-            return dx *| dx +| dy *| dy;
-        }
-    };
+    return .{ .x = x, .y = y, .width = @as(usize, @intFromFloat(@ceil(b.right()))) - x, .height = @as(usize, @intFromFloat(@ceil(b.bottom()))) - y };
 }
 
 test "stacked overviews fit both axes at a single scale" {

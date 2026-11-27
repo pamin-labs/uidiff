@@ -28,7 +28,8 @@ pub fn compactInsertion(before: band.Keys, after: band.Keys, limit: usize, bands
 // Some panels contain long stretches of repeated paint. Their exact moving
 // rows can account for fewer edits than the stationary background in Myers.
 pub fn panelInsertion(before: band.Keys, after: band.Keys, first: usize, limits: band.Limits, bands: []band.Band) ?[]band.Band {
-    const image = (limits.images orelse return null)[0];
+    const sample = limits.sample orelse return null;
+    const image = sample.pair.before;
     const last = band.changedEnd(before, after, first, before.len);
     if (last == before.len) return null;
     const end = @min(last, first + max_panel_shift + 1);
@@ -45,11 +46,11 @@ pub fn panelInsertion(before: band.Keys, after: band.Keys, first: usize, limits:
 
         // A fixed closing rule explains displaced content falling behind
         // the frame. Without that rule, require the lost tail to be paint.
-        const inset: columns.Span = .{ .left = limits.left, .width = limits.width };
+        const inset: columns.Span = sample.columns;
         const closed_panel = edge == last and columns.closesRoundedPanel(image, inset, edge, shift);
         if (!closed_panel) {
             if (length < 2 * shift or before[edge - shift - 1] != before[edge - shift] or
-                !recolour.flatPaint(image, edge - shift, edge, limits.left, limits.width)) continue;
+                !recolour.flatPaint(image, edge - shift, edge, sample.columns.left, sample.columns.width)) continue;
         }
         var moved_rows: usize = 0;
         for (before[first..][0..length], before[start..edge]) |old, stationary| {

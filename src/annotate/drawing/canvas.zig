@@ -61,13 +61,13 @@ pub const Line = struct {
             ink_width += g[3];
             ink_height = @max(ink_height, g[4]);
         }
-        const size = @min(em, (inner.w -| 4) * em / ink_width);
+        const size = @min(em, (inner.width -| 4) * em / ink_width);
         if (size == 0) return;
         const height = @max(1, ink_height * size / em);
-        const top = inner.y + (inner.h - height) / 2;
+        const top = inner.y + (inner.height - height) / 2;
         if (self.y < top or self.y - top >= height) return;
-        const span = roundSpan(inner, inner.w / 2, self.y) orelse return;
-        const start = inner.x + (inner.w - ink_width * size / em) / 2;
+        const span = roundSpan(inner, inner.width / 2, self.y) orelse return;
+        const start = inner.x + (inner.width - ink_width * size / em) / 2;
         var pen: usize = 0;
         for (number) |digit| {
             const g = glyph(.bold, digit);
@@ -105,12 +105,12 @@ pub const Line = struct {
 
 /// Finds the covered sheet columns of a rounded rectangle on one row.
 pub noinline fn roundSpan(rect: Rect, radius: usize, y: usize) ?[2]usize {
-    if (!rect.containsRow(y) or rect.w == 0) return null;
-    const r = @min(radius, rect.w / 2, rect.h / 2);
-    const distance = @min(y - rect.y, rect.y + rect.h - 1 - y);
+    if (!rect.containsRow(y) or rect.width == 0) return null;
+    const r = @min(radius, rect.width / 2, rect.height / 2);
+    const distance = @min(y - rect.y, rect.y + rect.height - 1 - y);
     const dy = r -| distance;
     const cut = if (dy == 0) 0 else r - @as(usize, @intFromFloat(@sqrt(@as(f64, @floatFromInt(r * r - dy * dy)))));
-    return .{ rect.x + cut, rect.x + rect.w - cut };
+    return .{ rect.x + cut, rect.x + rect.width - cut };
 }
 
 test {

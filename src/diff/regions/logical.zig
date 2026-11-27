@@ -44,7 +44,7 @@ const shift_columns = 512;
 const shift_min_pixels = 16;
 
 /// Joins the retained boxes that together describe a single visible edit.
-pub noinline fn mergeLogical(boxes: []candidate.Candidate, before: Image, after: Image, scale: value.Scale, moves: []const value.Move) usize {
+pub noinline fn mergeLogical(boxes: []candidate.Candidate, pair: value.Pair, scale: value.Scale, moves: []const value.Move) usize {
     var len = boxes.len;
     var card_probes: usize = if (moves.len == 0) max_card_probes else 0;
     var i: usize = 0;
@@ -53,12 +53,12 @@ pub noinline fn mergeLogical(boxes: []candidate.Candidate, before: Image, after:
         while (j < len) {
             const a = boxes[i].region;
             const b = boxes[j].region;
-            const related = text_lines.sameLine(a, b, before, after, scale.devicePixels(text_lines.line_height)) or
-                stacked(a, b, before, after, scale.devicePixels(stack_gap)) or
-                shiftedSideways(a, b, before, after);
+            const related = text_lines.sameLine(a, b, pair, scale.devicePixels(text_lines.line_height)) or
+                stacked(a, b, pair, scale.devicePixels(stack_gap)) or
+                shiftedSideways(a, b, pair);
             const card = if (related or card_probes == 0) null else card: {
                 card_probes -= 1;
-                break :card commonCard(a, b, before, after, scale);
+                break :card commonCard(a, b, pair, scale);
             };
             if (!related and card == null) {
                 j += 1;
@@ -78,7 +78,7 @@ pub noinline fn mergeLogical(boxes: []candidate.Candidate, before: Image, after:
     return len;
 }
 
-noinline fn commonCard(a: Region, b: Region, before: Image, after: Image, scale: value.Scale) ?Box {
+noinline fn commonCard(a: Region, b: Region, pair: value.Pair, scale: value.Scale) ?Box {
     const p = a.before orelse return null;
     const q = b.before orelse return null;
     const r = a.after orelse return null;
@@ -94,12 +94,12 @@ noinline fn commonCard(a: Region, b: Region, before: Image, after: Image, scale:
     const span: columns.Span = .{ .left = bounds.deviceIndex(ink.x), .width = bounds.deviceIndex(ink.width) };
     const y: usize = bounds.deviceIndex(ink.y);
     const search = columns.CardSearch.compact(span, max_height, scale.devicePixels(card_corner_reach));
-    const old_card = columns.enclosingCard(before, span, .{ .left = 0, .width = before.width }, y, search) orelse return null;
-    if (old_card.top + old_card.height < @as(usize, bounds.deviceIndex(ink.bottom())) or
-        @as(f64, @floatFromInt(old_card.columns.width)) > max_width) return null;
-    const new_card = columns.enclosingCard(after, span, .{ .left = 0, .width = after.width }, y, search) orelse return null;
+    const old_card = columns.enclosingCard(pair.before, span, .{ .left = 0, .width = pair.before.width }, y, search) orelse return null;
+    if (old_card.bottom() < @as(usize, bounds.deviceIndex(ink.bottom())) or
+        @as(f64, @floatFromInt(old_card.width)) > max_width) return null;
+    const new_card = columns.enclosingCard(pair.after, span, .{ .left = 0, .width = pair.after.width }, y, search) orelse return null;
     if (!std.meta.eql(old_card, new_card)) return null;
-    return Box.fromPixels(old_card.columns.left, old_card.top, old_card.columns.width, old_card.height);
+    return Box.fromPixels(old_card.x, old_card.y, old_card.width, old_card.height);
 }
 
 fn removeCardParts(boxes: []candidate.Candidate, card: usize, cover: Box) usize {
@@ -117,12 +117,12 @@ fn removeCardParts(boxes: []candidate.Candidate, card: usize, cover: Box) usize 
     return len;
 }
 
-fn stacked(a: Region, b: Region, before: Image, after: Image, max_gap_px: f64) bool {
+fn stacked(a: Region, b: Region, pair: value.Pair, max_gap_px: f64) bool {
     if ((a.before == null) != (b.before == null) or (a.after == null) != (b.after == null)) return false;
     if (a.before != null and a.after != null) return false;
     const p = a.before orelse a.after orelse return false;
     const q = b.before orelse b.after orelse return false;
-    const image = if (a.before != null) before else after;
+    const image = if (a.before != null) pair.before else pair.after;
     const shared = @min(p.right(), q.right()) - @max(p.x, q.x);
     if (shared < stack_overlap * @min(p.width, q.width)) return false;
     const upper, const lower = if (p.y <= q.y) .{ p, q } else .{ q, p };
@@ -146,7 +146,7 @@ fn stacked(a: Region, b: Region, before: Image, after: Image, max_gap_px: f64) b
     return true;
 }
 
-noinline fn shiftedSideways(a: Region, b: Region, before: Image, after: Image) bool {
+noinline fn shiftedSideways(a: Region, b: Region, pair: value.Pair) bool {
     const p = a.before orelse return false;
     const q = b.before orelse return false;
     const pa = a.after orelse return false;
@@ -154,20 +154,20 @@ noinline fn shiftedSideways(a: Region, b: Region, before: Image, after: Image) b
     if (@abs(p.y - q.y) > 1 or @abs(p.bottom() - q.bottom()) > 1 or p.y != pa.y or q.y != qa.y) return false;
     // The collector has already bounded these whole pixel boxes to their image.
     const left: usize = bounds.deviceIndex(@min(p.x, q.x));
-    const right: usize = bounds.deviceIndex(@min(@max(p.right(), q.right()), @as(f64, @floatFromInt(@min(before.width, after.width)))));
+    const right: usize = bounds.deviceIndex(@min(@max(p.right(), q.right()), @as(f64, @floatFromInt(@min(pair.before.width, pair.after.width)))));
     const top: usize = bounds.deviceIndex(@min(p.y, q.y));
     const height: usize = bounds.deviceIndex(@max(p.bottom(), q.bottom()) - @as(f64, @floatFromInt(top)));
-    if (right <= left + 2 or height == 0 or top + height > @min(before.height, after.height)) return false;
+    if (right <= left + 2 or height == 0 or top + height > @min(pair.before.height, pair.after.height)) return false;
     const reach: usize = bounds.deviceIndex(@min(max_sideways_shift, @max(p.width, q.width)));
     const count: usize = @min(shift_samples, height);
     for (1..reach + 1) |distance| {
         for ([_]bool{ false, true }) |rightward| {
             const start = if (rightward) @max(left, distance) else left;
-            const end = if (rightward) right else @min(right, before.width -| distance);
+            const end = if (rightward) right else @min(right, pair.before.width -| distance);
             if (start >= end) continue;
             const from = if (rightward) left -| distance else left + distance;
             const stride: usize = 1 + (end - start - 1) / shift_columns;
-            const middle = shiftEvidence(before.row(top + height / 2), after.row(top + height / 2), start, end, from, stride);
+            const middle = shiftEvidence(pair.before.row(top + height / 2), pair.after.row(top + height / 2), start, end, from, stride);
             if (2 * middle.explained < middle.changed or middle.same == 0) continue;
             var seen: usize = 0;
             var same: usize = 0;
@@ -175,7 +175,7 @@ noinline fn shiftedSideways(a: Region, b: Region, before: Image, after: Image) b
             var explained: usize = 0;
             for (0..count) |i| {
                 const y = top + (2 * i + 1) * height / (2 * count);
-                const row = shiftEvidence(before.row(y), after.row(y), start, end, from, stride);
+                const row = shiftEvidence(pair.before.row(y), pair.after.row(y), start, end, from, stride);
                 seen += 1 + (end - start - 1) / stride;
                 same += row.same;
                 changed += row.changed;
@@ -219,10 +219,10 @@ test "one-sided stacks join across a blank seam but keep painted rows separate" 
         .{ .region = .{ .after = Box.fromPixels(6, 29, 36, 15) }, .pixels = 540 },
     };
     var boxes = parts;
-    try std.testing.expectEqual(@as(usize, 1), mergeLogical(&boxes, image, image, .one, &.{}));
+    try std.testing.expectEqual(@as(usize, 1), mergeLogical(&boxes, .{ .before = image, .after = image }, .one, &.{}));
     boxes = parts;
     pixels[20 * width + 20] = ink;
-    try std.testing.expectEqual(@as(usize, 2), mergeLogical(&boxes, image, image, .one, &.{}));
+    try std.testing.expectEqual(@as(usize, 2), mergeLogical(&boxes, .{ .before = image, .after = image }, .one, &.{}));
 }
 
 test {
@@ -243,7 +243,7 @@ test {
         .x = .init(160),
         .width = .init(24),
     }};
-    const len = mergeLogical(&candidates, before.view, after.view, .one, &row_moves);
+    const len = mergeLogical(&candidates, .{ .before = before.view, .after = after.view }, .one, &row_moves);
     var edits: [candidates.len]value.Region = undefined;
     for (edits[0..len], candidates[0..len]) |*edit, entry| edit.* = entry.region;
     try std.testing.expectEqual(@as(usize, 1), moves.keepMoves(&row_moves, edits[0..len], .one, Scale.one.devicePixels(moves.scroll_shift)));

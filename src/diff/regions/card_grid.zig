@@ -6,7 +6,6 @@ const bounds = @import("bounds.zig");
 const value = @import("../../value.zig");
 const pixel = @import("../pixel.zig");
 const Box = value.Box;
-const Image = value.Image;
 
 const min_grid_slots = 3;
 
@@ -17,7 +16,7 @@ const min_grid_card_extent = value.CssPx.init(32);
 const max_grid_gutter = value.CssPx.init(48);
 
 /// Pairs horizontally reflowed cards and leaves the unmatched card one-sided.
-pub fn pairCardGrid(boxes: []candidate.Candidate, before: Image, after: Image, scale: value.Scale) void {
+pub fn pairCardGrid(boxes: []candidate.Candidate, pair: value.Pair, scale: value.Scale) void {
     if (boxes.len < min_grid_slots or boxes.len > max_grid_slots) return;
     var slots: [candidate.max_regions]Box = undefined;
     const row = candidate.stationaryBoxes(boxes, &slots) orelse return;
@@ -36,8 +35,8 @@ pub fn pairCardGrid(boxes: []candidate.Candidate, before: Image, after: Image, s
         top = @min(top, slot.y);
         bottom = @max(bottom, slot.bottom());
     }
-    const old_to_left = shiftedGrid(before, after, row, bounds.deviceIndex(top), bounds.deviceIndex(bottom));
-    if (!old_to_left and !shiftedGrid(after, before, row, bounds.deviceIndex(top), bounds.deviceIndex(bottom))) return;
+    const old_to_left = shiftedGrid(pair, row, bounds.deviceIndex(top), bounds.deviceIndex(bottom));
+    if (!old_to_left and !shiftedGrid(pair.reversed(), row, bounds.deviceIndex(top), bounds.deviceIndex(bottom))) return;
     // Each translated slot has an exact counterpart. The only unpaired
     // slot is the card at the start of the row, in either direction.
     boxes[0].region = if (old_to_left) .{ .before = first } else .{ .after = first };
@@ -50,18 +49,18 @@ fn boxLeftOf(_: void, a: Box, b: Box) bool {
     return a.x < b.x;
 }
 
-fn shiftedGrid(before: Image, after: Image, slots: []const Box, top: usize, bottom: usize) bool {
+fn shiftedGrid(pair: value.Pair, slots: []const Box, top: usize, bottom: usize) bool {
     const width: usize = bounds.deviceIndex(slots[0].width);
     const last: usize = bounds.deviceIndex(slots[slots.len - 1].x);
-    const background = after.row(top)[last];
+    const background = pair.after.row(top)[last];
     for (top..bottom) |y| {
-        for (after.rowSegment(y, last, width)) |p| if (!pixel.same(p, background)) return false;
+        for (pair.after.rowSegment(y, last, width)) |p| if (!pixel.same(p, background)) return false;
     }
     for (slots[1..], slots[0 .. slots.len - 1]) |old, new| {
         const from: usize = bounds.deviceIndex(old.x);
         const to: usize = bounds.deviceIndex(new.x);
         for (top..bottom) |y| {
-            if (!pixel.sameRun(before.rowSegment(y, from, width), after.rowSegment(y, to, width))) return false;
+            if (!pixel.sameRun(pair.before.rowSegment(y, from, width), pair.after.rowSegment(y, to, width))) return false;
         }
     }
     return true;
