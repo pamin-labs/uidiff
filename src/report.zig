@@ -45,7 +45,8 @@ pub const Move = struct {
     /// Number of source columns in the block.
     width: usize,
 
-    fn convert(move: value.Move) Move {
+    /// Converts a comparison's move to its wire form.
+    pub fn convert(move: value.Move) Move {
         return .{
             .before = .{ .y = move.before.y, .height = move.before.height },
             .after = .{ .y = move.after.y, .height = move.after.height },

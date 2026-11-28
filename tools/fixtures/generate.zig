@@ -8,7 +8,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const report = uidiff.report;
 
-const Pixel = [4]u8;
+const Pixel = uidiff.Pixel;
 const Palette = struct { background: u8, chrome: u8, field: u8, ink: u8, highlight: u8 };
 /// A rectangle in logical pixels.
 const Rect = struct { x: usize, y: usize, width: usize, height: usize };
@@ -48,10 +48,15 @@ const Canvas = struct {
         for (rect.y * scale..(rect.y + rect.height) * scale) |y|
             @memset(self.pixels[y * self.width + x ..][0..width], color);
     }
+
+    fn image(self: Canvas) uidiff.Image {
+        return .{ .pixels = self.pixels, .width = self.width, .height = self.height };
+    }
 };
 
 const GenerateError = std.process.Args.ToSliceError || Allocator.Error || encode.EncodeError || uidiff.EncodeError ||
-    Io.Dir.CreateDirPathError || Io.Dir.CreateDirPathOpenError || Io.Dir.WriteFileError || error{InvalidArguments};
+    Io.Dir.CreateDirPathError || Io.Dir.CreateDirPathOpenError || Io.Dir.WriteFileError || uidiff.CompareError ||
+    error{ InvalidArguments, UnexpectedMoves };
 
 const seed = 0x7c2a_4f91;
 const margin = 16;
@@ -202,7 +207,13 @@ fn generate(io: Io, allocator: Allocator, out: Io.Dir, comptime spec: cases.Case
             .{ .number = 2, .kind = .inserted, .before = null, .after = padded(revealed) },
         },
     };
-    const expected = .{ .version = report.version, .regions = regions, .width = old.width, .height = old.height };
+    const comparison = try uidiff.compare(allocator, .{ .before = before.image(), .after = after.image() }, .{ .scale = .{ .factor = cases.scale } });
+    defer comparison.deinit(allocator);
+    const moves = try allocator.alloc(report.Move, comparison.moves.len);
+    defer allocator.free(moves);
+    for (moves, comparison.moves) |*move, found| move.* = .convert(found);
+    try checkMoves(moves, drawnShift(spec.change));
+    const expected: report.Report = .{ .version = report.version, .regions = regions, .width = old.width, .height = old.height, .moves = moves };
     var output = Io.Writer.Allocating.init(allocator);
     defer output.deinit();
     try std.json.Stringify.value(expected, .{ .whitespace = .indent_2 }, &output.writer);
@@ -258,6 +269,27 @@ fn paintHeading(canvas: Canvas, x: usize, y: usize, palette: Palette, side: case
         canvas.paint(.{ .x = start + 1, .y = y, .width = 1, .height = heading_height }, palette.ink);
         canvas.paint(.{ .x = start + 2, .y = y, .width = 1, .height = heading_height }, right);
     }
+}
+
+/// The vertical displacement a case draws, in logical pixels, or null when nothing moves.
+fn drawnShift(change: cases.Change) ?isize {
+    return switch (change) {
+        .identical, .edit => null,
+        .insert, .footer_insert, .repeated_tail => row_step,
+        .column_insert, .moved_heading => settings_shift,
+        .banner_added => banner_height,
+        .banner_removed => -banner_height,
+        .scroll_up => -@as(isize, scroll_rows),
+    };
+}
+
+/// The comparison sets each move's rows; the drawing fixes how far they moved.
+fn checkMoves(moves: []const report.Move, shift: ?isize) error{UnexpectedMoves}!void {
+    const expected = shift orelse return if (moves.len == 0) {} else error.UnexpectedMoves;
+    if (moves.len != 1) return error.UnexpectedMoves;
+    const move = moves[0];
+    const found = @as(isize, @intCast(move.after.y)) - @as(isize, @intCast(move.before.y));
+    if (found != expected * cases.scale or move.before.height != move.after.height) return error.UnexpectedMoves;
 }
 
 fn gray(tone: u8) Pixel {

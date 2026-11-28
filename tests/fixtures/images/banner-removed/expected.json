@@ -25,5 +25,19 @@
     }
   ],
   "width": 780,
-  "height": 640
+  "height": 640,
+  "moves": [
+    {
+      "before": {
+        "y": 80,
+        "height": 560
+      },
+      "after": {
+        "y": 0,
+        "height": 560
+      },
+      "x": 0,
+      "width": 780
+    }
+  ]
 }
