@@ -312,10 +312,10 @@ fn padded(rect: Rect) report.Box {
     const scale = cases.scale;
     const space = uidiff.region_padding;
     return .{
-        .x = @floatFromInt((rect.x - space) * scale),
-        .y = @floatFromInt((rect.y - space) * scale),
-        .width = @floatFromInt((rect.width + 2 * space) * scale),
-        .height = @floatFromInt((rect.height + 2 * space) * scale),
+        .x = (rect.x - space) * scale,
+        .y = (rect.y - space) * scale,
+        .width = (rect.width + 2 * space) * scale,
+        .height = (rect.height + 2 * space) * scale,
     };
 }
 

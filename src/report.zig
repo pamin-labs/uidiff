@@ -2,16 +2,24 @@
 const std = @import("std");
 const value = @import("value.zig");
 
-/// Version-one coordinates in device pixels.
+/// Version-one coordinates in whole device pixels.
 pub const Box = struct {
     /// Left edge in source device pixels.
-    x: f64,
+    x: usize,
     /// Top edge in source device pixels.
-    y: f64,
+    y: usize,
     /// Horizontal extent in source device pixels.
-    width: f64,
+    width: usize,
     /// Vertical extent in source device pixels.
-    height: f64,
+    height: usize,
+
+    /// Converts a box that passed Region.check to its wire form.
+    fn convert(box: ?value.Box) ?Box {
+        const b = box orelse return null;
+        // Region.check accepts only whole, non-negative coordinates within
+        // max_extent, so each conversion is exact and in range.
+        return .{ .x = @intFromFloat(b.x), .y = @intFromFloat(b.y), .width = @intFromFloat(b.width), .height = @intFromFloat(b.height) };
+    }
 };
 
 /// Version-one region. An absent side is serialized as null.
@@ -24,6 +32,11 @@ pub const Region = struct {
     before: ?Box,
     /// Box on the after image, or null when absent on that side.
     after: ?Box,
+
+    /// Converts a region that passed Region.check to its wire form.
+    fn convert(region: value.Region) Region {
+        return .{ .number = region.number, .kind = region.kind(), .before = .convert(region.before), .after = .convert(region.after) };
+    }
 };
 
 /// Version-one row start and length in source device pixels.
@@ -73,20 +86,6 @@ pub const Report = struct {
 /// Output failures, or a region or move that fails its check.
 pub const PixelWriteError = std.Io.Writer.Error || value.Region.CheckError || value.Move.CheckError;
 
-const PixelBox = struct {
-    x: usize,
-    y: usize,
-    width: usize,
-    height: usize,
-
-    fn fromValidated(box: ?value.Box) ?PixelBox {
-        const b = box orelse return null;
-        return .{ .x = @intFromFloat(b.x), .y = @intFromFloat(b.y), .width = @intFromFloat(b.width), .height = @intFromFloat(b.height) };
-    }
-};
-
-const PixelRegion = struct { number: usize, kind: value.Kind, before: ?PixelBox, after: ?PixelBox };
-
 /// Schema version emitted with each report.
 pub const version: u32 = 1;
 
@@ -108,12 +107,7 @@ pub fn writeWholePixels(output: *std.Io.Writer, regions: []const value.Region, c
             .height => try json.write(canvas.height),
             .regions => {
                 try json.beginArray();
-                for (regions) |region| try json.write(PixelRegion{
-                    .number = region.number,
-                    .kind = region.kind(),
-                    .before = PixelBox.fromValidated(region.before),
-                    .after = PixelBox.fromValidated(region.after),
-                });
+                for (regions) |region| try json.write(Region.convert(region));
                 try json.endArray();
             },
             .moves => {
