@@ -31,16 +31,16 @@ pub const keys = band.keys;
 
 /// Reuses the frontier, row matches, and frequency map across column alignments.
 pub const Workspace = struct {
-    raw: std.ArrayList(band.Match) = .empty,
-    content: std.ArrayList(band.Match) = .empty,
-    frontier: std.ArrayList(search.Diagonal) = .empty,
+    raw: []band.Match = &.{},
+    content: []band.Match = &.{},
+    frontier: []search.Diagonal = &.{},
     frequencies: std.AutoHashMapUnmanaged(u64, usize) = .empty,
 
     /// Releases all retained alignment buffers.
     pub fn deinit(self: *Workspace, allocator: Allocator) void {
-        self.raw.deinit(allocator);
-        self.content.deinit(allocator);
-        self.frontier.deinit(allocator);
+        value.freeUnfilled(band.Match, allocator, self.raw);
+        value.freeUnfilled(band.Match, allocator, self.content);
+        value.freeUnfilled(search.Diagonal, allocator, self.frontier);
         self.frequencies.deinit(allocator);
         self.* = .{};
     }
@@ -76,9 +76,7 @@ pub fn matchBands(allocator: Allocator, before: band.Keys, after: band.Keys, lim
         if (insertion.clippedInsertion(main, limit, bands)) |aligned| return aligned;
     }
     const overlap = @min(before.len, after.len);
-    try scratch.raw.ensureTotalCapacityPrecise(allocator, overlap);
-    scratch.raw.items.len = overlap;
-    const raw = scratch.raw.items;
+    const raw = try value.reserveUnfilled(band.Match, allocator, &scratch.raw, overlap);
     // Both key slices come from validated image heights, which fit u32.
     const budget: usize = @min(search.max_edits, @max(before.len, after.len));
     const counts = &scratch.frequencies;
@@ -97,9 +95,7 @@ pub fn matchBands(allocator: Allocator, before: band.Keys, after: band.Keys, lim
     const new_background = anchors.background(counts, after);
 
     const frontier_budget: usize = @min(search.max_edits, before.len + after.len);
-    try scratch.frontier.ensureTotalCapacityPrecise(allocator, 2 * frontier_budget + 3);
-    scratch.frontier.items.len = 2 * frontier_budget + 3;
-    const frontier = scratch.frontier.items;
+    const frontier = try value.reserveUnfilled(search.Diagonal, allocator, &scratch.frontier, 2 * frontier_budget + 3);
     const distance = main.distance(budget, frontier) orelse return null;
     // A local edit's two-sided cost competes with a motion path plus the
     // penalty for leaving the alignment and returning to it.
@@ -117,9 +113,7 @@ pub fn matchBands(allocator: Allocator, before: band.Keys, after: band.Keys, lim
         }
     }
     const equal = main.matches(distance, frontier, raw) orelse return null;
-    try scratch.content.ensureTotalCapacityPrecise(allocator, equal.len);
-    scratch.content.items.len = equal.len;
-    const content = scratch.content.items;
+    const content = try value.reserveUnfilled(band.Match, allocator, &scratch.content, equal.len);
 
     var content_rows: usize = 0;
     const interior = equal.len != 0 and (equal[equal.len - 1].before != equal.len - 1 or equal[equal.len - 1].after != equal.len - 1);

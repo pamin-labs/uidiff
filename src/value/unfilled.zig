@@ -12,6 +12,17 @@ pub fn allocUnfilled(comptime T: type, allocator: std.mem.Allocator, count: usiz
     return std.mem.bytesAsSlice(T, aligned[0..size]);
 }
 
+/// Returns count elements of unfilled storage, replacing a shorter block
+/// without copying: callers write every element before reading it.
+pub fn reserveUnfilled(comptime T: type, allocator: std.mem.Allocator, storage: *[]T, count: usize) std.mem.Allocator.Error![]T {
+    if (storage.len < count) {
+        freeUnfilled(T, allocator, storage.*);
+        storage.* = &.{};
+        storage.* = try allocUnfilled(T, allocator, count);
+    }
+    return storage.*[0..count];
+}
+
 /// Releases storage obtained from allocUnfilled without refilling it.
 pub fn freeUnfilled(comptime T: type, allocator: std.mem.Allocator, data: []const T) void {
     if (data.len == 0) return;

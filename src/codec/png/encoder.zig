@@ -90,8 +90,10 @@ pub fn writeRowsWithIo(io: ?Io, allocator: Allocator, size: value.Size, source: 
 fn writeSerial(allocator: Allocator, size: value.Size, source: anytype, output: *Writer, rgb_only: bool) zlib.EncodeError!void {
     const row_bytes = size.width * @sizeOf(value.Pixel);
     const staged_rows: usize = if (@TypeOf(source).staged) strip_rows + 1 else 0;
-    const buffer = try allocator.alignedAlloc(u8, .@"4", zlib.chunk_bytes + row_bytes + staged_rows * row_bytes);
-    defer allocator.free(buffer);
+    const buffer_bytes = zlib.chunk_bytes + row_bytes + staged_rows * row_bytes;
+    const words = try value.allocUnfilled(u32, allocator, unfilledWords(buffer_bytes));
+    defer value.freeUnfilled(u32, allocator, words);
+    const buffer = std.mem.sliceAsBytes(words)[0..buffer_bytes];
     const filtered = buffer[zlib.chunk_bytes..][0..row_bytes];
     const staging = std.mem.bytesAsSlice(value.Pixel, buffer[zlib.chunk_bytes + row_bytes ..]);
     var above: []const u8 = &.{};
@@ -127,8 +129,12 @@ fn writeStrips(io: ?Io, allocator: Allocator, size: value.Size, source: anytype,
     const compressed_bytes = zlib.Strip.outputBound(strip_bytes);
     const slot_bytes = zlib.history_bytes + strip_bytes + compressed_bytes;
     const row_bytes = size.width * @sizeOf(value.Pixel);
-    const buffer = try allocator.alignedAlloc(u8, .@"4", 3 * row_bytes + workers * slot_bytes);
-    defer allocator.free(buffer);
+    // Each slot's output area is written only up to its compressed size, so
+    // filled storage would touch pages the strip never reads.
+    const buffer_bytes = 3 * row_bytes + workers * slot_bytes;
+    const words = try value.allocUnfilled(u32, allocator, unfilledWords(buffer_bytes));
+    defer value.freeUnfilled(u32, allocator, words);
+    const buffer = std.mem.sliceAsBytes(words)[0..buffer_bytes];
     const rows = std.mem.bytesAsSlice(value.Pixel, buffer[0 .. 2 * row_bytes]);
     const filtered = buffer[2 * row_bytes ..][0..row_bytes];
     const slots = buffer[3 * row_bytes ..];
@@ -198,6 +204,10 @@ fn writeStrips(io: ?Io, allocator: Allocator, size: value.Size, source: anytype,
         }
     }
     try stream.finish();
+}
+
+fn unfilledWords(bytes: usize) usize {
+    return std.math.divCeil(usize, bytes, @sizeOf(u32)) catch unreachable;
 }
 
 fn filterRow(row: []const u8, above: []const u8, filtered: []u8, rgb_only: bool) Filtered {
