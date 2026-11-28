@@ -3,6 +3,7 @@ const std = @import("std");
 const uidiff = @import("uidiff");
 const args = @import("cli/args.zig");
 const pages = @import("cli/pages.zig");
+const Status = @import("cli/status.zig").Status;
 const cli_options = @import("cli_options");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
@@ -10,7 +11,6 @@ const Allocator = std.mem.Allocator;
 /// Prints the panic message without linking stack-trace formatting.
 pub const panic = std.debug.simple_panic;
 
-const Exit = enum(u8) { unchanged = 0, changed = 1, failed = 2 };
 const RunError = std.process.Args.ToSliceError || uidiff.FileCompareError || uidiff.report.PixelWriteError ||
     Io.File.Writer.Error;
 
@@ -47,12 +47,12 @@ pub fn main(init: std.process.Init.Minimal) MainError!u8 {
         } else {
             log.err("{t}", .{err});
         }
-        break :status Exit.failed;
+        break :status Status.failed;
     };
     return @backingInt(status);
 }
 
-fn run(io: Io, allocator: Allocator, input: std.process.Args, arena: Allocator, diagnostics: *uidiff.Diagnostics) RunError!Exit {
+fn run(io: Io, allocator: Allocator, input: std.process.Args, arena: Allocator, diagnostics: *uidiff.Diagnostics) RunError!Status {
     const argv = try input.toSlice(arena);
     if (args.infoRequest(argv)) |request| {
         diagnostics.path = stdout_name;
@@ -79,7 +79,7 @@ fn run(io: Io, allocator: Allocator, input: std.process.Args, arena: Allocator, 
     write(&stdout.interface, command.output, result) catch |err| return stdout.err orelse err;
     stdout.interface.flush() catch |err| return stdout.err orelse err;
     diagnostics.path = null;
-    return if (result.regions.len == 0) .unchanged else .changed;
+    return Status.of(result);
 }
 
 fn write(output: *Io.Writer, format: args.Output, result: uidiff.Comparison) uidiff.report.PixelWriteError!void {
@@ -108,6 +108,7 @@ noinline fn logPathError(argument: []const u8, reason: []const u8) void {
 test {
     std.testing.refAllDecls(args);
     std.testing.refAllDecls(pages);
+    std.testing.refAllDecls(@import("cli/status.zig"));
 }
 
 test {
