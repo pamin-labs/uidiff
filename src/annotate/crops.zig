@@ -20,7 +20,15 @@ const Pixel = value.Pixel;
 const Image = value.Image;
 
 /// Maps a rectangle of source pixels to a rectangle on the sheet.
-pub const Crop = struct { from: SourceRect, to: Rect };
+pub const Crop = struct {
+    from: SourceRect,
+    to: Rect,
+
+    /// Returns the crop's sheet height with its border above and below.
+    pub fn framedHeight(self: Crop, pane_layout: PaneLayout) usize {
+        return self.to.height + 2 * pane_layout.px(detail_border_px);
+    }
+};
 
 /// A common source-to-sheet scale, before rounding pane edges to whole pixels.
 pub const Zoom = struct {
@@ -57,6 +65,7 @@ pub const max_crop_width = 360;
 
 const max_crop_h = 220;
 const detail_inset_px = 3;
+const detail_border_px = 3;
 const detail_zoom_target_px = 120;
 const base_context_px = 20;
 const edge_trim_divisor = 32;
@@ -96,7 +105,7 @@ pub fn cropPair(pair: value.Pair, boxes: std.EnumArray(value.Side, ?SourceRect),
 /// Draws the detail crop or its absent-side label on one row.
 pub noinline fn drawDetail(line: Line, patch: ?Crop, image: Image, x: usize, slot: usize, top: usize, height: usize, kind: value.Kind, pane_layout: PaneLayout) void {
     if (patch) |p| {
-        const border = pane_layout.px(3);
+        const border = pane_layout.px(detail_border_px);
         const rect = p.to.outset(border);
         if (!rect.containsRow(line.y)) return;
         paintCrop(line, p, image);
