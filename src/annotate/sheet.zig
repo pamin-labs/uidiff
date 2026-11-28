@@ -108,7 +108,7 @@ pub const Rows = struct {
         const b = sheet_plan.panes.get(.after);
         const left_x = a.x;
         const labels = sheet_plan.labels;
-        if (pane_layout.panoramic or y < a.y or y >= sheet_plan.pane_end) @memset(pixels, page);
+        if (pane_layout.arrangement == .panoramic or y < a.y or y >= sheet_plan.pane_end) @memset(pixels, page);
         if (y < a.y) {
             const title = labels.title;
             if (title.containsRow(y)) line.text(title.x, title.y, sheet_plan.heading.bytes(), .bold, title.size, ink);
@@ -118,7 +118,7 @@ pub const Rows = struct {
             };
             const caption = sheet_plan.captions.bounds.get(.before);
             if (caption.containsRow(y)) line.text(caption.x, caption.y, copy.before, .bold, sheet_plan.captions.size, secondary);
-        } else if (!pane_layout.panoramic and y < sheet_plan.pane_end) {
+        } else if (pane_layout.arrangement == .side_by_side and y < sheet_plan.pane_end) {
             line.fill(0, left_x, page);
             line.fill(b.right(), pixels.len, page);
             ribbons.drawGutter(line, y - a.y, pane_layout, sheet_plan.panes, sheet_plan.ribbons);
@@ -128,7 +128,7 @@ pub const Rows = struct {
         const both_panes: geometry.Rect = .{ .x = a.x, .y = a.y, .width = 0, .height = sheet_plan.pane_end - a.y };
         if (nearPane(y, both_panes, pane_layout)) {
             for (&sheet_plan.sources.values, &sheet_plan.panes.values) |*source, rect| {
-                if (!pane_layout.panoramic or nearPane(y, rect, pane_layout)) drawPane(line, source, rect.x, rect.y, pane_layout);
+                if (pane_layout.arrangement == .side_by_side or nearPane(y, rect, pane_layout)) drawPane(line, source, rect.x, rect.y, pane_layout);
             }
         }
         const badge_reach = overviewDiameter(pane_layout);
@@ -142,20 +142,21 @@ pub const Rows = struct {
         if (sheet_plan.details.len != 0 and y >= sheet_plan.pane_end) {
             const heading = labels.details;
             if (heading.containsRow(y)) {
-                const title = if (pane_layout.panoramic) copy.at_full_size else copy.detail_section_title;
+                const title = if (pane_layout.arrangement == .panoramic) copy.at_full_size else copy.detail_section_title;
                 line.text(heading.x, heading.y, title, .bold, heading.size, ink);
             }
-            if (pane_layout.panoramic) {
+            if (pane_layout.arrangement == .panoramic) {
                 self.drawFocus(line);
                 return pixels;
             }
             for (sheet_plan.details) |*detail| {
-                if (y < detail.top or y >= detail.top + detail.height) continue;
+                const close_ups = &detail.view.side_by_side;
+                if (y < close_ups.top or y >= close_ups.top + close_ups.height) continue;
                 const diameter = labels.detail_badge;
-                badge(line, .{ .x = left_x, .y = detail.top, .width = diameter, .height = diameter }, detail.region.kind(), detail.number.bytes(), pane_layout);
-                line.text(labels.detail_kind_x, detail.top + labels.detail_kind_offset, kindName(detail.region.kind()), .regular, labels.body_size, secondary);
-                for (&detail.crops.values, &sheet_plan.sources.values, &sheet_plan.detail_x.values) |patch, *source, x| {
-                    drawDetail(line, patch, source.image, x, sheet_plan.detail_slot_width, detail.top, detail.height, detail.region.kind(), pane_layout);
+                badge(line, .{ .x = left_x, .y = close_ups.top, .width = diameter, .height = diameter }, detail.region.kind(), detail.number.bytes(), pane_layout);
+                line.text(labels.detail_kind_x, close_ups.top + labels.detail_kind_offset, kindName(detail.region.kind()), .regular, labels.body_size, secondary);
+                for (&close_ups.crops.values, &sheet_plan.sources.values, &sheet_plan.detail_x.values) |patch, *source, x| {
+                    drawDetail(line, patch, source.image, x, sheet_plan.detail_slot_width, close_ups.top, close_ups.height, detail.region.kind(), pane_layout);
                 }
                 break;
             }
@@ -182,8 +183,9 @@ pub const Rows = struct {
                 }
             }
             for (sheet_plan.details) |*detail| {
-                if (detail.focus != index) continue;
-                for (detail.focus_marks.values, detail.focus_badges.values) |mark, location| {
+                const shown = &detail.view.panoramic;
+                if (shown.focus != index) continue;
+                for (shown.marks.values, shown.badges.values) |mark, location| {
                     drawMark(line, mark, location, detail.region.kind(), &detail.number, sheet_plan.pane_layout);
                 }
             }

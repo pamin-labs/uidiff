@@ -230,7 +230,7 @@ test "paired close-ups render enlarged content at the same zoom" {
     for (new.y..new.bottom()) |y| @memset(after_pixels[y * width + new.x ..][0..new.width], palette.ink);
     const before: Image = .{ .width = width, .height = height, .pixels = &before_pixels };
     const after: Image = .{ .width = width, .height = height, .pixels = &after_pixels };
-    const pane_layout: PaneLayout = .{ .panoramic = false, .percent = 100, .numerator = 1, .denominator = 1 };
+    const pane_layout: PaneLayout = .{ .arrangement = .side_by_side, .percent = 100, .numerator = 1, .denominator = 1 };
     const pair = cropPair(.{ .before = before, .after = after }, .init(.{ .before = old, .after = new }), .initFill(0), 0, max_crop_width, pane_layout);
     const a = pair.get(.before).?;
     const b = pair.get(.after).?;
@@ -335,7 +335,7 @@ test "a wide close-up keeps a neighbouring partial line out of its context" {
     var pixels: [width * height]Pixel = @splat(palette.white);
     for (113..153) |y| pixels[y * width + 180] = palette.ink;
     const image: Image = .{ .width = width, .height = height, .pixels = &pixels };
-    const pane_layout: PaneLayout = .{ .panoramic = false, .percent = 100, .numerator = 1, .denominator = 1 };
+    const pane_layout: PaneLayout = .{ .arrangement = .side_by_side, .percent = 100, .numerator = 1, .denominator = 1 };
     const edit: SourceRect = .{ .x = 30, .y = 50, .width = 380, .height = 50 };
     const patch = singleCrop(image, edit, max_crop_width, pane_layout);
     try std.testing.expect(patch.from.bottom() >= edit.bottom());
