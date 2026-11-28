@@ -5,7 +5,7 @@ const uidiff = @import("uidiff");
 const Allocator = std.mem.Allocator;
 
 /// The files and options of one comparison. Slices borrow the arguments or
-/// the request line.
+/// the arena a request line was parsed into.
 pub const Request = struct {
     paths: uidiff.Paths,
     options: uidiff.FileCompareOptions = .{},
@@ -28,7 +28,8 @@ pub const ParseError = error{ InvalidInput, InvalidScale, OutOfMemory };
 
 const max_fuzz_line_bytes = 64;
 
-/// Parses a request line. Strings borrow line or live in arena.
+/// Parses a request line. Its strings live in arena, so the caller may
+/// reuse line's bytes once it returns.
 pub fn parseLine(arena: Allocator, line: []const u8) ParseError!Request {
     var scanner: std.json.Scanner = .initCompleteInput(arena, line);
     const fields = readLine(arena, &scanner) catch |err| switch (err) {
@@ -75,7 +76,7 @@ fn readLine(arena: Allocator, scanner: *std.json.Scanner) !Line {
         if (seen.contains(field)) return error.InvalidInput;
         seen.insert(field);
         // null reads as absent, as std.json reads it into an optional field.
-        values.set(field, switch (try scanner.nextAlloc(arena, .alloc_if_needed)) {
+        values.set(field, switch (try scanner.nextAlloc(arena, .alloc_always)) {
             .string, .allocated_string => |text| text,
             .null => null,
             else => return error.InvalidInput,
