@@ -335,16 +335,6 @@ fn filterPaeth(out: []u8, current: []const u8, above: []const u8) void {
     }
 }
 
-fn encodeOnce(allocator: Allocator, image: Image) !void {
-    var out: Writer.Allocating = .init(allocator);
-    defer out.deinit();
-    write(allocator, image, &out.writer) catch |err| switch (err) {
-        // The allocating writer reports its own allocation failure as a write failure.
-        error.WriteFailed => return error.OutOfMemory,
-        else => |other| return other,
-    };
-}
-
 test "an encoded image starts with the PNG signature and ends with IEND" {
     const pixels = [_]value.Pixel{ .{ 1, 2, 3, 255 }, .{ 4, 5, 6, 128 } };
     var out: Writer.Allocating = .init(std.testing.allocator);
@@ -368,8 +358,19 @@ test "each emitted chunk carries the PNG checksum" {
 }
 
 test "encoding releases each allocation on failure" {
+    const encode = struct {
+        fn once(allocator: Allocator, image: Image) !void {
+            var out: Writer.Allocating = .init(allocator);
+            defer out.deinit();
+            write(allocator, image, &out.writer) catch |err| switch (err) {
+                // The allocating writer reports its own allocation failure as a write failure.
+                error.WriteFailed => return error.OutOfMemory,
+                else => |other| return other,
+            };
+        }
+    };
     const pixels: [4 * 4]value.Pixel = @splat(.{ 1, 2, 3, 255 });
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, encodeOnce, .{Image{ .width = 4, .height = 4, .pixels = &pixels }});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, encode.once, .{Image{ .width = 4, .height = 4, .pixels = &pixels }});
 }
 
 test "staged PNG rows preserve the predictor across two strip boundaries and a tail" {
