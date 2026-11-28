@@ -13,7 +13,7 @@ const stb = @import("png/stb.zig");
 /// Malformed PNG bytes, a decode past the memory budget, or allocation failure.
 pub const DecodeError = decoder.DecodeError;
 /// Allocation, invalid image or output failures.
-pub const EncodeError = zlib.EncodeError;
+pub const EncodeError = encoder.EncodeError;
 /// Decodes the probed dimensions through the scanline or legacy decoder.
 pub const decode = decoder.decode;
 /// Encodes a valid image. Allocates the compressor's window and one filtered row.

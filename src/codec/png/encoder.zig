@@ -14,6 +14,9 @@ const Image = value.Image;
 
 const Filtered = struct { method: png_format.Filter, bytes: []const u8 };
 
+/// Allocation, invalid image or output failures while encoding.
+pub const EncodeError = zlib.CompressError || Image.Invalid;
+
 const BorrowedRows = struct {
     image: Image,
 
@@ -43,13 +46,13 @@ const filter_sample_pixels = 6;
 const filter_switch_margin = 4;
 
 /// Encodes a valid image. Allocates the compressor and its row buffers.
-pub fn write(allocator: Allocator, image: Image, output: *Writer) zlib.EncodeError!void {
+pub fn write(allocator: Allocator, image: Image, output: *Writer) EncodeError!void {
     if (!image.valid()) return error.InvalidImage;
     return writeRows(allocator, image.size(), BorrowedRows{ .image = image }, output);
 }
 
 /// Encodes a PNG from a row source. See writeRowsWithIo for the source contract.
-pub fn writeRows(allocator: Allocator, size: value.Size, source: anytype, output: *Writer) zlib.EncodeError!void {
+pub fn writeRows(allocator: Allocator, size: value.Size, source: anytype, output: *Writer) EncodeError!void {
     return writeRowsWithIo(null, allocator, size, source, output);
 }
 
@@ -59,7 +62,7 @@ pub fn writeRows(allocator: Allocator, size: value.Size, source: anytype, output
 /// selects serial buffering. A staged source can return scratch or a row
 /// to copy immediately. A borrowed source receives empty scratch in serial
 /// mode and keeps each row readable through the next source call.
-pub fn writeRowsWithIo(io: ?Io, allocator: Allocator, size: value.Size, source: anytype, output: *Writer) zlib.EncodeError!void {
+pub fn writeRowsWithIo(io: ?Io, allocator: Allocator, size: value.Size, source: anytype, output: *Writer) EncodeError!void {
     const Source = @TypeOf(source);
     if (!@hasDecl(Source, "row"))
         @compileError("a PNG row source must provide row(y, scratch) returning []const Pixel");
@@ -87,7 +90,7 @@ pub fn writeRowsWithIo(io: ?Io, allocator: Allocator, size: value.Size, source: 
     try zlib.chunk(output, png_format.iend_type, "");
 }
 
-fn writeSerial(allocator: Allocator, size: value.Size, source: anytype, output: *Writer, rgb_only: bool) zlib.EncodeError!void {
+fn writeSerial(allocator: Allocator, size: value.Size, source: anytype, output: *Writer, rgb_only: bool) EncodeError!void {
     const row_bytes = size.width * @sizeOf(value.Pixel);
     const staged_rows: usize = if (@TypeOf(source).staged) strip_rows + 1 else 0;
     const buffer_bytes = zlib.chunk_bytes + row_bytes + staged_rows * row_bytes;
@@ -125,7 +128,7 @@ fn writeSerial(allocator: Allocator, size: value.Size, source: anytype, output: 
     try compress.finish();
 }
 
-fn writeStrips(io: ?Io, allocator: Allocator, size: value.Size, source: anytype, output: *Writer, rgb_only: bool, encoded_row_bytes: usize, workers: usize) zlib.EncodeError!void {
+fn writeStrips(io: ?Io, allocator: Allocator, size: value.Size, source: anytype, output: *Writer, rgb_only: bool, encoded_row_bytes: usize, workers: usize) EncodeError!void {
     const rows_per_strip = @max(1, target_strip_bytes / encoded_row_bytes);
     const strip_bytes = rows_per_strip * encoded_row_bytes;
     const compressed_bytes = zlib.Strip.outputBound(strip_bytes);
@@ -149,7 +152,7 @@ fn writeStrips(io: ?Io, allocator: Allocator, size: value.Size, source: anytype,
         try stream.init(&backing);
         initialized += 1;
     }
-    var pending: [max_strip_workers]?Io.Future(zlib.EncodeError!zlib.Strip.Result) = @splat(null);
+    var pending: [max_strip_workers]?Io.Future(zlib.CompressError!zlib.Strip.Result) = @splat(null);
     defer for (pending[0..workers]) |*slot| {
         if (slot.*) |*task| {
             // The primary operation already returned its error. Wait before
