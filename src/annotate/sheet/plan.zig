@@ -327,7 +327,7 @@ fn layoutCaptions(pane_layout: PaneLayout, panes: geometry.SideRects, width: usi
     while (size > 1 and (textWidth(.bold, size, copy.before) > available_before or
         textWidth(.bold, size, copy.after) > width - panes.get(.after).x)) size -= 1;
     var result: Captions = .{ .size = size, .bounds = undefined };
-    for (panes.values, [_][]const u8{ copy.before, copy.after }, &result.bounds.values) |pane, label, *bounds| {
+    for (panes.values, copy.side_names.values, &result.bounds.values) |pane, label, *bounds| {
         bounds.* = .{ .x = pane.x, .y = pane.y - pane_layout.px(caption_offset), .width = textWidth(.bold, size, label), .height = text.Face.bold.height(size) };
     }
     return result;
