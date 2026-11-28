@@ -47,13 +47,15 @@ pub const Box = struct {
     }
 
     /// Accepts whole, non-negative pixel coordinates with a positive area
-    /// that lie within an image of the given size. NaN fails every test.
+    /// that lie within an image of the given size and within max_extent, so
+    /// each converts exactly to usize. NaN fails every test.
     fn fits(self: Self, size: Size) bool {
         const geometry: @Vector(4, f64) = .{ self.x, self.y, self.width, self.height };
         const zero: @Vector(4, f64) = @splat(0);
+        const width: f64 = @floatFromInt(@min(size.width, image.max_extent));
+        const height: f64 = @floatFromInt(@min(size.height, image.max_extent));
         return @reduce(.And, geometry >= zero) and @reduce(.And, @floor(geometry) == geometry) and
-            self.width > 0 and self.height > 0 and
-            self.right() <= @as(f64, @floatFromInt(size.width)) and self.bottom() <= @as(f64, @floatFromInt(size.height));
+            self.width > 0 and self.height > 0 and self.right() <= width and self.bottom() <= height;
     }
 };
 
@@ -244,6 +246,9 @@ test "caller regions need whole boxes inside their image and a number" {
         .{ .number = 1, .after = .{ .x = std.math.nan(f64), .y = 0, .width = 1, .height = 1 } },
         .{ .number = 1, .after = .{ .x = -1, .y = 0, .width = 2, .height = 1 } },
     };
+    const huge: Sizes = .initFill(.{ .width = std.math.maxInt(usize), .height = 1 });
+    const past_extent = Box.fromPixels(image.max_extent, 0, 1, 1);
+    try std.testing.expectError(error.InvalidRegionBox, (Region{ .number = 1, .after = past_extent }).check(huge));
     for (invalid) |region| try std.testing.expectError(error.InvalidRegionBox, region.check(sizes));
     try std.testing.expectError(error.InvalidRegionNumber, (Region{ .before = inside }).check(sizes));
 }
