@@ -126,7 +126,7 @@ uidiff --version
 {"status":2,"error":"FileNotFound","path":"missing.png"}
 ```
 
-`status` is the exit code a single run would give. `report` is exactly the report `--json` prints. A failed comparison gives its error name and, when a file caused it, `path`, and the batch moves on. A line that is not a valid request gives `InvalidInput`, an invalid `scale` gives `InvalidScale`, and a line over 64 KiB gives `LineTooLong`. The batch exits with the highest status it printed. Sheets are byte-identical to a single run's. One process for many pairs skips the start-up each run pays.
+`status` is the exit code a single run would give. `report` is exactly the report `--json` prints. A failed comparison gives its error name and, when a file caused it, `path`, and the batch moves on. A line that is not a valid request gives `InvalidInput`: that includes a blank line and a field given twice, while `null` counts as an absent field. An invalid `scale` gives `InvalidScale`, and a line longer than the batch line limit gives `LineTooLong`; requests are a few hundred bytes, far below it. The batch exits with the highest status it printed. Sheets are byte-identical to a single run's. One process for many pairs skips the start-up each run pays.
 
 Pass captures as files. `-` does not read stdin, and input pipes are unsupported. A symlink at the sheet path is replaced by the PNG itself, unless it points to an input, which raises `SheetIsInput`.
 
