@@ -39,8 +39,9 @@ const Failed = struct {
 /// Why one request failed before or during its comparison.
 const RequestError = uidiff.FileCompareError || uidiff.report.WriteError || request.ParseError || error{LineTooLong};
 
-/// Failures that end the run: reading its input or writing its output.
-pub const Error = error{ReadFailed} || Io.Writer.Error || Allocator.Error;
+/// Failures that end a run of input lines: reading the input or writing
+/// the output. A run of listed requests fails only on output.
+pub const Error = error{ReadFailed} || Io.Writer.Error;
 
 /// Writes one line per request and keeps the worst status. Its report
 /// buffer is reused from request to request.
@@ -60,7 +61,7 @@ const Answers = struct {
     }
 
     /// Compares one request, or reports why it has none, and writes its line.
-    fn answer(self: *Answers, parsed: RequestError!Request) Error!void {
+    fn answer(self: *Answers, parsed: RequestError!Request) Io.Writer.Error!void {
         self.report.clearRetainingCapacity();
         var diagnostics: uidiff.Diagnostics = .{};
         const status = if (self.compare(parsed, &diagnostics)) |status| reported: {
@@ -76,8 +77,8 @@ const Answers = struct {
 
     /// Compares one request's pair and writes its report to the report buffer.
     fn compare(self: *Answers, parsed: RequestError!Request, diagnostics: *uidiff.Diagnostics) RequestError!Status {
-        const command = try parsed;
-        const result = try uidiff.compareFiles(self.io, self.allocator, command.paths, command.options, diagnostics);
+        const item = try parsed;
+        const result = try uidiff.compareFiles(self.io, self.allocator, item.paths, item.options, diagnostics);
         defer result.deinit(self.allocator);
         uidiff.report.write(result.regions, result.canvas(), result.moves, &self.report.writer) catch |err| switch (err) {
             // The report buffer fails only when it cannot grow.
@@ -95,7 +96,7 @@ pub const max_line_bytes = 64 * 1024;
 const output_options: std.json.Stringify.Options = .{ .emit_null_optional_fields = false };
 
 /// Answers every request on output and returns the worst status.
-pub fn requests(io: Io, allocator: Allocator, list: []const Request, output: *Io.Writer) Error!Status {
+pub fn requests(io: Io, allocator: Allocator, list: []const Request, output: *Io.Writer) Io.Writer.Error!Status {
     var answers: Answers = .init(io, allocator, output);
     defer answers.deinit();
     for (list) |item| try answers.answer(item);

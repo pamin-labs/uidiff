@@ -263,7 +263,7 @@ test "a small file claiming a huge 16-bit image is refused within its budget" {
 }
 
 test "groups and request lines are answered as one run per pair would be" {
-    const Request = struct { before: []const u8, after: []const u8, scale: []const u8 = scale, annotate: ?[]const u8 = null };
+    const Request = struct { before: []const u8, after: []const u8, scale: ?[]const u8 = scale, annotate: ?[]const u8 = null };
     const exe = try absolute(options.executable);
     defer allocator.free(exe);
     var tmp = testing.tmpDir(.{});
@@ -286,8 +286,12 @@ test "groups and request lines are answered as one run per pair would be" {
         const before = inputs[2 * index];
         const after = inputs[2 * index + 1];
         const annotated = index == 0;
+        // The last group takes no option, so it shows none leaks from the one before.
+        const plain = index == group_specs.len - 1;
         const single = if (annotated)
             try run(.{ .dir = tmp.dir }, 6, .{ before, after, "--scale", scale, "--annotate", "single.png" })
+        else if (plain)
+            try run(.{ .dir = tmp.dir }, 2, .{ before, after })
         else
             try run(.{ .dir = tmp.dir }, 4, .{ before, after, "--scale", scale });
         defer free(single);
@@ -297,17 +301,16 @@ test "groups and request lines are answered as one run per pair would be" {
         };
         worst = @max(worst, code);
         try expected.writer.writeAll(single.stdout);
-        try std.json.Stringify.value(Request{ .before = before, .after = after, .annotate = if (annotated) "stdin.png" else null }, .{ .emit_null_optional_fields = false }, &input.writer);
+        try std.json.Stringify.value(Request{ .before = before, .after = after, .scale = if (plain) null else scale, .annotate = if (annotated) "stdin.png" else null }, .{ .emit_null_optional_fields = false }, &input.writer);
         try input.writer.writeByte('\n');
     }
     const single_sheet = try tmp.dir.readFileAlloc(testing.io, "single.png", allocator, .limited(uidiff.max_encoded_bytes));
     defer allocator.free(single_sheet);
 
     {
-        const grouped = try run(.{ .dir = tmp.dir }, 14, .{
+        const grouped = try run(.{ .dir = tmp.dir }, 12, .{
             inputs[0], inputs[1], "--scale", scale, "--annotate", "grouped.png",
             inputs[2], inputs[3], "--scale", scale, inputs[4],    inputs[5],
-            "--scale", scale,
         });
         defer free(grouped);
         try status(grouped, worst);

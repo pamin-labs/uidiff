@@ -128,11 +128,11 @@ Each comparison prints one line on stdout, in order and flushed as it is written
 | --- | --- |
 | `0` | No comparison found change regions. |
 | `1` | At least one comparison found change regions, and none failed. |
-| `2` | A comparison failed, or the arguments could not be used. A usage error prints the reason and usage on stderr and runs no comparison. |
+| `2` | A comparison failed, the arguments could not be used, or reading stdin or writing stdout failed. A usage error prints the reason and usage on stderr and runs no comparison; a failed stream is named on stderr. |
 
 ### Requests on stdin
 
-With no arguments, uidiff reads one JSON request per line of stdin: `before` and `after` are paths, `scale` is optional and uses the `--scale` grammar as a string such as `"2"`, and `annotate` optionally names a sheet to write. Other fields are ignored. Each request gets one output line, as above:
+With no arguments, uidiff waits for requests on stdin (`uidiff --help` prints usage), one JSON object per line: `before` and `after` are paths, `scale` is optional and uses the `--scale` grammar as a string such as `"2"`, and `annotate` optionally names a sheet to write. Other fields are ignored. Each request gets one output line, as above:
 
 ```text
 {"before":"a.png","after":"b.png","scale":"2","annotate":"sheet.png"}

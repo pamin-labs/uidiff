@@ -14,7 +14,7 @@ const Allocator = std.mem.Allocator;
 /// Prints the panic message without linking stack-trace formatting.
 pub const panic = std.debug.simple_panic;
 
-const StartError = std.process.Args.ToSliceError || Io.File.Writer.Error || Io.File.Reader.Error || run.Error;
+const StartError = std.process.Args.ToSliceError || Allocator.Error || Io.File.Writer.Error || Io.File.Reader.Error || run.Error;
 
 /// Empty: main maps every failure to exit status 2 and a log line, because an
 /// error returned from main would exit with 1, the status for changed images.
@@ -93,7 +93,6 @@ fn start(io: Io, allocator: Allocator, arena: Allocator, input: std.process.Args
             failed_stream.* = stdout_name;
             return stdout.err orelse err;
         },
-        error.OutOfMemory => return error.OutOfMemory,
     };
 }
 

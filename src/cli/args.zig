@@ -38,7 +38,7 @@ pub const Command = union(enum) {
 
 /// The offending argument and why it could not be used.
 pub const Issue = struct {
-    /// Empty when no argument is to blame.
+    /// Empty only when the offending argument is itself empty.
     argument: []const u8,
     reason: Reason,
 
