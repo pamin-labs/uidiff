@@ -70,8 +70,7 @@ pub const LargeBlocks = struct {
         }
         if (self.last) {
             // In the last request a miss releases every idle block before the
-            // new one is taken, so backing can reuse their pages and the
-            // request peaks no higher than backing alone would hold.
+            // new one is taken, so backing can reuse their pages.
             self.releaseIdle(ra);
         } else if (smallest) |block| {
             // ponytail: dropping the smallest idle block on a miss keeps the
@@ -132,15 +131,22 @@ const min_bytes = 256 * 1024;
 /// Every kept block is allocated at this alignment so any request up to it fits.
 const max_alignment: Alignment = .@"16";
 
-test "in the last request a miss releases every idle block" {
-    var blocks: LargeBlocks = .{ .io = std.testing.io, .backing = std.testing.allocator };
-    defer blocks.deinit();
-    const allocator = blocks.allocator();
-    allocator.free(try allocator.alloc(u8, min_bytes));
-    blocks.startLast();
-    const larger = try allocator.alloc(u8, min_bytes * 2);
-    defer allocator.free(larger);
-    for (blocks.idle) |block| try std.testing.expectEqual(@as(?[*]u8, null), block.ptr);
+test "a miss drops one idle block, and every idle block in the last request" {
+    for ([_]usize{ 1, 0 }) |kept| {
+        var blocks: LargeBlocks = .{ .io = std.testing.io, .backing = std.testing.allocator };
+        defer blocks.deinit();
+        const allocator = blocks.allocator();
+        const small = try allocator.alloc(u8, min_bytes);
+        const medium = try allocator.alloc(u8, min_bytes + 1);
+        allocator.free(small);
+        allocator.free(medium);
+        if (kept == 0) blocks.startLast();
+        const larger = try allocator.alloc(u8, min_bytes * 4);
+        defer allocator.free(larger);
+        var idle: usize = 0;
+        for (blocks.idle) |block| idle += @intFromBool(block.ptr != null);
+        try std.testing.expectEqual(kept, idle);
+    }
 }
 
 test "a freed large block serves the next request and small ones pass through" {
