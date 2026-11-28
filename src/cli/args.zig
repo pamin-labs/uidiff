@@ -14,8 +14,8 @@ const Flag = enum {
         return "--" ++ @tagName(self);
     }
 
-    // A plain scan over six names: std.meta.stringToEnum's lookup table
-    // measured about 3 KB larger on Linux ReleaseSafe.
+    // A plain scan over the names: std.meta.stringToEnum's lookup table
+    // measured larger on Linux ReleaseSafe.
     noinline fn fromArgument(arg: []const u8) ?Flag {
         if (!std.mem.startsWith(u8, arg, "--")) return null;
         for (std.enums.values(Flag), std.meta.fieldNames(Flag)) |flag, name| {
@@ -81,7 +81,7 @@ const fuzz_words = [_][:0]const u8{ Flag.json.spelling(), Flag.scale.spelling(),
 
 /// Recognises a standalone flag with no other arguments. It compares the
 /// spellings directly: going through `Flag.fromArgument` here measured
-/// about 1.2 KB larger on Linux ReleaseSafe.
+/// larger on Linux ReleaseSafe.
 pub fn standalone(args: []const [:0]const u8) ?Standalone {
     if (args.len != 2) return null;
     if (std.mem.eql(u8, args[1], Flag.batch.spelling())) return .batch;
@@ -97,7 +97,7 @@ pub fn parse(args: []const [:0]const u8) ParseResult {
         if (!std.mem.startsWith(u8, arg, "--")) continue;
         const reason: Issue.Reason = switch (Flag.fromArgument(arg) orelse return invalid(arg, .unknown_flag)) {
             .batch, .help, .version => .standalone_only,
-            else => .flag_before_paths,
+            .scale, .json, .annotate => .flag_before_paths,
         };
         return invalid(arg, reason);
     }
@@ -108,19 +108,22 @@ pub fn parse(args: []const [:0]const u8) ParseResult {
     while (i < args.len) : (i += 1) {
         const arg = args[i];
         const flag = Flag.fromArgument(arg) orelse return invalid(arg, .unknown_flag);
-        if (flag == .batch or flag == .help or flag == .version) return invalid(arg, .standalone_only);
+        // A standalone flag is never inserted, so it falls through to its refusal.
         if (seen.contains(flag)) return invalid(arg, .repeated_flag);
-        seen.insert(flag);
-        if (flag == .json) {
-            parsed.output = .json;
-            continue;
+        switch (flag) {
+            .batch, .help, .version => return invalid(arg, .standalone_only),
+            .json => parsed.output = .json,
+            .scale => {
+                i += 1;
+                const text = flagValue(args, i) orelse return invalid(arg, .missing_value);
+                parsed.options.compare.scale = parseScale(text) orelse return invalid(text, .invalid_scale);
+            },
+            .annotate => {
+                i += 1;
+                parsed.paths.annotate = flagValue(args, i) orelse return invalid(arg, .missing_value);
+            },
         }
-        i += 1;
-        if (i == args.len or args[i].len == 0 or std.mem.startsWith(u8, args[i], "--")) return invalid(arg, .missing_value);
-        if (flag == .scale) {
-            const scale = parseScale(args[i]) orelse return invalid(args[i], .invalid_scale);
-            parsed.options.compare.scale = scale;
-        } else parsed.paths.annotate = args[i];
+        seen.insert(flag);
     }
     return .{ .command = parsed };
 }
@@ -152,6 +155,12 @@ pub fn fuzzParse(_: void, smith: *std.testing.Smith) !void {
     try std.testing.expectEqualStrings(args[1], command.paths.before);
     try std.testing.expectEqualStrings(args[2], command.paths.after);
     try std.testing.expect(command.options.compare.scale.isValid());
+}
+
+/// The value after a valued flag at `index`, or null when it is missing.
+fn flagValue(args: []const [:0]const u8, index: usize) ?[:0]const u8 {
+    if (index == args.len or args[index].len == 0 or std.mem.startsWith(u8, args[index], "--")) return null;
+    return args[index];
 }
 
 fn invalid(arg: []const u8, reason: Issue.Reason) ParseResult {

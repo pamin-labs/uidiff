@@ -84,12 +84,22 @@ const missing: u32 = std.math.maxInt(u32);
 /// The most row insertions plus deletions the alignment searches for. Myers'
 /// search costs O((rows + max_edits) * max_edits) time, so this bounds a tall
 /// unrelated pair; past it, rows are compared by position.
-pub const max_edits = 8192;
+const max_edits = 8192;
 
 // The initial call and at most 13 splits fit in 14 recovery frames.
 const max_recovery_frames = 14;
 comptime {
     std.debug.assert(max_edits <= 1 << (max_recovery_frames - 1));
+}
+
+/// Caps the edits a caller's rows could need at `max_edits`.
+pub fn editBudget(rows: usize) usize {
+    return @min(max_edits, rows);
+}
+
+/// Returns the frontier length a search of `edits` edits uses.
+pub fn frontierLen(edits: usize) usize {
+    return 2 * edits + 3;
 }
 
 fn search(comptime track_middle: bool, a: band.Keys, b: band.Keys, budget: usize, half: usize, frontier: []Diagonal) ?SearchResult {
@@ -133,7 +143,7 @@ fn search(comptime track_middle: bool, a: band.Keys, b: band.Keys, budget: usize
 
 test "linear frontier recovers shortest matches through repeated rows" {
     const rows = 5;
-    var frontier: [2 * rows + 3]Diagonal = undefined;
+    var frontier: [frontierLen(rows)]Diagonal = undefined;
     for (0..1 << rows) |old_bits| {
         for (0..1 << rows) |new_bits| {
             var before: [rows]u64 = undefined;

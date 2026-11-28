@@ -125,7 +125,8 @@ pub const Rows = struct {
         }
         const caption = sheet_plan.captions.bounds.get(.after);
         if (caption.containsRow(y)) line.text(caption.x, caption.y, copy.after, .bold, sheet_plan.captions.size, secondary);
-        if (y + pane_layout.px(8) >= a.y and y < sheet_plan.pane_end + pane_layout.px(12)) {
+        const both_panes: geometry.Rect = .{ .x = a.x, .y = a.y, .width = 0, .height = sheet_plan.pane_end - a.y };
+        if (nearPane(y, both_panes, pane_layout)) {
             for (&sheet_plan.sources.values, &sheet_plan.panes.values) |*source, rect| {
                 if (!pane_layout.panoramic or nearPane(y, rect, pane_layout)) drawPane(line, source, rect.x, rect.y, pane_layout);
             }

@@ -11,8 +11,8 @@ pub const Chunk = struct {
 pub const Chunks = struct {
     remaining: []const u8,
 
-    // Zig 0.17.1 saves 16 executable bytes on aarch64-linux-musl when
-    // this cursor is inlined. Re-measure on a Zig upgrade.
+    // Inlining this cursor measured smaller on aarch64-linux-musl with
+    // Zig 0.17.1. Re-measure on a Zig upgrade.
     pub inline fn next(self: *Chunks) ?Chunk {
         const bytes = self.remaining;
         if (bytes.len < chunk_overhead) return null;
@@ -79,7 +79,7 @@ pub fn writeHeader(comptime writeChunk: anytype, out: *std.Io.Writer, width: u32
     try out.writeAll(signature);
     var header: [header_data_bytes]u8 = undefined;
     writeDimensions(header[0..dimensions_bytes], width, height);
-    header[8..13].* = .{ sample_depth, @backingInt(colour), 0, 0, 0 };
+    header[dimensions_bytes..].* = .{ sample_depth, @backingInt(colour), 0, 0, 0 };
     try writeChunk(out, header_type, &header);
 }
 

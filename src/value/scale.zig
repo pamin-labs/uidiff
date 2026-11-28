@@ -94,7 +94,7 @@ test "scale is parsed strictly as a finite decimal number" {
 }
 
 test {
-    std.testing.refAllDecls(Scale);
+    std.testing.refAllDecls(@This());
 }
 
 test "scale parsing matches parseFloat on random accepted inputs" {

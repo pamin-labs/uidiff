@@ -15,17 +15,17 @@ Follow the public pamin-labs/skills engineering rules in [core](.agents/skills/p
 - Write changes in English and use scoped Conventional Commits.
 - A release archive ships `LICENSE` and `THIRD_PARTY_NOTICES` beside the binary. The notices cover the PNG, JPEG and WebP decoder dependencies and the embedded IBM Plex Sans bitmap glyphs.
 - **Exception to core's "Commits and PRs" section:** this repository takes contributions through the open-source flow in [CONTRIBUTING.md](CONTRIBUTING.md); where core's section asks for more, CONTRIBUTING.md wins.
-- **Exception to core's text and locales rule:** the CLI's usage text and error lines are English only, as developer tools' usually are. Machine output is the versioned JSON report and stable error names (`ImageTooLarge`, `InvalidScale`); callers that show text to end users localize from those.
+- **Exception to core's text and locales rule:** the CLI's usage text and error lines are English only, as developer tools' usually are. Machine output is the versioned JSON report and stable error names: the library's error set (`ImageTooLarge`, `InvalidScale`), which the CLI prints after a file's path and `--batch` writes in a failed line's `error` field. A single run refuses a bad `--scale` value as a usage error, never as `InvalidScale`. Callers that show text to end users localize from those.
 
 ## Layout
 
 Zig source files use snake_case identifiers as basenames. `tests/source/order.zig` checks that a direct Zig file import binds to its basename without `.zig`. Named build modules and declarations selected from an import keep their own names.
 
 - `build.zig` names the build steps and wires the products and checks. `build/codecs.zig` compiles, patches and translates the vendored C libraries.
-- `src/root.zig` exposes the public library. It imports only module roots, the files beside each layer directory.
+- `src/root.zig` exposes the public library. It imports only module roots, the files beside each layer directory, and its test declaration's `src/testing/required.zig`.
 - `src/testing.zig` is the private `uidiff_testing` module created for repository test runners. It exposes procedural RGBA canvases and painters, assertions over public comparison results, and bounded RGBA inputs for fuzzing.
 - `src/value.zig` and `src/value/` hold shared values and the image and memory bounds. Value modules depend only on other values and the standard library. Packed pixel SIMD lanes are owned by `src/value/image.zig`.
-- `src/codec.zig` and `src/codec/` handle format detection, bounded file reads, dimension and memory-budget checks, decoding and PNG encoding. `src/codec/types.zig` holds the shared decoder header type, and `src/codec/memory.zig` and `src/codec/memory.h` hold the C allocation hooks. Only `src/codec/png/stb.zig` imports the translated stb_image header, only `src/codec/jpeg.zig` the translated libjpeg-turbo bridge under `src/codec/jpeg/`, and only `src/codec/webp.zig` the translated libwebp decoder header; the encoder headers are translated separately for the fixture generator, so the shipped library never includes them. `src/codec/png.zig` exposes PNG registration, decoding and encoding through the bounded streams in `src/codec/png/`. The PNG byte vector widths live in `src/codec/png/simd.zig`.
+- `src/codec.zig` and `src/codec/` handle format detection, bounded file reads, dimension and memory-budget checks, decoding and PNG encoding. `src/codec/types.zig` holds the shared decoder header type, and `src/codec/memory.zig` and `src/codec/memory.h` hold the C allocation hooks. Only `src/codec/png/stb.zig` imports the translated stb_image header, only `src/codec/jpeg.zig` the translated libjpeg-turbo bridge under `src/codec/jpeg/`, and only `src/codec/webp.zig` the translated libwebp decoder header; the encoder headers are translated separately for the fixture generator, so the shipped library never includes them. `src/codec/png.zig` exposes PNG registration, decoding and encoding through the bounded streams in `src/codec/png/`. The PNG byte vector widths live in `src/codec/png/simd.zig`. `src/codec/png/streams.zig` writes the PNG decoder tests' synthetic streams; only test declarations import it.
 - `src/diff.zig` owns the comparison API and resolves collected regions. The comparison internals in `src/diff/` are named, with their tiers, under Layers. `src/diff/rows/recolour.zig` identifies runs of changed colour within aligned bands. `src/annotate.zig` and `src/annotate/` number and place labels and draw the annotated sheet. `src/annotate/crops.zig` owns close-up geometry and sampling, and `src/annotate/sheet.zig` composes the overview and the detail rows. `src/report.zig` owns the versioned JSON report.
 - `src/annotate/sheet/` plans the overview, ribbons and details for the row compositor in `src/annotate/sheet.zig`.
 - `src/annotate/drawing/` owns row painting, sheet copy, palette, bitmap text and the font atlas behind `src/annotate/drawing.zig`.
@@ -58,7 +58,7 @@ Zig source files use snake_case identifiers as basenames. `tests/source/order.zi
 | test | `tests/` | `uidiff` |
 | tool | `bench/` `tools/` | `uidiff` |
 
-`src/testing/jpeg.zig` belongs to `uidiff` and is path-imported by test declarations in `src/codec/jpeg.zig` and `src/pipeline.zig`, `src/testing/canvas.zig` is `uidiff_test_canvas`, and the remaining files in `src/testing/` belong to `uidiff_testing`. Scenario runners and fuzz targets use procedural images and fuzz inputs from `uidiff_testing`. The named `fixtures` module describes the committed fixture set. Source unit tests and the private testing module share the named `uidiff_test_canvas` leaf because Zig assigns each source file to one module per compilation.
+`src/testing/jpeg.zig` belongs to `uidiff` and is path-imported by test declarations in `src/codec/jpeg.zig` and `src/pipeline.zig`, `src/testing/required.zig` belongs to `uidiff` and is path-imported by a test declaration in `src/root.zig` to fail a filtered gate runner that selects no test, `src/testing/canvas.zig` is `uidiff_test_canvas`, and the remaining files in `src/testing/` belong to `uidiff_testing`. Scenario runners and fuzz targets use procedural images and fuzz inputs from `uidiff_testing`. The named `fixtures` module describes the committed fixture set. Source unit tests and the private testing module share the named `uidiff_test_canvas` leaf because Zig assigns each source file to one module per compilation.
 
 Named build modules, and the only files that may import them. The `export` row names the files whose exported functions C code calls back.
 
@@ -81,7 +81,7 @@ Named build modules, and the only files that may import them. The `export` row n
 | `fixture_cases` | `tools/fixtures/generate.zig` `tools/fixtures/encode.zig` |
 | `fixture_jpeg` | `tools/fixtures/jpeg_generate.zig` |
 | `fixture_options` | `tests/fixtures/fresh.zig` |
-| `required_test_options` | `src/root.zig` |
+| `required_test_options` | `src/testing/required.zig` |
 | `export` | `src/codec/memory.zig` |
 
 Only a submodule's facade and implementation files may import its implementation directory. Implementation files cannot import their own facade.

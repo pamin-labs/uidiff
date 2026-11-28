@@ -1,4 +1,5 @@
 //! Private helpers for uidiff's scenario and fuzz runners.
+const std = @import("std");
 const uidiff = @import("uidiff");
 
 /// Assertions over results from the comparison API.
@@ -7,3 +8,7 @@ pub const expect = @import("testing/expect.zig");
 pub const fuzz = @import("testing/fuzz.zig");
 /// Procedural RGBA canvases and painters.
 pub const canvas = @import("uidiff_test_canvas").Painters(uidiff.Image);
+
+test {
+    std.testing.refAllDecls(@This());
+}

@@ -40,3 +40,7 @@ test "unfilled storage handles empty slices and preserves element alignment" {
     words[1] = 42;
     try std.testing.expectEqualSlices(u32, &.{ 37, 42 }, words);
 }
+
+test {
+    std.testing.refAllDecls(@This());
+}

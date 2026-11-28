@@ -63,9 +63,7 @@ test "generated pairs produce matching versioned reports in every encoding" {
             try testing.expectEqualStrings("", result.stderr);
             const actual = try std.json.parseFromSlice(report.Report, allocator, result.stdout, .{ .ignore_unknown_fields = true });
             defer actual.deinit();
-            var actual_fields = actual.value;
-            actual_fields.moves = &.{};
-            try testing.expectEqualDeep(expected.value, actual_fields);
+            try testing.expectEqualDeep(expected.value, actual.value);
         }
     }
 }

@@ -14,5 +14,19 @@
     }
   ],
   "width": 780,
-  "height": 1280
+  "height": 1280,
+  "moves": [
+    {
+      "before": {
+        "y": 320,
+        "height": 864
+      },
+      "after": {
+        "y": 416,
+        "height": 864
+      },
+      "x": 128,
+      "width": 616
+    }
+  ]
 }

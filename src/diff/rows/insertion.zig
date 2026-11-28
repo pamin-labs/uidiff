@@ -3,7 +3,6 @@
 const std = @import("std");
 const band = @import("band.zig");
 const search = @import("search.zig");
-const recolour = @import("recolour.zig");
 const columns = @import("../columns.zig");
 
 const min_panel_evidence = 4;
@@ -50,7 +49,7 @@ pub fn panelInsertion(before: band.Keys, after: band.Keys, first: usize, limits:
         const closed_panel = edge == last and columns.closesRoundedPanel(image, inset, edge, shift);
         if (!closed_panel) {
             if (length < 2 * shift or before[edge - shift - 1] != before[edge - shift] or
-                !recolour.flatPaint(image, edge - shift, edge, sample.columns.left, sample.columns.width)) continue;
+                !columns.blankBand(image, edge - shift, shift, sample.columns)) continue;
         }
         var moved_rows: usize = 0;
         for (before[first..][0..length], before[start..edge]) |old, stationary| {
@@ -78,7 +77,7 @@ pub fn clippedInsertion(problem: search.Problem, limit: usize, bands: []band.Ban
     } else return null;
     const at = std.mem.indexOfScalarPos(u64, new, marker + 1, old[marker]) orelse return null;
     const shift = at - marker;
-    const budget = @min(search.max_edits, old.len + problem.prefix);
+    const budget = search.editBudget(old.len + problem.prefix);
     if (shift <= limit or shift > budget / 2 or !std.mem.eql(u64, old[0 .. old.len - shift], new[shift..])) return null;
     const prefix = problem.prefix;
     bands[0] = .{ .before = 0, .after = 0, .removed = prefix, .added = prefix, .mode = .hash_match };

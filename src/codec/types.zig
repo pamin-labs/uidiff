@@ -18,3 +18,7 @@ test "decoder dimensions reject either negative axis" {
     try std.testing.expectError(error.InvalidImage, fromC(1, -1));
     try std.testing.expectEqual(value.Size{ .width = 30, .height = 40 }, try fromC(30, 40));
 }
+
+test {
+    std.testing.refAllDecls(@This());
+}

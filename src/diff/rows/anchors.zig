@@ -68,7 +68,7 @@ pub fn alignContent(before: band.Keys, after: band.Keys, old_background: ?u64, n
     if (@min(old_keys.len, new_keys.len) <= explained) return null;
 
     const problem = search.Problem.init(old_keys, new_keys);
-    const edits = problem.distance(@min(search.max_edits, @max(old_keys.len, new_keys.len)), frontier) orelse return null;
+    const edits = problem.distance(search.editBudget(@max(old_keys.len, new_keys.len)), frontier) orelse return null;
     if ((old_keys.len + new_keys.len - edits) / 2 <= explained) return null;
     const matches = problem.matches(edits, frontier, raw) orelse return null;
     restoreRows(before, old_background, new_background, raw[0..matches.len], .before);

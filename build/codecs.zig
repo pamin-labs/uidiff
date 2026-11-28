@@ -22,7 +22,16 @@ const CodecBuild = enum { shipped, shipped_lto, checked, fixture };
 pub const ShippedLinkage = enum { objects, lto };
 
 /// Selects the zlib-ng x86 dispatch paths for a build.
-pub const X86Simd = enum { shipped, baseline, without_ssse3, without_sse4, without_avx2 };
+pub const X86Simd = enum {
+    /// The released binary's levels: SSE2 through SSE4.2 and PCLMULQDQ, no AVX2.
+    shipped,
+    /// Every level upstream dispatches to, AVX2 included.
+    all_levels,
+    /// SSE2 only: drops SSSE3 and the levels built on it.
+    without_ssse3,
+    /// SSE2 and SSSE3: drops SSE4 and the levels built on it.
+    without_sse4,
+};
 
 // Build-owned text carries the pinned filename through each edit.
 const PinnedSource = struct {
@@ -587,7 +596,7 @@ fn addZlibNg(b: *Build, module: *Build.Module, target: Build.ResolvedTarget, x86
             // their prerequisite also removes the dependent dispatch levels.
             const ssse3 = x86_simd != .without_ssse3;
             const sse4 = ssse3 and x86_simd != .without_sse4;
-            const avx2 = sse4 and x86_simd != .shipped and x86_simd != .without_avx2;
+            const avx2 = x86_simd == .all_levels;
             common.appendSlice(b.allocator, &.{ "-DX86_FEATURES", "-DX86_SSE2", "-DHAVE_CPUID_GNU", "-DX86_HAVE_XSAVE_INTRIN", "-DWITHOUT_CHORBA", "-DWITHOUT_CHORBA_SSE" }) catch @panic("OOM");
             if (ssse3) common.append(b.allocator, "-DX86_SSSE3") catch @panic("OOM");
             if (sse4) common.appendSlice(b.allocator, &.{ "-DX86_SSE41", "-DX86_SSE42" }) catch @panic("OOM");

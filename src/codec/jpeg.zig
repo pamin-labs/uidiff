@@ -20,31 +20,6 @@ const Decode = struct {
     pixels: ?[]Pixel = null,
 };
 
-// The scan-limit cases send one bit plane of one zero coefficient per scan.
-const ProgressiveFixture = struct {
-    const scan_bytes = 11;
-    const most_significant_bit = 13;
-    const bit_planes = most_significant_bit + 1;
-    const coefficient_count = 64;
-
-    /// Sends one bit plane of one zero coefficient per scan, always in a 1×1 frame.
-    fn generate(comptime header: []const u8, comptime eoi: []const u8, comptime scans: usize) [header.len + scans * scan_bytes + eoi.len]u8 {
-        comptime std.debug.assert(scans <= coefficient_count * bit_planes);
-        var bytes: [header.len + scans * scan_bytes + eoi.len]u8 = undefined;
-        @memcpy(bytes[0..header.len], header);
-        for (0..scans) |index| {
-            const coefficient: u8 = @intCast(index / bit_planes);
-            const low: u8 = @intCast(most_significant_bit - index % bit_planes);
-            const high = if (low == most_significant_bit) 0 else low + 1;
-            const start = header.len + index * scan_bytes;
-            // The only Huffman symbol (or DC refinement bit) is zero; pad with ones.
-            bytes[start..][0..scan_bytes].* = .{ 0xff, 0xda, 0, 8, 1, 1, 0, coefficient, coefficient, high << 4 | low, 0x7f };
-        }
-        @memcpy(bytes[bytes.len - eoi.len ..], eoi);
-        return bytes;
-    }
-};
-
 // Limit progressive scans to keep bounded-memory decoding bounded in work.
 const max_scans = 500;
 const coverage_rounding_bias = 128;
@@ -216,7 +191,7 @@ test "only complete 8-bit Huffman frame headers are accepted" {
 test "JPEG warnings reject truncated sequential and progressive streams" {
     const jpeg = @import("../testing/jpeg.zig");
     const allocator = std.testing.allocator;
-    const progressive = ProgressiveFixture.generate(&jpeg.frame(.progressive), &jpeg.eoi, 2);
+    const progressive = jpeg.progressive(2);
     for ([_][]const u8{ &jpeg.gray, &progressive }) |complete| {
         const bytes = complete[0 .. complete.len - jpeg.eoi.len];
         const header = try probe(allocator, bytes, value.max_decode_bytes);
@@ -228,13 +203,13 @@ test "JPEG warnings reject truncated sequential and progressive streams" {
 test "JPEG progressive scan limit accepts the boundary and rejects the next scan" {
     const jpeg = @import("../testing/jpeg.zig");
     const allocator = std.testing.allocator;
-    const at_limit = ProgressiveFixture.generate(&jpeg.frame(.progressive), &jpeg.eoi, max_scans);
+    const at_limit = jpeg.progressive(max_scans);
     const header = try probe(allocator, &at_limit, value.max_decode_bytes);
     const pixels = try decode(allocator, &at_limit, header, value.max_decode_bytes);
     defer release(allocator, pixels);
     try std.testing.expectEqual(@as(usize, 1), pixels.len);
 
-    const past_limit = ProgressiveFixture.generate(&jpeg.frame(.progressive), &jpeg.eoi, max_scans + 1);
+    const past_limit = jpeg.progressive(max_scans + 1);
     try std.testing.expectError(error.InvalidImage, decode(allocator, &past_limit, header, value.max_decode_bytes));
 }
 

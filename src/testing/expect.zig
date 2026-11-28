@@ -59,3 +59,7 @@ pub fn count(before: Canvas, after: Canvas, expected: usize) CompareCheckError!v
     defer actual.deinit(std.testing.allocator);
     try std.testing.expectEqual(expected, actual.regions.len);
 }
+
+test {
+    std.testing.refAllDecls(@This());
+}

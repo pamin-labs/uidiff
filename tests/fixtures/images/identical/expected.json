@@ -2,5 +2,6 @@
   "version": 1,
   "regions": [],
   "width": 64,
-  "height": 64
+  "height": 64,
+  "moves": []
 }

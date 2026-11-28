@@ -1,5 +1,5 @@
 //! The CLI's allocator: on Linux, blocks of at least one huge page sit on
-//! 2 MiB-aligned anonymous mappings advised for transparent huge pages, which
+//! huge-page-aligned anonymous mappings advised for transparent huge pages, which
 //! cuts the page faults of decoded pixels and comparison buffers.
 const std = @import("std");
 const builtin = @import("builtin");
@@ -35,7 +35,7 @@ pub const HugePages = struct {
         const tail = raw + mapped + huge_page_bytes - (start + mapped);
         if (tail != 0) _ = linux.munmap(@ptrFromInt(start + mapped), tail);
         // Only whole huge pages are advised, so a short tail stays on small
-        // pages instead of faulting in another 2 MiB. Advice only: a kernel
+        // pages instead of faulting in another huge page. Advice only: a kernel
         // without transparent huge pages keeps small pages throughout.
         _ = linux.madvise(@ptrFromInt(start), std.mem.alignBackward(usize, len, huge_page_bytes), linux.MADV.HUGEPAGE);
         return @ptrFromInt(start);

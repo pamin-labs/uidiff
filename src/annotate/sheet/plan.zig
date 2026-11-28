@@ -213,7 +213,7 @@ fn planDetails(allocator: Allocator, pair: value.Pair, regions: []const Region, 
         if (region.number == 0 and (old != null or new != null)) return error.InvalidRegionNumber;
         kinds |= kindBit(region.kind);
         const patches = if (pane_layout.panoramic) std.EnumArray(value.Side, ?crops.Crop).initFill(null) else cropPair(pair, .init(.{ .before = old, .after = new }), placement.x, top, slot, pane_layout);
-        const height = @max(pane_layout.px(min_slot_h), if (patches.get(.before)) |p| p.to.height + 2 * pane_layout.px(3) else 0, if (patches.get(.after)) |p| p.to.height + 2 * pane_layout.px(3) else 0);
+        const height = @max(pane_layout.px(min_slot_h), if (patches.get(.before)) |p| p.framedHeight(pane_layout) else 0, if (patches.get(.after)) |p| p.framedHeight(pane_layout) else 0);
         const before_mark = offsetMark(old, panes.get(.before), pair.before.size());
         const after_mark = offsetMark(new, panes.get(.after), pair.after.size());
         detail.* = .{
@@ -327,7 +327,7 @@ fn layoutCaptions(pane_layout: PaneLayout, panes: geometry.SideRects, width: usi
     while (size > 1 and (textWidth(.bold, size, copy.before) > available_before or
         textWidth(.bold, size, copy.after) > width - panes.get(.after).x)) size -= 1;
     var result: Captions = .{ .size = size, .bounds = undefined };
-    for (panes.values, [_][]const u8{ copy.before, copy.after }, &result.bounds.values) |pane, label, *bounds| {
+    for (panes.values, copy.side_names.values, &result.bounds.values) |pane, label, *bounds| {
         bounds.* = .{ .x = pane.x, .y = pane.y - pane_layout.px(caption_offset), .width = textWidth(.bold, size, label), .height = text.Face.bold.height(size) };
     }
     return result;
@@ -335,7 +335,8 @@ fn layoutCaptions(pane_layout: PaneLayout, panes: geometry.SideRects, width: usi
 
 fn reserveBadgeLanes(panes: *geometry.SideRects, size: *Size, pane_layout: PaneLayout, pair: value.Pair, regions: []const Region) void {
     const diameter = overviewDiameter(pane_layout);
-    const needed = diameter + if (@min(panes.get(.before).width, panes.get(.after).width) < diameter) 2 * pane_layout.px(badges.thin_badge_gap) else 0;
+    // A lane holds the badge and keeps its clearance on both sides.
+    const needed = diameter + 2 * badges.thinPaneClearance(panes.*, pane_layout);
     var left = false;
     var right = false;
     var middle = false;

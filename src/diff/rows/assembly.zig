@@ -4,7 +4,7 @@ const std = @import("std");
 const band = @import("band.zig");
 const search = @import("search.zig");
 const chrome = @import("chrome.zig");
-const recolour = @import("recolour.zig");
+const columns = @import("../columns.zig");
 const refinement = @import("refinement.zig");
 
 const Anchors = struct {
@@ -95,13 +95,13 @@ pub fn assembleBands(before: band.Keys, after: band.Keys, limits: band.Limits, a
                 // A new solid band still counts if its paint differs from the backdrop.
                 const flat_tail = clipped_scroll != 0 and old_y -| new_y == clipped_scroll and
                     (after[start] == new_background or after[start] == after[start -| 1]) and
-                    if (limits.sample) |sample| recolour.flatPaint(sample.pair.after, start, m.after, sample.columns.left, sample.columns.width) else false;
+                    if (limits.sample) |sample| columns.blankBand(sample.pair.after, start, m.after - start, sample.columns) else false;
                 if (!flat_tail) reveal(bands, &len, after[0..m.after], old_y + paired, start, new_background);
             }
         } else {
             const first_band = len;
             const problem = search.Problem.init(before[old_y..m.before], after[new_y..m.after]);
-            const edits = problem.distance(@min(search.max_edits, problem.a.len + problem.b.len), frontier);
+            const edits = problem.distance(search.editBudget(problem.a.len + problem.b.len), frontier);
             const gap = if (edits) |found| problem.matches(found, frontier, raw) orelse &.{} else &.{};
             for (gap) |row| {
                 const a = m.before - removed + row.before;
@@ -187,7 +187,7 @@ test "fixed-header scroll reveals content and skips flat paint" {
         .{ .before = body, .after = body - scroll, .length = height - body },
     };
     var bands: [2 * height + 1]band.Band = undefined;
-    var frontier: [2 * height + 3]search.Diagonal = undefined;
+    var frontier: [search.frontierLen(height)]search.Diagonal = undefined;
     var raw: [height]band.Match = undefined;
     for ([_]bool{ false, true }) |has_content| {
         if (has_content) for (new[height - scroll ..]) |*row| {

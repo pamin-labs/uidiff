@@ -3,7 +3,6 @@
 const std = @import("std");
 const band = @import("band.zig");
 const anchors = @import("anchors.zig");
-const recolour = @import("recolour.zig");
 const value = @import("../../value.zig");
 const pixel = @import("../pixel.zig");
 const columns = @import("../columns.zig");
@@ -100,7 +99,7 @@ pub fn markSpacing(bands: []band.Band, keys_: band.Keys, background_key: ?u64, i
 /// Checks whether the leading clipped rows are fixed header paint.
 pub fn fixedHeaderPadding(limits: band.Limits, start: usize, end: usize) bool {
     const sample = limits.sample orelse return false;
-    if (sample.columns.width < 2 or start == 0 or !recolour.flatPaint(sample.pair.before, start, end, sample.columns.left, sample.columns.width)) return false;
+    if (sample.columns.width < 2 or start == 0 or !columns.blankBand(sample.pair.before, start, end - start, sample.columns)) return false;
     const left = sample.columns.left;
     const right = left + sample.columns.width - 1;
     const header = sample.pair.before.row(start - 1);

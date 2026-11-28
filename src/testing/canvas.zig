@@ -211,3 +211,7 @@ pub fn Painters(comptime Image: type) type {
         }
     };
 }
+
+test {
+    std.testing.refAllDecls(@This());
+}

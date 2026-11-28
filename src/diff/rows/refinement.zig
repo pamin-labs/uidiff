@@ -105,10 +105,10 @@ fn compactElement(image: Image, first: usize, last: usize, count: usize, span: c
     for (first..last + 1) |y| {
         const bottom = y + count;
         while (end < bottom) : (end += 1) {
-            if (!recolour.flatPaint(image, end, end + 1, span.left, span.width)) bottom_ink = end + 1;
+            if (!columns.blankBand(image, end, 1, span)) bottom_ink = end + 1;
         }
         top = @max(y, top);
-        while (top < bottom_ink and recolour.flatPaint(image, top, top + 1, span.left, span.width)) : (top += 1) {}
+        while (top < bottom_ink and columns.blankBand(image, top, 1, span)) : (top += 1) {}
         if (bottom_ink <= top) continue;
         const height = bottom_ink - top;
         if (height < best_height or (height == best_height and top <= best_top)) {

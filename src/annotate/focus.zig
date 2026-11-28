@@ -113,7 +113,7 @@ pub fn layoutFocus(details: []Detail, focuses: []Focus, sizes: std.EnumArray(val
             const from = window orelse continue;
             zoom = zoom.fit(from, .{ .width = focus_slot_width, .height = value.max_extent });
         }
-        for (focus.windows.values, &focus.crops.values, &focus.captions.values, [2][]const u8{ copy.before, copy.after }, std.enums.values(value.Side)) |window, *patch, *caption, name, side| {
+        for (focus.windows.values, &focus.crops.values, &focus.captions.values, copy.side_names.values, std.enums.values(value.Side)) |window, *patch, *caption, name, side| {
             const from = window orelse {
                 caption.* = try Text.format(copy.name_format, .{name});
                 continue;
@@ -166,4 +166,8 @@ test {
     const tall = focusWindow(.{ .x = 240, .y = 250, .width = 10, .height = 20 }, .{ .width = 1500, .height = 600 }).?;
     try std.testing.expectEqual(@as(usize, 130), tall.y);
     try std.testing.expectEqual(@as(usize, 260), tall.height);
+}
+
+test {
+    std.testing.refAllDecls(@This());
 }

@@ -132,8 +132,8 @@ pub fn decode(bytes: []const u8, size: value.Size) memory.Error!?[]value.Pixel {
     const profile = streamingProfile(bytes) orelse return null;
     var palette: [256]value.Pixel = undefined;
     // Outlining keeps the chunk walk out of the file decoder. On Zig 0.17.1
-    // it saves 128 executable bytes on aarch64-linux-musl and 512 on
-    // aarch64-windows versus automatic inlining. Re-measure on a Zig upgrade.
+    // it measured smaller on aarch64-linux-musl and aarch64-windows than
+    // automatic inlining. Re-measure on a Zig upgrade.
     const chunks = @call(if (builtin.cpu.arch == .aarch64) .never_inline else .auto, collectChunks, .{ bytes, profile, &palette }) orelse return null;
     const width = size.width;
     const height = size.height;

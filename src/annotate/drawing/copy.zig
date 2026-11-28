@@ -1,8 +1,13 @@
 //! Labels and format strings of the styled comparison sheet.
+const std = @import("std");
+const value = @import("../../value.zig");
+
 /// Caption of the source pane.
 pub const before = "Before";
 /// Caption of the comparison pane.
 pub const after = "After";
+/// Each side's caption.
+pub const side_names: std.EnumArray(value.Side, []const u8) = .init(.{ .before = before, .after = after });
 /// Verb used in the heading for displaced content.
 pub const moved = "moved";
 /// Detail caption when one source has no box.
@@ -39,3 +44,7 @@ pub const shift_format = "{d} px";
 pub const heading_format = "{d} {s}";
 /// Prints region and move counts with an optional direction.
 pub const moved_heading_format = "{d} {s}, {d} {s} " ++ moved ++ "{s}";
+
+test {
+    std.testing.refAllDecls(@This());
+}

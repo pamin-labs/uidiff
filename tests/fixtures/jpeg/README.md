@@ -1,9 +1,11 @@
 # JPEG decoder profiles
 
-The six JPEGs contain a 37 × 21 synthetic pattern from `generate.c`. No captured
-images are used. The pinned libjpeg-turbo encoder uses integer DCT and scalar
-kernels. The odd frame dimensions exercise incomplete chroma blocks. Adobe
-CMYK and YCCK exercise the two four-component input paths.
+The JPEGs here contain a synthetic pattern drawn by
+[`jpeg_generate.zig`](../../../tools/fixtures/jpeg_generate.zig) at the `width`
+and `height` that `tests/fixtures/jpeg.zig` names. No captured images are used.
+The pinned libjpeg-turbo encoder uses integer DCT and scalar kernels. The odd
+frame dimensions exercise incomplete chroma blocks. Adobe CMYK and YCCK
+exercise the two four-component input paths.
 
 Run `zig build jpeg-fixtures` from the repository root to regenerate them.
 `zig build test` compares the committed bytes with a fresh generation.

@@ -64,7 +64,8 @@ const max_agents_bytes = 64 * 1024;
 /// The module-table row naming files whose exported functions C code calls back.
 const export_row = "export";
 const testing_root = "src/testing.zig";
-const jpeg_fixture = "src/testing/jpeg.zig";
+/// Files in `src/testing/` that belong to `uidiff`, path-imported by its test declarations.
+const library_test_files = [_][]const u8{ "src/testing/jpeg.zig", "src/testing/required.zig" };
 const diff_directory = "src/diff/";
 const annotate_directory = "src/annotate/";
 
@@ -255,7 +256,7 @@ fn allowedImport(allocator: Allocator, rules: Rules, source: *const Source, node
     defer allocator.free(resolved);
     const to = rules.layerOf(resolved) orelse return false;
     if (std.mem.eql(u8, to.paths[0], testing_root) and from != to) {
-        if (!std.mem.startsWith(u8, from_path, "src/") or !std.mem.eql(u8, resolved, jpeg_fixture)) return false;
+        if (!std.mem.startsWith(u8, from_path, "src/") or !contains(&library_test_files, resolved)) return false;
         const tree = &source.tree;
         const decl = enclosingDeclaration(tree, node) orelse return false;
         return tree.nodeTag(decl) == .test_decl;
