@@ -113,6 +113,9 @@ fn tracedOutline(pair: value.Pair, top: Box, right: Box, bottom: Box, lower_righ
 }
 
 fn rail(pair: value.Pair, start: Box, end: Box, direction: RailDirection, max_rail: f64) bool {
+    // The rail lies between the two corners. Collector boxes come from the
+    // before image, which holds them; the after image may be smaller.
+    if (!inside(pair.after, start) or !inside(pair.after, end)) return false;
     const horizontal = direction.axis == .horizontal;
     const rail_start = bounds.deviceIndex(if (horizontal) start.right() else start.bottom());
     const rail_end = bounds.deviceIndex(if (horizontal) end.x else end.y);
@@ -125,14 +128,11 @@ fn rail(pair: value.Pair, start: Box, end: Box, direction: RailDirection, max_ra
         .start => if (first != 0) first - 1 else return false,
         .end => if (last < extent) last else return false,
     };
-    const along = if (horizontal) 1 else pair.before.width;
-    const across = if (horizontal) pair.before.width else 1;
     for (first..last) |line| {
         for (rail_start..rail_end) |x| {
-            const index = line * across + x * along;
-            const ink = pair.before.pixels[index];
-            if (!pixel.same(ink, pair.after.pixels[index]) or
-                scrim.toneDistance(ink, pair.before.pixels[outside * across + x * along]) < corner_rail_contrast) break;
+            const ink = railPixel(pair.before, direction.axis, line, x);
+            if (!pixel.same(ink, railPixel(pair.after, direction.axis, line, x)) or
+                scrim.toneDistance(ink, railPixel(pair.before, direction.axis, outside, x)) < corner_rail_contrast) break;
         } else {
             if (!horizontal) return true;
             const old = pair.before.row(line);
@@ -143,6 +143,18 @@ fn rail(pair: value.Pair, start: Box, end: Box, direction: RailDirection, max_ra
         }
     }
     return false;
+}
+
+/// The pixel at position x along a rail on the given line of an axis.
+fn railPixel(image: Image, axis: bounds.RailAxis, line: usize, x: usize) value.Pixel {
+    return switch (axis) {
+        .horizontal => image.row(line)[x],
+        .vertical => image.row(x)[line],
+    };
+}
+
+fn inside(image: Image, box: Box) bool {
+    return box.right() <= @as(f64, @floatFromInt(image.width)) and box.bottom() <= @as(f64, @floatFromInt(image.height));
 }
 
 fn railTurns(image: Image, corner_box: Box, y: usize, ink: value.Pixel, side: enum { left, right }, exterior: bounds.RailEnd) bool {
@@ -212,6 +224,62 @@ test "four corners follow a continuous outline even when its straight edges diff
     candidates = edits;
     try std.testing.expectEqual(edits.len, mergeCorners(&candidates, .{ .before = before.view, .after = after.view }, .one));
     try std.testing.expectEqualDeep(edits, candidates);
+}
+
+test "an outline inside a narrower after image is read with each image's width" {
+    const canvas = @import("uidiff_test_canvas").Painters(value.Image);
+    const before = try canvas.Canvas.init(250, 150);
+    defer before.deinit();
+    const after = try canvas.Canvas.init(230, 150);
+    defer after.deinit();
+    const boxes = [_]Box{
+        Box.fromPixels(32, 26, 14, 14),
+        Box.fromPixels(202, 26, 14, 14),
+        Box.fromPixels(32, 116, 14, 14),
+        Box.fromPixels(202, 116, 14, 14),
+    };
+    var candidates: [boxes.len]candidate.Candidate = undefined;
+    for ([_]canvas.Canvas{ before, after }) |image| {
+        image.fill(32, 28, 184, 3, .{ 60, 90, 150, 255 });
+        image.fill(32, 124, 184, 3, .{ 120, 90, 62, 255 });
+        for ([_]usize{ 32, 214 }) |x| {
+            image.fill(x, 28, 2, 12, .{ 60, 90, 150, 255 });
+            image.fill(x, 116, 2, 11, .{ 120, 90, 62, 255 });
+        }
+        image.fill(35, 40, 4, 76, canvas.inkShade(75, 4));
+        image.fill(210, 40, 4, 76, canvas.inkShade(75, 4));
+    }
+    for (boxes, &candidates) |box, *edit| {
+        const x: usize = @intFromFloat(box.x);
+        const y: usize = @intFromFloat(box.y);
+        before.fill(x + 2, y + 3, 8, 6, canvas.inkShade(80, 4));
+        after.fill(x + 3, y + 4, 6, 4, canvas.inkShade(80, 4));
+        edit.* = .{ .region = .{ .before = box, .after = box }, .pixels = 8 };
+    }
+    try std.testing.expectEqual(@as(usize, 1), mergeCorners(&candidates, .{ .before = before.view, .after = after.view }, .one));
+}
+
+test "corners outside a narrower after image do not form an outline" {
+    const canvas = @import("uidiff_test_canvas").Painters(value.Image);
+    const before = try canvas.Canvas.init(250, 150);
+    defer before.deinit();
+    const after = try canvas.Canvas.init(125, 150);
+    defer after.deinit();
+    const boxes = [_]Box{
+        Box.fromPixels(32, 26, 14, 14),
+        Box.fromPixels(202, 26, 14, 14),
+        Box.fromPixels(32, 116, 14, 14),
+        Box.fromPixels(202, 116, 14, 14),
+    };
+    before.fill(32, 28, 184, 3, .{ 60, 90, 150, 255 });
+    before.fill(32, 124, 184, 3, .{ 120, 90, 62, 255 });
+    for ([_]usize{ 32, 214 }) |x| {
+        before.fill(x, 28, 2, 12, .{ 60, 90, 150, 255 });
+        before.fill(x, 116, 2, 11, .{ 120, 90, 62, 255 });
+    }
+    var candidates: [boxes.len]candidate.Candidate = undefined;
+    for (boxes, &candidates) |box, *edit| edit.* = .{ .region = .{ .before = box, .after = box }, .pixels = 8 };
+    try std.testing.expectEqual(boxes.len, mergeCorners(&candidates, .{ .before = before.view, .after = after.view }, .one));
 }
 
 test "viewport clipped corners join only across a continuous straight edge" {
