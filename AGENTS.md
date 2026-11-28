@@ -72,7 +72,7 @@ Named build modules, and the only files that may import them. The `export` row n
 | `zlib_c` | `src/codec/png/zlib.zig` |
 | `stb_write_c` | `tools/fixtures/encode.zig` |
 | `webp_encode_c` | `tools/fixtures/encode.zig` |
-| `codec_memory` | `src/codec.zig` `src/codec/png/zlib.zig` `src/codec/png/scanlines.zig` `src/codec/png/stb.zig` `src/codec/jpeg.zig` `src/codec/webp.zig` `tools/fixtures/encode.zig` |
+| `codec_memory` | `src/codec.zig` `src/codec/png.zig` `src/codec/png/` `src/codec/jpeg.zig` `src/codec/webp.zig` `tools/fixtures/encode.zig` |
 | `uidiff_test_canvas` | `src/testing.zig` `src/testing/expect.zig` `src/diff.zig` `src/diff/` `src/annotate/sheet/plan.zig` |
 | `uidiff_testing` | `tests/compare/` `tests/sheet/` `tests/decode.zig` `tests/e2e.zig` `tests/fuzz/` |
 | `fixtures` | `tests/e2e.zig` `tests/decode.zig` `tests/fuzz/` |

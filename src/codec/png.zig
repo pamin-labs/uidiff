@@ -8,6 +8,7 @@ const zlib = @import("png/zlib.zig");
 const encoder = @import("png/encoder.zig");
 const decoder = @import("png/decoder.zig");
 const png_format = @import("png_format");
+const memory = @import("codec_memory");
 const stb = @import("png/stb.zig");
 
 /// Malformed PNG bytes, a decode past the memory budget, or allocation failure.
@@ -47,7 +48,7 @@ test "streaming PNG matches procedural RGBA across dictionary wraps" {
     try write(allocator, .{ .width = width, .height = height, .pixels = pixels }, &output.writer);
     const header = try probe(allocator, output.written(), value.max_decode_bytes);
     const streamed = (try decoder.loadStreaming(allocator, output.written(), header, value.max_decode_bytes)) orelse return error.TestUnexpectedResult;
-    defer stb.release(allocator, streamed);
+    defer memory.freeBlock(@constCast(streamed.ptr));
     try std.testing.expectEqualSlices(Pixel, pixels, streamed);
 }
 
@@ -65,8 +66,8 @@ test "RGB8 streaming preserves opaque partial rows" {
     const probed = try probe(allocator, output.written(), value.max_decode_bytes);
     const streamed = (try decoder.loadStreaming(allocator, output.written(), probed, value.max_decode_bytes)) orelse return error.TestUnexpectedResult;
     const legacy = try stb.loadLegacy(allocator, output.written(), probed, value.max_decode_bytes);
-    defer stb.release(allocator, legacy);
-    defer stb.release(allocator, streamed);
+    defer memory.freeBlock(@constCast(legacy.ptr));
+    defer memory.freeBlock(@constCast(streamed.ptr));
     try std.testing.expectEqualSlices(Pixel, &pixels, legacy);
     try std.testing.expectEqualSlices(Pixel, legacy, streamed);
 }

@@ -49,11 +49,6 @@ pub fn loadLegacy(allocator: Allocator, bytes: []const u8, header: Header, cap: 
     return withDecodeBudget(loadStb, allocator, bytes, header, cap);
 }
 
-/// Frees pixels allocated by the bounded PNG allocator.
-pub fn release(_: Allocator, pixels: []const Pixel) void {
-    c.stbi_image_free(@constCast(pixels.ptr));
-}
-
 /// Runs a byte-and-size decoder within the PNG allocation scope.
 pub fn withDecodeBudget(comptime decodePixels: anytype, allocator: Allocator, bytes: []const u8, header: Header, cap: usize) @typeInfo(@TypeOf(decodePixels)).@"fn".return_type.? {
     try beginDecode(allocator, header, bytes.len, cap);

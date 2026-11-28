@@ -5,6 +5,7 @@ const zlib = @import("zlib.zig");
 const decoder = @import("decoder.zig");
 const value = @import("../../value.zig");
 const png_format = @import("png_format");
+const memory = @import("codec_memory");
 const stb = @import("stb.zig");
 const simd = @import("simd.zig");
 const Allocator = std.mem.Allocator;
@@ -418,7 +419,7 @@ test "staged PNG rows preserve the predictor across two strip boundaries and a t
         try std.testing.expectEqualSlices(u8, borrowed.written(), streamed.written());
         const header = try stb.probe(allocator, streamed.written(), value.max_decode_bytes);
         const decoded = try decoder.decode(allocator, streamed.written(), header, value.max_decode_bytes);
-        defer stb.release(allocator, decoded);
+        defer memory.freeBlock(@constCast(decoded.ptr));
         try std.testing.expectEqualSlices(value.Pixel, image.pixels, decoded);
     }
 }
@@ -501,7 +502,7 @@ test "overlapped strip compression reconstructs RGBA and RGB rows across worker 
         try writeRowsWithIo(std.testing.io, allocator, image.size(), BorrowedRows{ .image = image }, &output.writer);
         const header = try stb.probe(allocator, output.written(), value.max_decode_bytes);
         const decoded = try decoder.decode(allocator, output.written(), header, value.max_decode_bytes);
-        defer stb.release(allocator, decoded);
+        defer memory.freeBlock(@constCast(decoded.ptr));
         try std.testing.expectEqualSlices(value.Pixel, pixels, decoded);
     }
 }
@@ -536,7 +537,7 @@ test "strips copy a staged row that its source reuses" {
     try zlib.chunk(&out.writer, png_format.iend_type, "");
     const header = try stb.probe(allocator, out.written(), value.max_decode_bytes);
     const decoded = try decoder.decode(allocator, out.written(), header, value.max_decode_bytes);
-    defer stb.release(allocator, decoded);
+    defer memory.freeBlock(@constCast(decoded.ptr));
     try std.testing.expectEqualSlices(value.Pixel, image.pixels, decoded);
 }
 

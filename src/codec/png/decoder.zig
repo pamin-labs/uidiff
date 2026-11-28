@@ -4,6 +4,7 @@ const std = @import("std");
 const zlib = @import("zlib.zig");
 const value = @import("../../value.zig");
 const png_format = @import("png_format");
+const memory = @import("codec_memory");
 const stb = @import("stb.zig");
 const scanlines = @import("scanlines.zig");
 const Allocator = std.mem.Allocator;
@@ -59,9 +60,9 @@ test "PNG filters preserve RGB8 and RGBA8 across streaming and fallback" {
                 return;
             };
             const found = try load(allocator, output.written(), header, value.max_decode_bytes);
-            defer stb.release(allocator, found);
+            defer memory.freeBlock(@constCast(found.ptr));
             const legacy = try stb.loadLegacy(allocator, output.written(), header, value.max_decode_bytes);
-            defer stb.release(allocator, legacy);
+            defer memory.freeBlock(@constCast(legacy.ptr));
             try std.testing.expectEqualSlices(value.Pixel, pixels[0 .. width * filters.len], legacy);
             try std.testing.expectEqualSlices(value.Pixel, legacy, found);
         }
@@ -85,7 +86,7 @@ test "RGB8 accepts every legal IDAT split and refuses a truncated DEFLATE body" 
         rebuilt.clearRetainingCapacity();
         try streams.splitIdat(&rebuilt.writer, encoded.written()[0..streams.header_end], payload, at);
         const found = try load(allocator, rebuilt.written(), streams.single_rgb_header, value.max_decode_bytes);
-        defer stb.release(allocator, found);
+        defer memory.freeBlock(@constCast(found.ptr));
         try std.testing.expectEqual(streams.single_rgb_pixel, found[0]);
     }
     rebuilt.clearRetainingCapacity();
@@ -107,7 +108,7 @@ test "RGB8 preserves legacy checksum tolerance" {
     changed[idat + 8 + len - 1] ^= 1;
     changed[idat + 8 + len] ^= 1;
     const found = try load(allocator, changed, streams.single_rgb_header, value.max_decode_bytes);
-    defer stb.release(allocator, found);
+    defer memory.freeBlock(@constCast(found.ptr));
     try std.testing.expectEqual(streams.single_rgb_pixel, found[0]);
 }
 
@@ -128,7 +129,7 @@ test "RGB8 transparent colour keys use the legacy decoder" {
     const header = try stb.probe(allocator, keyed.written(), value.max_decode_bytes);
     try std.testing.expectEqual(@as(?[]value.Pixel, null), try loadStreaming(allocator, keyed.written(), header, value.max_decode_bytes));
     const pixels = try load(allocator, keyed.written(), header, value.max_decode_bytes);
-    defer stb.release(allocator, pixels);
+    defer memory.freeBlock(@constCast(pixels.ptr));
     try std.testing.expectEqual(value.Pixel{ raw[1], raw[2], raw[3], 0 }, pixels[0]);
 }
 
@@ -169,7 +170,7 @@ test "Scanline decoding leaves gray-alpha, packed indices, wide samples and inte
         const metadata = try stb.probe(allocator, patched.written(), value.max_decode_bytes);
         try std.testing.expectEqual(@as(?[]value.Pixel, null), try loadStreaming(allocator, patched.written(), metadata, value.max_decode_bytes));
         const pixels = try load(allocator, patched.written(), metadata, value.max_decode_bytes);
-        defer stb.release(allocator, pixels);
+        defer memory.freeBlock(@constCast(pixels.ptr));
         try std.testing.expectEqual(profile.expected, pixels[0]);
     }
 }
@@ -223,9 +224,9 @@ test "Gray8 and indexed PNG reconstruct every filter across split IDATs" {
                 const bytes = split.written();
                 const header = try stb.probe(allocator, bytes, value.max_decode_bytes);
                 const streamed = (try loadStreaming(allocator, bytes, header, value.max_decode_bytes)) orelse return error.TestUnexpectedResult;
-                defer stb.release(allocator, streamed);
+                defer memory.freeBlock(@constCast(streamed.ptr));
                 const legacy = try stb.loadLegacy(allocator, bytes, header, value.max_decode_bytes);
-                defer stb.release(allocator, legacy);
+                defer memory.freeBlock(@constCast(legacy.ptr));
                 try std.testing.expectEqualSlices(value.Pixel, legacy, streamed);
             }
         }
@@ -256,9 +257,9 @@ test "Gray8 colour keys and invalid palette indices preserve fallback behaviour"
             continue;
         }
         const legacy = try stb.loadLegacy(allocator, png.written(), header, value.max_decode_bytes);
-        defer stb.release(allocator, legacy);
+        defer memory.freeBlock(@constCast(legacy.ptr));
         const decoded = try load(allocator, png.written(), header, value.max_decode_bytes);
-        defer stb.release(allocator, decoded);
+        defer memory.freeBlock(@constCast(decoded.ptr));
         try std.testing.expectEqual(legacy.len, decoded.len);
         // stb leaves out-of-range palette entries undefined.
         if (case.profile == .gray) try std.testing.expectEqualSlices(value.Pixel, legacy, decoded);
@@ -353,9 +354,9 @@ test "fuzz streaming PNG reconstruction" {
             } else output.written();
             const header: stb.Header = .{ .size = size, .sample_bytes = 1 };
             const found = try loadStreaming(allocator, bytes, header, value.max_decode_bytes) orelse return;
-            defer stb.release(allocator, found);
+            defer memory.freeBlock(@constCast(found.ptr));
             const legacy = try stb.loadLegacy(allocator, bytes, header, value.max_decode_bytes);
-            defer stb.release(allocator, legacy);
+            defer memory.freeBlock(@constCast(legacy.ptr));
             try std.testing.expectEqualSlices(value.Pixel, legacy, found);
         }
     };
