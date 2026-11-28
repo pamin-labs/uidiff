@@ -25,6 +25,10 @@ pub const SheetRect = region.SheetRect;
 pub const Scale = scale.Scale;
 /// CSS-pixel length.
 pub const CssPx = scale.CssPx;
+/// Source dimensions per side.
+pub const Sizes = region.Sizes;
+/// The most regions a comparison reports and a sheet accepts.
+pub const max_regions = region.max_regions;
 /// Rows in the rendered sheet's coordinate space.
 pub const SheetRowRange = region.SheetRowRange;
 /// The sides affected by a change.

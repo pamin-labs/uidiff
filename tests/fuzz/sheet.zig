@@ -33,17 +33,13 @@ fn fuzzSheet(_: void, smith: *testing.Smith) !void {
     try testing.expect(decoded.image.valid());
 }
 
-/// A box inside the image, edges in whole and half pixels.
+/// A whole-pixel box inside the image, the only boxes Region.check accepts.
 fn box(smith: *testing.Smith, size: uidiff.Size) uidiff.Box {
-    const halves_x = smith.valueRangeAtMost(u16, 0, @intCast(2 * size.width - 1));
-    const halves_y = smith.valueRangeAtMost(u16, 0, @intCast(2 * size.height - 1));
-    const halves_w = smith.valueRangeAtMost(u16, 1, @intCast(2 * size.width - halves_x));
-    const halves_h = smith.valueRangeAtMost(u16, 1, @intCast(2 * size.height - halves_y));
-    return .{ .x = half(halves_x), .y = half(halves_y), .width = half(halves_w), .height = half(halves_h) };
-}
-
-fn half(n: u16) f64 {
-    return @as(f64, @floatFromInt(n)) / 2;
+    const x = smith.valueRangeAtMost(u16, 0, @intCast(size.width - 1));
+    const y = smith.valueRangeAtMost(u16, 0, @intCast(size.height - 1));
+    const width = smith.valueRangeAtMost(u16, 1, @intCast(size.width - x));
+    const height = smith.valueRangeAtMost(u16, 1, @intCast(size.height - y));
+    return .fromPixels(x, y, width, height);
 }
 
 test "fuzz annotated sheets and their PNG round trip" {

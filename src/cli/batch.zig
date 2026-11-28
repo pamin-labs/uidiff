@@ -177,7 +177,7 @@ fn compareLine(io: Io, allocator: Allocator, arena: Allocator, line: []const u8,
     uidiff.report.writeWholePixels(report, result.regions, result.canvas(), result.moves) catch |err| switch (err) {
         // The report buffer fails only when it cannot grow.
         error.WriteFailed => return error.OutOfMemory,
-        error.InvalidRegionBox => return error.InvalidRegionBox,
+        error.InvalidRegionBox, error.InvalidRegionNumber, error.InvalidMove => |invalid| return invalid,
     };
     return Status.of(result);
 }

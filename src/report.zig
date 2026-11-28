@@ -70,22 +70,14 @@ pub const Report = struct {
     moves: []const Move = &.{},
 };
 
-/// Report failures, including a coordinate outside the whole-pixel domain.
-pub const PixelWriteError = std.Io.Writer.Error || error{InvalidRegionBox};
+/// Output failures, or a region or move that fails its check.
+pub const PixelWriteError = std.Io.Writer.Error || value.Region.CheckError || value.Move.CheckError;
 
 const PixelBox = struct {
     x: usize,
     y: usize,
     width: usize,
     height: usize,
-
-    fn validate(box: ?value.Box) error{InvalidRegionBox}!void {
-        const b = box orelse return;
-        const geometry: @Vector(4, f64) = .{ b.x, b.y, b.width, b.height };
-        if (!@reduce(.And, geometry >= @as(@Vector(4, f64), @splat(0))) or
-            !@reduce(.And, geometry <= @as(@Vector(4, f64), @splat(value.max_extent))) or
-            !@reduce(.And, @floor(geometry) == geometry)) return error.InvalidRegionBox;
-    }
 
     fn fromValidated(box: ?value.Box) ?PixelBox {
         const b = box orelse return null;
@@ -98,13 +90,14 @@ const PixelRegion = struct { number: usize, kind: value.Kind, before: ?PixelBox,
 /// Schema version emitted with each report.
 pub const version: u32 = 1;
 
-/// Writes a comparison's rounded boxes without linking float formatting.
+/// Writes a comparison's whole-pixel boxes without linking float formatting.
+/// Checks every region and move first, so a failed check writes nothing.
 pub fn writeWholePixels(output: *std.Io.Writer, regions: []const value.Region, canvas: value.Size, moves: []const value.Move) PixelWriteError!void {
-    // Keep invalid geometry from producing a partial report.
-    for (regions) |region| {
-        try PixelBox.validate(region.before);
-        try PixelBox.validate(region.after);
-    }
+    // Keep invalid geometry from producing a partial report. The report
+    // knows only the canvas, so each side is checked against it.
+    const sizes: value.Sizes = .initFill(canvas);
+    for (regions) |region| try region.check(sizes);
+    for (moves) |move| try move.check(sizes);
     var json: std.json.Stringify = .{ .writer = output };
     try json.beginObject();
     inline for (comptime std.meta.tags(std.meta.FieldEnum(Report))) |field| {

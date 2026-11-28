@@ -10,7 +10,7 @@ const Rect = geometry.Rect;
 const SourceRect = geometry.SourceRect;
 const margin = geometry.margin;
 const overview_width = geometry.overview_width;
-const rectAtSize = geometry.rectAtSize;
+const sourceRect = geometry.sourceRect;
 const mapMark = geometry.mapMark;
 const Text = text.Text;
 const Crop = crops.Crop;
@@ -86,7 +86,7 @@ pub fn focusColumn(side: value.Side) usize {
 }
 
 /// Groups overlapping source windows and lays out the focus rows.
-pub fn layoutFocus(details: []Detail, focuses: []Focus, sizes: std.EnumArray(value.Side, Size), start: usize) error{SheetTooLarge}!usize {
+pub fn layoutFocus(details: []Detail, focuses: []Focus, start: usize) error{SheetTooLarge}!usize {
     // Find connected crop windows on either side. Keep the first region's
     // position in the sheet when merging a group.
     for (focuses, 0..) |focus, i| {
@@ -132,9 +132,9 @@ pub fn layoutFocus(details: []Detail, focuses: []Focus, sizes: std.EnumArray(val
     }
     for (details) |*detail| {
         const patches = focuses[detail.focus].crops;
-        for (patches.values, sizes.values, &detail.focus_marks.values, std.enums.values(value.Side)) |maybe_patch, size, *mark, side| {
+        for (patches.values, &detail.focus_marks.values, std.enums.values(value.Side)) |maybe_patch, *mark, side| {
             const patch = maybe_patch orelse continue;
-            const source = rectAtSize(size, detail.region.boxOn(side)) orelse continue;
+            const source = sourceRect(detail.region.boxOn(side)) orelse continue;
             mark.* = mapMark(source, patch.from, patch.to);
         }
     }

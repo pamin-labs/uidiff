@@ -11,9 +11,6 @@ const Collector = regions.Collector;
 const Image = value.Image;
 const Scale = value.Scale;
 
-/// The most regions a comparison reports; nearby ones merge to fit.
-pub const max_regions = regions.max_regions;
-
 const ScaleError = error{InvalidScale};
 
 /// The validated scale consumed by compareChecked.

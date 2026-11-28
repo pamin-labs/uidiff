@@ -1,5 +1,7 @@
 //! Rectangles and region values shared by comparison, drawing, and transport.
 const std = @import("std");
+const image = @import("image.zig");
+const Size = image.Size;
 
 const PixelSpace = enum { device, sheet };
 
@@ -43,6 +45,16 @@ pub const Box = struct {
         const dy = @max(0, other.y - self.bottom(), self.y - other.bottom());
         return dx * dx + dy * dy;
     }
+
+    /// Accepts whole, non-negative pixel coordinates with a positive area
+    /// that lie within an image of the given size. NaN fails every test.
+    fn fits(self: Self, size: Size) bool {
+        const geometry: @Vector(4, f64) = .{ self.x, self.y, self.width, self.height };
+        const zero: @Vector(4, f64) = @splat(0);
+        return @reduce(.And, geometry >= zero) and @reduce(.And, @floor(geometry) == geometry) and
+            self.width > 0 and self.height > 0 and
+            self.right() <= @as(f64, @floatFromInt(size.width)) and self.bottom() <= @as(f64, @floatFromInt(size.height));
+    }
 };
 
 /// A whole-pixel rectangle in source device coordinates.
@@ -58,6 +70,9 @@ pub const Kind = enum(u8) { inserted, removed, changed, _ };
 /// Selects the source image for a region or annotation. Exhaustive: a
 /// comparison has exactly two images.
 pub const Side = enum { before, after };
+
+/// Source dimensions per side, which caller-built regions and moves are checked against.
+pub const Sizes = std.EnumArray(Side, Size);
 
 /// One aligned row range in device pixels.
 pub const RowRange = PixelRows(.device);
@@ -75,9 +90,26 @@ pub const Move = struct {
     /// Number of source columns in the block.
     width: usize,
 
+    /// A move with no rows or columns, unequal heights, no displacement, or
+    /// rows or columns outside either image.
+    pub const CheckError = error{InvalidMove};
+
     /// Returns the absolute vertical displacement in source pixels.
     pub fn shift(self: Move) usize {
         return @max(self.before.y, self.after.y) - @min(self.before.y, self.after.y);
+    }
+
+    /// Checks a caller-built move against the per-side image sizes. A
+    /// comparison's moves always pass.
+    pub fn check(self: Move, sizes: Sizes) CheckError!void {
+        if (self.before.height == 0 or self.before.height != self.after.height or self.before.y == self.after.y) return error.InvalidMove;
+        const width = @min(sizes.get(.before).width, sizes.get(.after).width);
+        if (self.width == 0 or self.x > width or self.width > width - self.x) return error.InvalidMove;
+        inline for (.{ .before, .after }) |side| {
+            const rows = @field(self, @tagName(side));
+            const height = sizes.get(side).height;
+            if (rows.y > height or rows.height > height - rows.y) return error.InvalidMove;
+        }
     }
 };
 
@@ -89,6 +121,21 @@ pub const Region = struct {
     before: ?Box = null,
     /// The box on the after image, or null when the change is only on the before side.
     after: ?Box = null,
+
+    /// A region without a box, or a box that is fractional, empty or outside
+    /// its image; or a region that was never numbered.
+    pub const CheckError = error{ InvalidRegionBox, InvalidRegionNumber };
+
+    /// Checks a caller-built region against the per-side image sizes. A
+    /// comparison's regions always pass.
+    pub fn check(self: Region, sizes: Sizes) CheckError!void {
+        if (self.before == null and self.after == null) return error.InvalidRegionBox;
+        for (std.enums.values(Side)) |side| {
+            const box = self.boxOn(side) orelse continue;
+            if (!box.fits(sizes.get(side))) return error.InvalidRegionBox;
+        }
+        if (self.number == 0) return error.InvalidRegionNumber;
+    }
 
     /// Classifies the region by the sides that hold a box: after only is
     /// inserted, before only is removed, both is changed. A region without
@@ -107,6 +154,9 @@ pub const Region = struct {
         };
     }
 };
+
+/// The most regions a comparison reports and a sheet accepts.
+pub const max_regions = 8;
 
 fn PixelRows(comptime _: PixelSpace) type {
     return struct {
@@ -178,6 +228,39 @@ test "region selects its side, derives its kind, and edge-touching boxes do not 
     try std.testing.expectEqual(Kind.removed, (Region{ .before = here }).kind());
     try std.testing.expectEqual(Kind.changed, (Region{ .before = here, .after = next }).kind());
     try std.testing.expectEqual(@as(f64, 0), here.overlap(next));
+}
+
+test "caller regions need whole boxes inside their image and a number" {
+    const sizes: Sizes = .init(.{ .before = .{ .width = 10, .height = 8 }, .after = .{ .width = 6, .height = 8 } });
+    const inside = Box.fromPixels(2, 1, 4, 7);
+    try (Region{ .number = 1, .before = inside, .after = inside }).check(sizes);
+    var fractional = inside;
+    fractional.x += 0.5;
+    const invalid = [_]Region{
+        .{ .number = 1 },
+        .{ .number = 1, .before = fractional },
+        .{ .number = 1, .before = Box.fromPixels(2, 1, 0, 7) },
+        .{ .number = 1, .after = Box.fromPixels(4, 1, 4, 7) },
+        .{ .number = 1, .after = .{ .x = std.math.nan(f64), .y = 0, .width = 1, .height = 1 } },
+        .{ .number = 1, .after = .{ .x = -1, .y = 0, .width = 2, .height = 1 } },
+    };
+    for (invalid) |region| try std.testing.expectError(error.InvalidRegionBox, region.check(sizes));
+    try std.testing.expectError(error.InvalidRegionNumber, (Region{ .before = inside }).check(sizes));
+}
+
+test "caller moves need equal displaced rows within both images" {
+    const sizes: Sizes = .init(.{ .before = .{ .width = 10, .height = 20 }, .after = .{ .width = 6, .height = 30 } });
+    const valid: Move = .{ .before = .{ .y = 2, .height = 10 }, .after = .{ .y = 20, .height = 10 }, .x = 1, .width = 5 };
+    try valid.check(sizes);
+    var invalid: [6]Move = @splat(valid);
+    invalid[0].after.y = valid.before.y;
+    invalid[1].after.height = 9;
+    invalid[2].width = 0;
+    invalid[3].width = 6;
+    invalid[4].before.y = 11;
+    invalid[5].before.height = 0;
+    invalid[5].after.height = 0;
+    for (invalid) |move| try std.testing.expectError(error.InvalidMove, move.check(sizes));
 }
 
 test {

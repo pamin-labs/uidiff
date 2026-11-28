@@ -42,8 +42,10 @@ pub const Scale = value.Scale;
 /// Padding added around each reported box, in CSS pixels, before conversion
 /// to device pixels and clipping to the corresponding image.
 pub const region_padding = diff.region_padding;
-/// Upper bound on the number of reported regions after grouping.
-pub const max_regions = diff.max_regions;
+/// The most regions a comparison reports and a sheet accepts.
+pub const max_regions = value.max_regions;
+/// Source dimensions per side, which Region.check and Move.check take.
+pub const Sizes = value.Sizes;
 /// The encoded format identified by the decoder.
 pub const Format = codec.Format;
 /// An image with decoder-owned pixels, released by deinit.

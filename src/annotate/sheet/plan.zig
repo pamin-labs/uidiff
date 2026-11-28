@@ -16,7 +16,7 @@ const Pane = geometry.Pane;
 const margin = geometry.margin;
 const max_sheet_width = geometry.max_sheet_width;
 const offsetMark = geometry.offsetMark;
-const imageRect = geometry.imageRect;
+const sourceRect = geometry.sourceRect;
 const kindBit = palette.kindBit;
 const Text = text.Text;
 const textWidth = text.textWidth;
@@ -40,8 +40,9 @@ const Size = value.Size;
 const Region = value.Region;
 const Move = value.Move;
 
-/// Invalid images or regions, a sheet past the pixel cap, or an allocation failure.
-pub const RenderError = Allocator.Error || Image.Invalid || error{ SheetTooLarge, InvalidRegionBox, InvalidRegionNumber };
+/// Invalid images, regions or moves, more than max_regions regions, a sheet
+/// past the pixel cap, or an allocation failure.
+pub const RenderError = Allocator.Error || Image.Invalid || Region.CheckError || Move.CheckError || error{ SheetTooLarge, TooManyRegions };
 
 const Captions = struct { size: usize, bounds: geometry.SideRects };
 
@@ -95,6 +96,10 @@ pub const Plan = struct {
     /// Lays out the sheet and checks that the complete output fits image bounds.
     pub fn init(allocator: Allocator, pair: value.Pair, regions: []const Region, moves: []const Move) RenderError!Plan {
         if (!pair.before.valid() or !pair.after.valid()) return error.InvalidImage;
+        if (regions.len > value.max_regions) return error.TooManyRegions;
+        const sizes = pair.sizes();
+        for (regions) |region| try region.check(sizes);
+        for (moves) |move| try move.check(sizes);
         const pane_layout = PaneLayout.init(pair.before.size(), pair.after.size());
         var size = try minimumSize(pair.before.size(), pair.after.size());
         const before_pane = try Pane.init(allocator, pair.before, pane_layout);
@@ -125,7 +130,7 @@ pub const Plan = struct {
         if (details.len != 0) size.height = content.end + pane_layout.px(margin) - pane_layout.px(detail_gap);
         if (size.width > max_sheet_width or size.pixelCount() == null) return error.SheetTooLarge;
 
-        const planned_ribbons = try planRibbons(allocator, moves, details, pair.before.size(), pair.after.size(), pane_layout);
+        const planned_ribbons = try planRibbons(allocator, moves, details, pane_layout);
         errdefer allocator.free(planned_ribbons);
         return .{
             .sources = .init(.{ .before = before_pane, .after = after_pane }),
@@ -207,10 +212,8 @@ fn planDetails(allocator: Allocator, pair: value.Pair, regions: []const Region, 
     const focuses = try allocator.alloc(Focus, if (pane_layout.panoramic) regions.len else 0);
     errdefer allocator.free(focuses);
     for (regions, details, 0..) |region, *detail, index| {
-        const old = imageRect(pair.before, region.before);
-        const new = imageRect(pair.after, region.after);
-        if ((region.before != null and old == null) or (region.after != null and new == null)) return error.InvalidRegionBox;
-        if (region.number == 0 and (old != null or new != null)) return error.InvalidRegionNumber;
+        const old = sourceRect(region.before);
+        const new = sourceRect(region.after);
         kinds |= kindBit(region.kind());
         const patches = if (pane_layout.panoramic) std.EnumArray(value.Side, ?crops.Crop).initFill(null) else cropPair(pair, .init(.{ .before = old, .after = new }), placement.x, top, slot, pane_layout);
         const height = @max(pane_layout.px(min_slot_h), if (patches.get(.before)) |p| p.framedHeight(pane_layout) else 0, if (patches.get(.after)) |p| p.framedHeight(pane_layout) else 0);
@@ -232,21 +235,16 @@ fn planDetails(allocator: Allocator, pair: value.Pair, regions: []const Region, 
             if (top > value.max_extent) return error.SheetTooLarge;
         }
     }
-    if (pane_layout.panoramic) top = try layoutFocus(details, focuses, .init(.{ .before = pair.before.size(), .after = pair.after.size() }), top);
+    if (pane_layout.panoramic) top = try layoutFocus(details, focuses, top);
     return .{ .details = details, .focuses = focuses, .end = top, .kinds = kinds };
 }
 
-fn planRibbons(allocator: Allocator, moves: []const Move, details: []const Detail, before: Size, after: Size, pane_layout: PaneLayout) RenderError![]Ribbon {
+fn planRibbons(allocator: Allocator, moves: []const Move, details: []const Detail, pane_layout: PaneLayout) RenderError![]Ribbon {
     // A single gutter represents a single vertical path. For independent
     // columns depict the path that covers the most moved pixels.
     var area: usize = 0;
     var column: ?Move = null;
     for (moves) |move| {
-        if (move.before.y > before.height or move.before.height > before.height - move.before.y or
-            move.after.y > after.height or move.after.height > after.height - move.after.y or
-            move.before.height == 0 or move.before.height != move.after.height or move.before.y == move.after.y or
-            move.x > @min(before.width, after.width) or move.width > @min(before.width, after.width) - move.x or
-            move.width == 0) return error.InvalidImage;
         const weight = move.width *| move.before.height;
         if (weight > area) {
             area = weight;
@@ -344,7 +342,7 @@ fn reserveBadgeLanes(panes: *geometry.SideRects, size: *Size, pane_layout: PaneL
         for (panes.values, std.enums.values(value.Side)) |pane, side| {
             const image = pair.get(side);
             const box = region.boxOn(side);
-            const mark = offsetMark(imageRect(image, box), pane, image.size()) orelse continue;
+            const mark = offsetMark(sourceRect(box), pane, image.size()) orelse continue;
             const near_left = mark.x - pane.x < diameter;
             const near_right = pane.right() - mark.right() < diameter;
             left = left or (near_left and (side == .before or pane_layout.panoramic));
@@ -455,6 +453,22 @@ test {
     try std.testing.expectEqual(@as(usize, 59), focus_badge.width);
     try std.testing.expectEqual(plan.panes.get(.after).y, overview.bottom());
     try std.testing.expectEqual(plan.focuses[0].crops.get(.after).?.to.y, focus_badge.bottom());
+}
+
+test "plans refuse invalid caller regions and moves before laying out" {
+    const page = palette.page;
+    const Pixel = value.Pixel;
+    const allocator = std.testing.allocator;
+    const pixels: [40 * 40]Pixel = @splat(page);
+    const image: Image = .{ .width = 40, .height = 40, .pixels = &pixels };
+    const pair: value.Pair = .{ .before = image, .after = image };
+    var fractional = value.Box.fromPixels(1, 1, 4, 4);
+    fractional.width += 0.5;
+    const many: [value.max_regions + 1]Region = @splat(.{ .number = 1, .after = value.Box.fromPixels(1, 1, 4, 4) });
+    const still: Move = .{ .before = .{ .y = 4, .height = 8 }, .after = .{ .y = 4, .height = 8 }, .x = 0, .width = 40 };
+    try std.testing.expectError(error.TooManyRegions, Plan.init(allocator, pair, &many, &.{}));
+    try std.testing.expectError(error.InvalidRegionBox, Plan.init(allocator, pair, &.{.{ .number = 1, .after = fractional }}, &.{}));
+    try std.testing.expectError(error.InvalidMove, Plan.init(allocator, pair, &.{}, &.{still}));
 }
 
 test "edge badges stay near their numbered boxes and avoid all other marks" {

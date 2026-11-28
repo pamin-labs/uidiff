@@ -183,20 +183,12 @@ pub fn mapMark(region: SourceRect, source: SourceRect, pane: Rect) ?Rect {
     };
 }
 
-/// Validates fractional device coordinates and rounds them outward.
-pub fn imageRect(image: Image, box: ?value.Box) ?SourceRect {
-    return rectAtSize(image.size(), box);
-}
-
-/// Validates and rounds a box against a known source image size.
-pub noinline fn rectAtSize(size: Size, box: ?value.Box) ?SourceRect {
+/// Converts a box that passed Region.check to whole pixels.
+pub noinline fn sourceRect(box: ?value.Box) ?SourceRect {
     const b = box orelse return null;
-    const w: f64 = @floatFromInt(size.width);
-    const h: f64 = @floatFromInt(size.height);
-    if (!(b.x >= 0 and b.y >= 0 and b.width > 0 and b.height > 0 and b.right() <= w and b.bottom() <= h)) return null;
-    const x: usize = @intFromFloat(@floor(b.x));
-    const y: usize = @intFromFloat(@floor(b.y));
-    return .{ .x = x, .y = y, .width = @as(usize, @intFromFloat(@ceil(b.right()))) - x, .height = @as(usize, @intFromFloat(@ceil(b.bottom()))) - y };
+    // Region.check accepts only whole, non-negative coordinates within
+    // max_extent, so each conversion is exact and in range.
+    return .{ .x = @intFromFloat(b.x), .y = @intFromFloat(b.y), .width = @intFromFloat(b.width), .height = @intFromFloat(b.height) };
 }
 
 test "stacked overviews fit both axes at a single scale" {
