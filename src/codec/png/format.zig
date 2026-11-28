@@ -79,7 +79,7 @@ pub fn writeHeader(comptime writeChunk: anytype, out: *std.Io.Writer, width: u32
     try out.writeAll(signature);
     var header: [header_data_bytes]u8 = undefined;
     writeDimensions(header[0..dimensions_bytes], width, height);
-    header[8..13].* = .{ sample_depth, @backingInt(colour), 0, 0, 0 };
+    header[dimensions_bytes..].* = .{ sample_depth, @backingInt(colour), 0, 0, 0 };
     try writeChunk(out, header_type, &header);
 }
 
