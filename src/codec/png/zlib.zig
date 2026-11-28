@@ -131,7 +131,7 @@ pub const StripStream = struct {
 pub const chunk_bytes = 64 * 1024;
 
 // Keep initialization and the inflate call in separate functions on ARM64
-// Linux to save 168 executable bytes with Zig 0.17.1. Re-measure on a Zig upgrade.
+// Linux, which measured smaller with Zig 0.17.1. Re-measure on a Zig upgrade.
 const inflate_call: std.builtin.CallModifier = if (builtin.cpu.arch == .aarch64 and builtin.os.tag == .linux) .never_inline else .auto;
 
 const window_bits = 15;
@@ -154,7 +154,7 @@ pub fn chunk(output: *Writer, comptime kind: *const [4]u8, data: []const u8) Wri
 /// complete() methods. The caller has entered a decode allocation scope.
 pub fn inflateRows(bytes: []const u8, comptime output_bytes: usize, output: *[output_bytes]u8, rows: anytype) memory.Error!bool {
     // Match the legacy checksum policy, leaving unusual header/trailer splits
-    // to that decoder. The zlib header bounds the raw dictionary to 32 KiB.
+    // to that decoder. The zlib header bounds the raw dictionary to `history_bytes`.
     const Sink = @TypeOf(rows.*);
     if (!@hasDecl(Sink, "consume") or !@hasDecl(Sink, "complete"))
         @compileError("a PNG row sink must provide consume(bytes) and complete()");
@@ -285,8 +285,8 @@ test "a reused strip compresses as a fresh one does" {
     var prng: std.Random.DefaultPrng = .init(0x5715);
     const random = prng.random();
     const allocator = std.testing.allocator;
-    // The window is 64 KiB, so longer inputs reach nothing new.
-    const window = 64 * 1024;
+    // Inputs longer than twice the history reach nothing new.
+    const window = 2 * history_bytes;
     const history = try allocator.alloc(u8, window / 2);
     defer allocator.free(history);
     const previous = try allocator.alloc(u8, window);

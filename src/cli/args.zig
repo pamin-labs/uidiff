@@ -14,8 +14,8 @@ const Flag = enum {
         return "--" ++ @tagName(self);
     }
 
-    // A plain scan over six names: std.meta.stringToEnum's lookup table
-    // measured about 3 KB larger on Linux ReleaseSafe.
+    // A plain scan over the names: std.meta.stringToEnum's lookup table
+    // measured larger on Linux ReleaseSafe.
     noinline fn fromArgument(arg: []const u8) ?Flag {
         if (!std.mem.startsWith(u8, arg, "--")) return null;
         for (std.enums.values(Flag), std.meta.fieldNames(Flag)) |flag, name| {
@@ -81,7 +81,7 @@ const fuzz_words = [_][:0]const u8{ Flag.json.spelling(), Flag.scale.spelling(),
 
 /// Recognises a standalone flag with no other arguments. It compares the
 /// spellings directly: going through `Flag.fromArgument` here measured
-/// about 1.2 KB larger on Linux ReleaseSafe.
+/// larger on Linux ReleaseSafe.
 pub fn standalone(args: []const [:0]const u8) ?Standalone {
     if (args.len != 2) return null;
     if (std.mem.eql(u8, args[1], Flag.batch.spelling())) return .batch;
