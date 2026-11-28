@@ -119,12 +119,10 @@ pub fn compareFiles(io: Io, allocator: Allocator, paths: Paths, options: FileCom
     return result;
 }
 
-/// Streams a comparison sheet as PNG into a caller-supplied writer.
-pub fn encodeSheet(allocator: Allocator, pair: value.Pair, regions: []const value.Region, moves: []const value.Move, output: *Io.Writer) EncodeSheetError!void {
-    return encodeSheetWithIo(null, allocator, pair, regions, moves, output);
-}
-
-fn encodeSheetWithIo(io: ?Io, allocator: Allocator, pair: value.Pair, regions: []const value.Region, moves: []const value.Move, output: *Io.Writer) EncodeSheetError!void {
+/// Streams a comparison sheet as PNG into a caller-supplied writer,
+/// compressing a large sheet's strips concurrently through io as
+/// compareFiles does, so both give the same bytes.
+pub fn encodeSheet(io: Io, allocator: Allocator, pair: value.Pair, regions: []const value.Region, moves: []const value.Move, output: *Io.Writer) EncodeSheetError!void {
     const sheet = try annotate.SheetRows.init(allocator, pair.before, pair.after, regions, moves);
     defer sheet.deinit(allocator);
     try codec.encodePngRowsWithIo(io, allocator, sheet.size(), sheet, output);
@@ -184,7 +182,7 @@ fn writeSheet(io: Io, allocator: Allocator, path: []const u8, pair: value.Pair, 
     const buffer = try value.allocUnfilled(u8, allocator, write_buffer_bytes);
     defer value.freeUnfilled(u8, allocator, buffer);
     var writer = file.file.writer(io, buffer);
-    encodeSheetWithIo(io, allocator, pair, result.regions, result.moves, &writer.interface) catch |err| switch (err) {
+    encodeSheet(io, allocator, pair, result.regions, result.moves, &writer.interface) catch |err| switch (err) {
         error.WriteFailed => return writer.err orelse err,
         else => |other| return other,
     };

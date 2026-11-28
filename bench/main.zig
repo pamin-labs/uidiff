@@ -96,8 +96,8 @@ fn measureStages(io: Io, clock: Io.Clock, allocator: std.mem.Allocator, before_p
         cmp_time.* = elapsed(compare_start, io);
     }
 
-    // Time the serial sheet API in separate rounds so its buffers do not
-    // disturb the stages above. Measure CLI concurrency through --annotate.
+    // Time the sheet API, which encodes as --annotate does, in separate
+    // rounds so its buffers do not disturb the stages above.
     var before = try uidiff.decode(allocator, before_bytes, uidiff.max_decode_bytes);
     defer before.deinit();
     var after = try uidiff.decode(allocator, after_bytes, uidiff.max_decode_bytes);
@@ -107,7 +107,7 @@ fn measureStages(io: Io, clock: Io.Clock, allocator: std.mem.Allocator, before_p
     for (&stages.sheet) |*sheet_time| {
         encoded.clearRetainingCapacity();
         const sheet_start = Io.Clock.Timestamp.now(io, clock);
-        try uidiff.encodeSheet(allocator, .{ .before = before.image, .after = after.image }, result.regions, result.moves, &encoded.writer);
+        try uidiff.encodeSheet(io, allocator, .{ .before = before.image, .after = after.image }, result.regions, result.moves, &encoded.writer);
         sheet_time.* = elapsed(sheet_start, io);
         stages.sheet_bytes = encoded.written().len;
     }

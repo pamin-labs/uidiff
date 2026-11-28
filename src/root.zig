@@ -90,8 +90,9 @@ pub const CssPx = value.CssPx;
 /// Renders an RGBA8 sheet from the source images, regions, and moves.
 /// Release the result with Sheet.deinit and the supplied allocator.
 pub const renderSheet = annotate.renderSheet;
-/// Streams a comparison sheet as PNG without allocating the full sheet.
-/// The caller owns the writer and its flush.
+/// Streams a comparison sheet as PNG without allocating the full sheet,
+/// compressing large sheets concurrently through io. The caller owns the
+/// writer and its flush.
 pub const encodeSheet = pipeline.encodeSheet;
 /// Borrows the two input paths and the optional sheet destination.
 pub const Paths = pipeline.Paths;
