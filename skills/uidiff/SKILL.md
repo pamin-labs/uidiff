@@ -52,6 +52,11 @@ uidiff before.png after.png --scale 2 --json --annotate sheet.png > report.json
 ```
 
 Pass captures as files. `-` does not read stdin, and input pipes are unsupported.
+For many pairs, `uidiff --batch` reads one JSON request per stdin line
+(`{"before":"a.png","after":"b.png","scale":"2","annotate":"sheet.png"}`) and
+prints one line per request, `{"status":N,"report":{...}}` or
+`{"status":2,"error":"FileNotFound","path":"a.png"}`, faster than one process
+per pair.
 A symlink at the sheet path is replaced by the PNG itself, unless it points to
 an input, which raises `SheetIsInput`.
 

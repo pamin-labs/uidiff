@@ -1,3 +1,4 @@
 Usage: uidiff <before> <after> [--scale N] [--json] [--annotate <out.png>]
+       uidiff --batch < requests.jsonl
        uidiff --help
        uidiff --version

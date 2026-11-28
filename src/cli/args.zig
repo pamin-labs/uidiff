@@ -6,6 +6,7 @@ const Flag = enum {
     scale,
     json,
     annotate,
+    batch,
     help,
     version,
 
@@ -13,7 +14,7 @@ const Flag = enum {
         return "--" ++ @tagName(self);
     }
 
-    // A plain scan over five names: std.meta.stringToEnum's lookup table
+    // A plain scan over six names: std.meta.stringToEnum's lookup table
     // measured about 3 KB larger on Linux ReleaseSafe.
     noinline fn fromArgument(arg: []const u8) ?Flag {
         if (!std.mem.startsWith(u8, arg, "--")) return null;
@@ -27,8 +28,8 @@ const Flag = enum {
 /// What the command prints on standard output.
 pub const Output = enum { count, json };
 
-/// The information requested by a standalone flag.
-pub const Info = enum { help, version };
+/// What a flag used on its own asks for.
+pub const Standalone = enum { batch, help, version };
 
 /// Parsed paths and output options. Path slices borrow the arguments.
 pub const Command = struct {
@@ -78,11 +79,12 @@ const max_fuzz_args = 8;
 const max_fuzz_arg_bytes = 8;
 const fuzz_words = [_][:0]const u8{ Flag.json.spelling(), Flag.scale.spelling(), Flag.annotate.spelling(), "2", "1.5", "0x10", "1_0", "out.png" };
 
-/// Recognises an information request with no other arguments. It compares the
-/// two spellings directly: going through `Flag.fromArgument` here measured
+/// Recognises a standalone flag with no other arguments. It compares the
+/// spellings directly: going through `Flag.fromArgument` here measured
 /// about 1.2 KB larger on Linux ReleaseSafe.
-pub fn infoRequest(args: []const [:0]const u8) ?Info {
+pub fn standalone(args: []const [:0]const u8) ?Standalone {
     if (args.len != 2) return null;
+    if (std.mem.eql(u8, args[1], Flag.batch.spelling())) return .batch;
     if (std.mem.eql(u8, args[1], Flag.help.spelling())) return .help;
     if (std.mem.eql(u8, args[1], Flag.version.spelling())) return .version;
     return null;
@@ -94,7 +96,7 @@ pub fn parse(args: []const [:0]const u8) ParseResult {
     for (args[1..@min(3, args.len)]) |arg| {
         if (!std.mem.startsWith(u8, arg, "--")) continue;
         const reason: Issue.Reason = switch (Flag.fromArgument(arg) orelse return invalid(arg, .unknown_flag)) {
-            .help, .version => .standalone_only,
+            .batch, .help, .version => .standalone_only,
             else => .flag_before_paths,
         };
         return invalid(arg, reason);
@@ -106,7 +108,7 @@ pub fn parse(args: []const [:0]const u8) ParseResult {
     while (i < args.len) : (i += 1) {
         const arg = args[i];
         const flag = Flag.fromArgument(arg) orelse return invalid(arg, .unknown_flag);
-        if (flag == .help or flag == .version) return invalid(arg, .standalone_only);
+        if (flag == .batch or flag == .help or flag == .version) return invalid(arg, .standalone_only);
         if (seen.contains(flag)) return invalid(arg, .repeated_flag);
         seen.insert(flag);
         if (flag == .json) {
@@ -123,7 +125,8 @@ pub fn parse(args: []const [:0]const u8) ParseResult {
     return .{ .command = parsed };
 }
 
-noinline fn parseScale(text: []const u8) ?uidiff.Scale {
+/// Parses a `--scale` value, also the grammar of a batch request's scale.
+pub noinline fn parseScale(text: []const u8) ?uidiff.Scale {
     const scale = uidiff.Scale.parse(text) orelse return null;
     return if (scale.isValid()) scale else null;
 }
@@ -156,8 +159,8 @@ fn fuzzParse(_: void, smith: *std.testing.Smith) !void {
 
 test "usage agrees with every flag spelling" {
     const expected = comptime std.fmt.comptimePrint(
-        "Usage: uidiff <before> <after> [{s} N] [{s}] [{s} <out.png>]\n       uidiff {s}\n       uidiff {s}\n",
-        .{ Flag.scale.spelling(), Flag.json.spelling(), Flag.annotate.spelling(), Flag.help.spelling(), Flag.version.spelling() },
+        "Usage: uidiff <before> <after> [{s} N] [{s}] [{s} <out.png>]\n       uidiff {s} < requests.jsonl\n       uidiff {s}\n       uidiff {s}\n",
+        .{ Flag.scale.spelling(), Flag.json.spelling(), Flag.annotate.spelling(), Flag.batch.spelling(), Flag.help.spelling(), Flag.version.spelling() },
     );
     try std.testing.expectEqualStrings(expected, usage);
 }

@@ -96,6 +96,7 @@ Boxes are in device pixels. A region has a box on each side where it exists. A m
 
 ```text
 uidiff <before> <after> [--scale N] [--json] [--annotate <out.png>]
+uidiff --batch < requests.jsonl
 uidiff --help
 uidiff --version
 ```
@@ -106,6 +107,7 @@ uidiff --version
 | `--scale N` | Device pixels per logical pixel (CSS px, points or dp), as a plain decimal such as `2` or `1.5`, with at most 15 digits after leading zeros and 22 decimal places after trailing zeros. Default `1`. It sets padding and merge distances in logical pixels; boxes stay in device pixels. |
 | `--json` | Print the report as one JSON object instead of the region count. |
 | `--annotate <out.png>` | Also write the sheet to this PNG. The file is replaced only once the sheet is complete. Large sheets are compressed on several cores; for a given uidiff version the PNG bytes are the same on every machine. |
+| `--batch` | Run many comparisons in one process, reading JSON Lines on stdin. See [Batch](#batch). |
 | `--help` | Print usage and exit 0. |
 | `--version` | Print the installed version and exit 0. |
 
@@ -114,6 +116,17 @@ uidiff --version
 | `0` | No change regions detected. |
 | `1` | Change regions found. |
 | `2` | A comparison or usage error, reported on stderr. `SheetIsInput` means the sheet path names either input, including through a link. |
+
+### Batch
+
+`--batch` takes no other arguments. Each line of stdin is one JSON object: `before` and `after` are paths, `scale` is optional and uses the `--scale` grammar as a string such as `"2"`, and `annotate` optionally names a sheet to write. Other fields are ignored. Each input line gets one output line on stdout, in order and flushed as it is written:
+
+```text
+{"status":1,"report":{"version":1,"regions":[...],"width":1170,"height":2532,"moves":[]}}
+{"status":2,"error":"FileNotFound","path":"missing.png"}
+```
+
+`status` is the exit code a single run would give. `report` is exactly the report `--json` prints. A failed comparison gives its error name and, when a file caused it, `path`, and the batch moves on. A line that is not a valid request gives `InvalidInput`, an invalid `scale` gives `InvalidScale`, and a line over 64 KiB gives `LineTooLong`. The batch exits with the highest status it printed. Sheets are byte-identical to a single run's. One process for many pairs skips the start-up each run pays.
 
 Pass captures as files. `-` does not read stdin, and input pipes are unsupported. A symlink at the sheet path is replaced by the PNG itself, unless it points to an input, which raises `SheetIsInput`.
 

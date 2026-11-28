@@ -3,6 +3,7 @@ const std = @import("std");
 const uidiff = @import("uidiff");
 const args = @import("cli/args.zig");
 const pages = @import("cli/pages.zig");
+const batch = @import("cli/batch.zig");
 const Status = @import("cli/status.zig").Status;
 const cli_options = @import("cli_options");
 const Io = std.Io;
@@ -12,7 +13,7 @@ const Allocator = std.mem.Allocator;
 pub const panic = std.debug.simple_panic;
 
 const RunError = std.process.Args.ToSliceError || uidiff.FileCompareError || uidiff.report.PixelWriteError ||
-    Io.File.Writer.Error;
+    Io.File.Writer.Error || Io.File.Reader.Error || error{ReadFailed};
 
 /// Empty: main maps every failure to exit status 2 and a log line, because an
 /// error returned from main would exit with 1, the status for changed images.
@@ -23,10 +24,12 @@ pub const std_options: std.Options = .{ .networking = false };
 
 /// What the command names when standard output fails.
 const stdout_name = "stdout";
+/// What the batch names when standard input fails.
+const stdin_name = "stdin";
 
 const log = std.log.scoped(.uidiff);
 
-/// Runs one comparison and returns its process exit status.
+/// Runs one comparison, or a batch, and returns its process exit status.
 pub fn main(init: std.process.Init.Minimal) MainError!u8 {
     // The decoders' many short-lived blocks go through this allocator. libc
     // is linked for the decoders already, and its malloc reuses freed blocks;
@@ -54,12 +57,13 @@ pub fn main(init: std.process.Init.Minimal) MainError!u8 {
 
 fn run(io: Io, allocator: Allocator, input: std.process.Args, arena: Allocator, diagnostics: *uidiff.Diagnostics) RunError!Status {
     const argv = try input.toSlice(arena);
-    if (args.infoRequest(argv)) |request| {
-        diagnostics.path = stdout_name;
+    if (args.standalone(argv)) |request| {
         const message = switch (request) {
+            .batch => return runBatch(io, allocator, arena, diagnostics),
             .help => args.usage,
             .version => cli_options.version ++ "\n",
         };
+        diagnostics.path = stdout_name;
         try Io.File.stdout().writeStreamingAll(io, message);
         diagnostics.path = null;
         return .unchanged;
@@ -80,6 +84,24 @@ fn run(io: Io, allocator: Allocator, input: std.process.Args, arena: Allocator, 
     stdout.interface.flush() catch |err| return stdout.err orelse err;
     diagnostics.path = null;
     return Status.of(result);
+}
+
+fn runBatch(io: Io, allocator: Allocator, arena: Allocator, diagnostics: *uidiff.Diagnostics) RunError!Status {
+    const input_buffer = try arena.alloc(u8, batch.max_line_bytes + 1);
+    var stdin = Io.File.stdin().readerStreaming(io, input_buffer);
+    var output_buffer: [4096]u8 = undefined;
+    var stdout = Io.File.stdout().writerStreaming(io, &output_buffer);
+    return batch.run(io, allocator, &stdin.interface, &stdout.interface) catch |err| switch (err) {
+        error.ReadFailed => {
+            diagnostics.path = stdin_name;
+            return stdin.err orelse err;
+        },
+        error.WriteFailed => {
+            diagnostics.path = stdout_name;
+            return stdout.err orelse err;
+        },
+        error.OutOfMemory => return error.OutOfMemory,
+    };
 }
 
 fn write(output: *Io.Writer, format: args.Output, result: uidiff.Comparison) uidiff.report.PixelWriteError!void {
@@ -108,6 +130,7 @@ noinline fn logPathError(argument: []const u8, reason: []const u8) void {
 test {
     std.testing.refAllDecls(args);
     std.testing.refAllDecls(pages);
+    std.testing.refAllDecls(batch);
     std.testing.refAllDecls(@import("cli/status.zig"));
 }
 

@@ -14,6 +14,10 @@ const budget = std.Io.Limit.limited(4096);
 const scale = std.fmt.comptimePrint("{d}", .{fixtures.scale});
 
 const single_region_output = "1 region\n";
+/// Pairs the batch test compares with single runs: a change, a move and no change.
+const batch_specs = [_]fixtures.Change{ .edit, .insert, .identical };
+/// Longer than any line the batch accepts, and than its input buffer.
+const over_long_line_bytes = 1 << 20;
 
 fn run(cwd: std.process.Child.Cwd, comptime argc: usize, args: [argc][]const u8) !std.process.RunResult {
     const exe = try std.Io.Dir.cwd().realPathFileAlloc(testing.io, options.executable, allocator);
@@ -234,6 +238,67 @@ test "a small file claiming a huge 16-bit image is refused within its budget" {
         defer free(result);
         try failure(result, "error(uidiff): " ++ path ++ ": ImageTooLarge");
     }
+}
+
+test "a batch answers each line as a single run would and continues past failures" {
+    const Request = struct { before: []const u8, after: []const u8, scale: []const u8 = scale, annotate: ?[]const u8 = null };
+    const exe = try absolute(options.executable);
+    defer allocator.free(exe);
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var input: std.Io.Writer.Allocating = .init(allocator);
+    defer input.deinit();
+    // Each pair's single-run line, as the batch must print it byte for byte.
+    var expected: std.Io.Writer.Allocating = .init(allocator);
+    defer expected.deinit();
+    var inputs: [2 * batch_specs.len][:0]u8 = undefined;
+    var resolved: usize = 0;
+    defer for (inputs[0..resolved]) |path| allocator.free(path);
+    inline for (batch_specs, 0..) |name, index| {
+        const spec = comptime fixtures.find(name);
+        inputs[2 * index] = try absolute(spec.path(.before, .png));
+        resolved += 1;
+        inputs[2 * index + 1] = try absolute(spec.path(.after, .png));
+        resolved += 1;
+        const before = inputs[2 * index];
+        const after = inputs[2 * index + 1];
+        const sheet: ?[]const u8 = if (index == 0) "single.png" else null;
+        const single = if (sheet) |path|
+            try run(.{ .dir = tmp.dir }, 7, .{ before, after, "--scale", scale, "--json", "--annotate", path })
+        else
+            try run(.{ .dir = tmp.dir }, 5, .{ before, after, "--scale", scale, "--json" });
+        defer free(single);
+        const code: u8 = switch (single.term) {
+            .exited => |code| code,
+            else => return error.TestUnexpectedResult,
+        };
+        try expected.writer.print("{{\"status\":{d},\"report\":{s}}}\n", .{ code, std.mem.trimEnd(u8, single.stdout, "\n") });
+        try std.json.Stringify.value(Request{ .before = before, .after = after, .annotate = if (sheet != null) "batch.png" else null }, .{ .emit_null_optional_fields = false }, &input.writer);
+        try input.writer.writeByte('\n');
+    }
+    try std.json.Stringify.value(Request{ .before = "missing.png", .after = inputs[1] }, .{}, &input.writer);
+    try input.writer.writeByte('\n');
+    try expected.writer.writeAll("{\"status\":2,\"error\":\"FileNotFound\",\"path\":\"missing.png\"}\n");
+    try input.writer.splatByteAll('x', over_long_line_bytes);
+    try input.writer.writeByte('\n');
+    try expected.writer.writeAll("{\"status\":2,\"error\":\"LineTooLong\"}\n");
+
+    var child = try std.process.spawn(testing.io, .{ .argv = &.{ exe, "--batch" }, .cwd = .{ .dir = tmp.dir }, .stdin = .pipe, .stdout = .pipe, .stderr = .ignore });
+    defer child.kill(testing.io);
+    try child.stdin.?.writeStreamingAll(testing.io, input.written());
+    child.stdin.?.close(testing.io);
+    child.stdin = null;
+    var buffer: [4096]u8 = undefined;
+    var reader = child.stdout.?.readerStreaming(testing.io, &buffer);
+    const output = try reader.interface.allocRemaining(allocator, .limited(1 << 20));
+    defer allocator.free(output);
+    try testing.expectEqual(std.process.Child.Term{ .exited = 2 }, try child.wait(testing.io));
+    try testing.expectEqualStrings(expected.written(), output);
+    const single_sheet = try tmp.dir.readFileAlloc(testing.io, "single.png", allocator, .limited(uidiff.max_encoded_bytes));
+    defer allocator.free(single_sheet);
+    const batch_sheet = try tmp.dir.readFileAlloc(testing.io, "batch.png", allocator, .limited(uidiff.max_encoded_bytes));
+    defer allocator.free(batch_sheet);
+    try testing.expectEqualSlices(u8, single_sheet, batch_sheet);
 }
 
 test "a closed standard output is named and exits as a failure" {
