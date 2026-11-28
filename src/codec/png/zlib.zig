@@ -10,9 +10,6 @@ const zlib = @import("zlib_c");
 const format = @import("png_format");
 const Image = value.Image;
 
-/// The uncompressed history carried into the next raw deflate strip.
-pub const history_bytes = std.compress.flate.history_len;
-
 /// Allocation, invalid image or output failures.
 pub const EncodeError = Allocator.Error || Writer.Error || Image.Invalid;
 
@@ -138,6 +135,8 @@ pub const chunk_bytes = 64 * 1024;
 const inflate_call: std.builtin.CallModifier = if (builtin.cpu.arch == .aarch64 and builtin.os.tag == .linux) .never_inline else .auto;
 
 const window_bits = 15;
+/// The uncompressed history carried into the next raw deflate strip.
+pub const history_bytes = 1 << window_bits;
 
 const memory_level = 8;
 
