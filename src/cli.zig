@@ -13,7 +13,7 @@ const Allocator = std.mem.Allocator;
 /// Prints the panic message without linking stack-trace formatting.
 pub const panic = std.debug.simple_panic;
 
-const RunError = std.process.Args.ToSliceError || uidiff.FileCompareError || uidiff.report.PixelWriteError ||
+const RunError = std.process.Args.ToSliceError || uidiff.FileCompareError || uidiff.report.WriteError ||
     Io.File.Writer.Error || Io.File.Reader.Error || error{ReadFailed};
 
 /// Empty: main maps every failure to exit status 2 and a log line, because an
@@ -107,9 +107,9 @@ fn runBatch(io: Io, allocator: Allocator, arena: Allocator, diagnostics: *uidiff
     };
 }
 
-fn write(output: *Io.Writer, format: args.Output, result: uidiff.Comparison) uidiff.report.PixelWriteError!void {
+fn write(output: *Io.Writer, format: args.Output, result: uidiff.Comparison) uidiff.report.WriteError!void {
     switch (format) {
-        .json => try uidiff.report.writeWholePixels(output, result.regions, result.canvas(), result.moves),
+        .json => try uidiff.report.write(result.regions, result.canvas(), result.moves, output),
         .count => {
             const count = result.regions.len;
             try output.print("{d} {s}\n", .{ count, if (count == 1) "region" else "regions" });

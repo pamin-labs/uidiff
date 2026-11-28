@@ -46,7 +46,7 @@ const Failed = struct {
 };
 
 /// Why one line failed before or during its comparison.
-const LineError = uidiff.FileCompareError || uidiff.report.PixelWriteError || error{ InvalidInput, InvalidScale, LineTooLong };
+const LineError = uidiff.FileCompareError || uidiff.report.WriteError || error{ InvalidInput, InvalidScale, LineTooLong };
 
 /// Failures that end the batch: reading its input or writing its output.
 pub const Error = error{ReadFailed} || Io.Writer.Error || Allocator.Error;
@@ -174,7 +174,7 @@ fn compareLine(io: Io, allocator: Allocator, arena: Allocator, line: []const u8,
     const command = try parseLine(arena, line);
     const result = try uidiff.compareFiles(io, allocator, command.paths, command.options, diagnostics);
     defer result.deinit(allocator);
-    uidiff.report.writeWholePixels(report, result.regions, result.canvas(), result.moves) catch |err| switch (err) {
+    uidiff.report.write(result.regions, result.canvas(), result.moves, report) catch |err| switch (err) {
         // The report buffer fails only when it cannot grow.
         error.WriteFailed => return error.OutOfMemory,
         error.InvalidRegionBox, error.InvalidRegionNumber, error.InvalidMove => |invalid| return invalid,
