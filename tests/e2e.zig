@@ -413,6 +413,21 @@ test "malformed arguments and invalid scale return usage errors" {
     }
 }
 
+test "no arguments with stdin not a terminal reads requests until its end" {
+    const exe = try absolute(options.executable);
+    defer allocator.free(exe);
+    var child = try std.process.spawn(testing.io, .{ .argv = &.{exe}, .stdin = .pipe, .stdout = .pipe, .stderr = .pipe });
+    defer child.kill(testing.io);
+    child.stdin.?.close(testing.io);
+    child.stdin = null;
+    var buffer: [256]u8 = undefined;
+    var reader = child.stdout.?.readerStreaming(testing.io, &buffer);
+    const output = try reader.interface.allocRemaining(allocator, budget);
+    defer allocator.free(output);
+    try testing.expectEqual(std.process.Child.Term{ .exited = 0 }, try child.wait(testing.io));
+    try testing.expectEqualStrings("", output);
+}
+
 test "help prints usage on stdout and exits successfully" {
     const result = try run(.inherit, 1, .{"--help"});
     defer free(result);

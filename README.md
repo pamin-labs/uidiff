@@ -132,7 +132,7 @@ Each comparison prints one line on stdout, in order and flushed as it is written
 
 ### Requests on stdin
 
-With no arguments, uidiff waits for requests on stdin (`uidiff --help` prints usage), one JSON object per line: `before` and `after` are paths, `scale` is optional and uses the `--scale` grammar as a string such as `"2"`, and `annotate` optionally names a sheet to write. Other fields are ignored. Each request gets one output line, as above:
+With no arguments, uidiff reads requests from stdin, one JSON object per line; when stdin is a terminal it prints usage on stderr and exits 2 instead: `before` and `after` are paths, `scale` is optional and uses the `--scale` grammar as a string such as `"2"`, and `annotate` optionally names a sheet to write. Other fields are ignored. Each request gets one output line, as above:
 
 ```text
 {"before":"a.png","after":"b.png","scale":"2","annotate":"sheet.png"}

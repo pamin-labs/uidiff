@@ -30,7 +30,8 @@ pub const Command = union(enum) {
     /// The comparisons named on the command line, in order, at least one.
     /// Slices borrow the arguments.
     compare: []const Request,
-    /// No arguments: requests come as JSON lines on standard input.
+    /// No arguments: requests come as JSON lines on standard input, unless
+    /// it is a terminal (see no_paths).
     stdin,
     help,
     version,
@@ -69,6 +70,10 @@ pub const Issue = struct {
 
 /// The parsed command or the first usage issue.
 pub const ParseResult = union(enum) { command: Command, issue: Issue };
+
+/// What a bare command is told when standard input is a terminal, where no
+/// request lines are coming.
+pub const no_paths: Issue = .{ .argument = "", .reason = .missing_paths };
 
 /// Usage text for help and malformed arguments.
 pub const usage = @embedFile("usage.txt");

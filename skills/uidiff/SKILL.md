@@ -56,7 +56,7 @@ It prints one JSON line, `{"status":1,"report":{...}}`, or
 `{"status":2,"error":"FileNotFound","path":"a.png"}` when the comparison fails.
 For many pairs, name them all in one command, each pair followed by its own
 options (`uidiff a1.png b1.png --annotate s1.png a2.png b2.png --scale 3`), or
-run `uidiff` with no arguments and send one JSON request per stdin line
+pipe one JSON request per line into `uidiff` with no arguments
 (`{"before":"a.png","after":"b.png","scale":"2","annotate":"sheet.png"}`).
 Either way each pair gets one line, in order, faster than one process per pair.
 A symlink at the sheet path is replaced by the PNG itself, unless it points to
