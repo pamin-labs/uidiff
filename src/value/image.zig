@@ -89,6 +89,11 @@ pub const Pair = struct {
         };
     }
 
+    /// Returns the dimensions of each side.
+    pub fn sizes(self: Pair) region.Sizes {
+        return .init(.{ .before = self.before.size(), .after = self.after.size() });
+    }
+
     /// Returns the combined canvas: the larger width and height of the two images.
     pub fn canvas(self: Pair) Size {
         return .{ .width = @max(self.before.width, self.after.width), .height = @max(self.before.height, self.after.height) };

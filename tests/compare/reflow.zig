@@ -85,7 +85,7 @@ test "a card grid pairs translated cards across the gutter only when their pixel
     try std.testing.expectEqual(@as(usize, 3), inserted.regions.len);
     try std.testing.expect(expect.hasRegion(inserted.regions, .after, x + 1, top + 1, .inserted));
     for (inserted.regions) |edit| {
-        if (edit.kind == .changed)
+        if (edit.kind() == .changed)
             try std.testing.expectEqual(@as(f64, @floatFromInt(pitch)), edit.after.?.x - edit.before.?.x);
     }
 

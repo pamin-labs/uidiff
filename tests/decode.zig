@@ -11,7 +11,7 @@ fn decodeSamples(allocator: std.mem.Allocator) !void {
     inline for (comptime std.meta.tags(fixtures.Format)) |format| {
         const bytes = try fixtures.readSample(format);
         defer testing.allocator.free(bytes);
-        var decoded = try uidiff.decode(allocator, bytes);
+        var decoded = try uidiff.decode(allocator, bytes, uidiff.max_decode_bytes);
         defer decoded.deinit();
         try testing.expectEqual(uidiff.Size{ .width = fixtures.blank.width * fixtures.scale, .height = fixtures.blank.height * fixtures.scale }, decoded.image.size());
         for (decoded.image.pixels) |pixel| try testing.expectEqual(canvas.white, pixel);
@@ -23,10 +23,19 @@ test "PNG, JPEG and WebP decode to opaque RGBA8 through the given allocator" {
     try testing.checkAllAllocationFailures(testing.allocator, decodeSamples, .{});
 }
 
+test "a decode cap below the decoded pixels refuses every format" {
+    inline for (comptime std.meta.tags(fixtures.Format)) |format| {
+        const bytes = try fixtures.readSample(format);
+        defer testing.allocator.free(bytes);
+        const pixels = fixtures.blank.width * fixtures.scale * fixtures.blank.height * fixtures.scale;
+        try testing.expectError(error.ImageTooLarge, uidiff.decode(testing.allocator, bytes, pixels * @sizeOf(uidiff.Pixel) - 1));
+    }
+}
+
 test "JPEG profile pixels match on scalar and SIMD builds" {
     inline for (fixtures.jpeg.profiles) |profile| {
         errdefer std.debug.print("JPEG profile: {s}\n", .{profile.name});
-        var decoded = try uidiff.decode(testing.allocator, profile.encoded());
+        var decoded = try uidiff.decode(testing.allocator, profile.encoded(), uidiff.max_decode_bytes);
         defer decoded.deinit();
         try testing.expectEqual(uidiff.Size{ .width = fixtures.jpeg.width, .height = fixtures.jpeg.height }, decoded.image.size());
         var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
@@ -45,7 +54,7 @@ test "PNG header rejects oversized dimensions before pixel data is needed" {
     for ([_][2]u32{ .{ side, uidiff.max_pixels / side + 1 }, .{ uidiff.max_extent + 1, 1 }, .{ 1, uidiff.max_extent + 1 } }) |size| {
         png_format.writeDimensions(header[png_format.dimensions_offset..][0..png_format.dimensions_bytes], size[0], size[1]);
         png_format.rewriteHeaderCrc(header[0..png_format.header_end]);
-        try testing.expectError(error.ImageTooLarge, uidiff.decode(testing.allocator, &header));
+        try testing.expectError(error.ImageTooLarge, uidiff.decode(testing.allocator, &header, uidiff.max_decode_bytes));
     }
 }
 
@@ -55,14 +64,14 @@ test "a JPEG frame with representable dimensions over the pixel cap is refused" 
     const height = std.math.maxInt(u16);
     std.mem.writeInt(u16, header[7..9], height, .big);
     std.mem.writeInt(u16, header[9..11], @intCast(uidiff.max_pixels / height + 1), .big);
-    try testing.expectError(error.ImageTooLarge, uidiff.decode(testing.allocator, &header));
+    try testing.expectError(error.ImageTooLarge, uidiff.decode(testing.allocator, &header, uidiff.max_decode_bytes));
 }
 
 test "a 16-bit header past the decode budget is refused before decoding" {
     inline for (fixtures.claims) |claim| {
         const bytes = try std.Io.Dir.cwd().readFileAlloc(testing.io, claim.path(), testing.allocator, .limited(fixtures.max_sample_bytes));
         defer testing.allocator.free(bytes);
-        try testing.expectError(error.ImageTooLarge, uidiff.decode(testing.allocator, bytes));
+        try testing.expectError(error.ImageTooLarge, uidiff.decode(testing.allocator, bytes, uidiff.max_decode_bytes));
     }
 }
 
@@ -74,7 +83,7 @@ test "WebP header rejects dimensions beyond the RGBA8 cap" {
     const width: u32 = 1 << dimension_bits;
     const height_minus_one: u32 = uidiff.max_pixels / width;
     std.mem.writeInt(u32, oversized[21..25], (width - 1) | (height_minus_one << dimension_bits), .little);
-    try testing.expectError(error.ImageTooLarge, uidiff.decode(testing.allocator, oversized));
+    try testing.expectError(error.ImageTooLarge, uidiff.decode(testing.allocator, oversized, uidiff.max_decode_bytes));
 }
 
 test "file comparison honors the lower decode cap in every format" {

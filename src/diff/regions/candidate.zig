@@ -4,6 +4,8 @@ const std = @import("std");
 const value = @import("../../value.zig");
 const Box = value.Box;
 const Region = value.Region;
+/// The most regions a comparison reports; nearby ones merge to fit.
+pub const max_regions = value.max_regions;
 
 /// A pending region and the number of changed pixels supporting it.
 pub const Candidate = struct { region: Region, pixels: usize };
@@ -13,9 +15,6 @@ pub const merge_gap = value.CssPx.init(12);
 
 /// Space added around each reported box, in CSS pixels.
 pub const padding = value.CssPx.init(4);
-
-/// The most regions a comparison reports; nearby ones merge to fit.
-pub const max_regions = 8;
 
 /// Merges two candidates and removes the second from the active slice.
 pub fn join(boxes: []Candidate, len: usize, i: usize, j: usize) usize {

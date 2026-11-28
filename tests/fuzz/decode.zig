@@ -32,7 +32,7 @@ fn fuzzDecode(seeds: [seed_count][]const u8, smith: *testing.Smith) !void {
     var encoded: [fixtures.max_sample_bytes]u8 = undefined;
     const pick = smith.valueRangeAtMost(u8, 0, raw);
     const length = if (pick == raw) smith.slice(&encoded) else mutate(smith, &encoded, seeds[pick]);
-    var image = uidiff.decode(testing.allocator, encoded[0..length]) catch |err| switch (err) {
+    var image = uidiff.decode(testing.allocator, encoded[0..length], uidiff.max_decode_bytes) catch |err| switch (err) {
         error.InvalidImage, error.UnsupportedImageFormat, error.ImageTooLarge => return,
         error.OutOfMemory => return err,
     };

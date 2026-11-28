@@ -240,8 +240,8 @@ test {
     var row_moves = [_]value.Move{.{
         .before = .{ .y = 56, .height = 32 },
         .after = .{ .y = 74, .height = 32 },
-        .x = .init(160),
-        .width = .init(24),
+        .x = 160,
+        .width = 24,
     }};
     const len = mergeLogical(&candidates, .{ .before = before.view, .after = after.view }, .one, &row_moves);
     var edits: [candidates.len]value.Region = undefined;

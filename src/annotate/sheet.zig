@@ -108,7 +108,7 @@ pub const Rows = struct {
         const b = sheet_plan.panes.get(.after);
         const left_x = a.x;
         const labels = sheet_plan.labels;
-        if (pane_layout.panoramic or y < a.y or y >= sheet_plan.pane_end) @memset(pixels, page);
+        if (pane_layout.arrangement == .panoramic or y < a.y or y >= sheet_plan.pane_end) @memset(pixels, page);
         if (y < a.y) {
             const title = labels.title;
             if (title.containsRow(y)) line.text(title.x, title.y, sheet_plan.heading.bytes(), .bold, title.size, ink);
@@ -118,7 +118,7 @@ pub const Rows = struct {
             };
             const caption = sheet_plan.captions.bounds.get(.before);
             if (caption.containsRow(y)) line.text(caption.x, caption.y, copy.before, .bold, sheet_plan.captions.size, secondary);
-        } else if (!pane_layout.panoramic and y < sheet_plan.pane_end) {
+        } else if (pane_layout.arrangement == .side_by_side and y < sheet_plan.pane_end) {
             line.fill(0, left_x, page);
             line.fill(b.right(), pixels.len, page);
             ribbons.drawGutter(line, y - a.y, pane_layout, sheet_plan.panes, sheet_plan.ribbons);
@@ -128,34 +128,35 @@ pub const Rows = struct {
         const both_panes: geometry.Rect = .{ .x = a.x, .y = a.y, .width = 0, .height = sheet_plan.pane_end - a.y };
         if (nearPane(y, both_panes, pane_layout)) {
             for (&sheet_plan.sources.values, &sheet_plan.panes.values) |*source, rect| {
-                if (!pane_layout.panoramic or nearPane(y, rect, pane_layout)) drawPane(line, source, rect.x, rect.y, pane_layout);
+                if (pane_layout.arrangement == .side_by_side or nearPane(y, rect, pane_layout)) drawPane(line, source, rect.x, rect.y, pane_layout);
             }
         }
         const badge_reach = overviewDiameter(pane_layout);
         if (y + badge_reach >= a.y and y < sheet_plan.pane_end + badge_reach) {
             for (sheet_plan.details) |*detail| {
                 for (&detail.marks.values, &detail.badges.values) |mark, location| {
-                    drawMark(line, mark, location, detail.region.kind, &detail.number, pane_layout);
+                    drawMark(line, mark, location, detail.region.kind(), &detail.number, pane_layout);
                 }
             }
         }
         if (sheet_plan.details.len != 0 and y >= sheet_plan.pane_end) {
             const heading = labels.details;
             if (heading.containsRow(y)) {
-                const title = if (pane_layout.panoramic) copy.at_full_size else copy.detail_section_title;
+                const title = if (pane_layout.arrangement == .panoramic) copy.at_full_size else copy.detail_section_title;
                 line.text(heading.x, heading.y, title, .bold, heading.size, ink);
             }
-            if (pane_layout.panoramic) {
+            if (pane_layout.arrangement == .panoramic) {
                 self.drawFocus(line);
                 return pixels;
             }
             for (sheet_plan.details) |*detail| {
-                if (y < detail.top or y >= detail.top + detail.height) continue;
+                const close_ups = &detail.view.side_by_side;
+                if (y < close_ups.top or y >= close_ups.top + close_ups.height) continue;
                 const diameter = labels.detail_badge;
-                badge(line, .{ .x = left_x, .y = detail.top, .width = diameter, .height = diameter }, detail.region.kind, detail.number.bytes(), pane_layout);
-                line.text(labels.detail_kind_x, detail.top + labels.detail_kind_offset, kindName(detail.region.kind), .regular, labels.body_size, secondary);
-                for (&detail.crops.values, &sheet_plan.sources.values, &sheet_plan.detail_x.values) |patch, *source, x| {
-                    drawDetail(line, patch, source.image, x, sheet_plan.detail_slot_width, detail.top, detail.height, detail.region.kind, pane_layout);
+                badge(line, .{ .x = left_x, .y = close_ups.top, .width = diameter, .height = diameter }, detail.region.kind(), detail.number.bytes(), pane_layout);
+                line.text(labels.detail_kind_x, close_ups.top + labels.detail_kind_offset, kindName(detail.region.kind()), .regular, labels.body_size, secondary);
+                for (&close_ups.crops.values, &sheet_plan.sources.values, &sheet_plan.detail_x.values) |patch, *source, x| {
+                    drawDetail(line, patch, source.image, x, sheet_plan.detail_slot_width, close_ups.top, close_ups.height, detail.region.kind(), pane_layout);
                 }
                 break;
             }
@@ -182,9 +183,10 @@ pub const Rows = struct {
                 }
             }
             for (sheet_plan.details) |*detail| {
-                if (detail.focus != index) continue;
-                for (detail.focus_marks.values, detail.focus_badges.values) |mark, location| {
-                    drawMark(line, mark, location, detail.region.kind, &detail.number, sheet_plan.pane_layout);
+                const shown = &detail.view.panoramic;
+                if (shown.focus != index) continue;
+                for (shown.marks.values, shown.badges.values) |mark, location| {
+                    drawMark(line, mark, location, detail.region.kind(), &detail.number, sheet_plan.pane_layout);
                 }
             }
             return;
@@ -250,8 +252,8 @@ test "the streaming gutter connects shifted rows and shows the insertion wedge" 
     const allocator = std.testing.allocator;
     const pixels: [32 * 128]Pixel = @splat(white);
     const image: Image = .{ .width = 32, .height = 128, .pixels = &pixels };
-    const insert: Region = .{ .number = 1, .kind = .inserted, .after = value.Box.fromPixels(3, 44, 20, 10) };
-    const moved: Move = .{ .before = .{ .y = 40, .height = 60 }, .after = .{ .y = 60, .height = 60 }, .x = .init(0), .width = .init(32) };
+    const insert: Region = .{ .number = 1, .after = value.Box.fromPixels(3, 44, 20, 10) };
+    const moved: Move = .{ .before = .{ .y = 40, .height = 60 }, .after = .{ .y = 60, .height = 60 }, .x = 0, .width = 32 };
     const rows = try Rows.init(allocator, image, image, &.{insert}, &.{moved});
     defer rows.deinit(allocator);
     const storage = try allocator.alloc(Pixel, rows.plan.size.width);
@@ -269,7 +271,7 @@ test "panoramic overviews reserve no alignment strip even when rows move" {
     const allocator = std.testing.allocator;
     const pixels: [360 * 120]Pixel = @splat(white);
     const image: Image = .{ .width = 360, .height = 120, .pixels = &pixels };
-    const move: Move = .{ .before = .{ .y = 10, .height = 30 }, .after = .{ .y = 60, .height = 30 }, .x = .init(0), .width = .init(360) };
+    const move: Move = .{ .before = .{ .y = 10, .height = 30 }, .after = .{ .y = 60, .height = 30 }, .x = 0, .width = 360 };
     const rows = try Rows.init(allocator, image, image, &.{}, &.{move});
     defer rows.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 0), rows.plan.ribbons.len);

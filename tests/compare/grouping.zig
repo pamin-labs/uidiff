@@ -55,7 +55,7 @@ test "a stationary column divider separates two same-line changes" {
     const result = try expect.compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 2), result.regions.len);
-    for (result.regions) |region| try std.testing.expectEqual(Kind.changed, region.kind);
+    for (result.regions) |region| try std.testing.expectEqual(Kind.changed, region.kind());
 }
 
 test "one changed block has one padded box" {

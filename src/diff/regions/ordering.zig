@@ -7,7 +7,7 @@ const Size = value.Size;
 const Box = value.Box;
 const Region = value.Region;
 
-/// Sorts by the before box when present, then assigns kinds, numbers and padding.
+/// Sorts by the before box when present, then assigns numbers and padding.
 pub fn finish(output: []Region, before: Size, after: Size, scale: value.Scale) void {
     // The collector caps output at max_regions. Stable insertion sort keeps
     // the ordering rule without linking a general-purpose sort into the CLI.
@@ -15,7 +15,6 @@ pub fn finish(output: []Region, before: Size, after: Size, scale: value.Scale) v
     const space = scale.devicePixels(candidate.padding);
     for (output, 1..) |*region, number| {
         region.number = number;
-        region.kind = if (region.before == null) .inserted else if (region.after == null) .removed else .changed;
         if (region.before) |box| region.before = pad(box, before, space);
         if (region.after) |box| region.after = pad(box, after, space);
     }

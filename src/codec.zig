@@ -31,7 +31,7 @@ comptime {
     _ = memory;
     for (@typeInfo(@TypeOf(formats)).@"struct".field_names) |name| {
         const format = @field(formats, name);
-        for (.{ "matches", "probe", "decode", "release" }) |decl| {
+        for (.{ "matches", "probe", "decode" }) |decl| {
             if (!@hasDecl(format, decl)) @compileError(name ++ " codec must declare " ++ decl);
         }
     }
@@ -43,14 +43,12 @@ pub const Decoded = struct {
     image: Image,
     /// Format identified in the encoded input.
     format: Format,
-    /// Allocator retained for releasing the decoder's pixels.
-    allocator: Allocator,
 
-    /// Releases pixels with the decoder that allocated them.
+    /// Releases the pixels. Every decoder returns a codec memory block,
+    /// which records the allocator that owns it.
     pub fn deinit(self: *Decoded) void {
-        switch (self.format) {
-            inline else => |format| @field(formats, @tagName(format)).release(self.allocator, self.image.pixels),
-        }
+        // The const view still owns the mutable decoder allocation.
+        memory.freeBlock(@constCast(self.image.pixels.ptr));
         self.* = undefined;
     }
 };
@@ -89,22 +87,20 @@ pub const FileInput = struct {
     pub fn decode(self: FileInput, io: Io, allocator: Allocator, cap: usize) (ReadError || DecodeError)!Decoded {
         const bytes = try readEncoded(io, allocator, self.file, self.length);
         defer value.freeUnfilled(u8, allocator, bytes);
-        return decodeCapped(allocator, bytes, cap);
+        return codec.decode(allocator, bytes, cap);
     }
 };
 
 const formats = .{ .png = png, .jpeg = jpeg, .webp = webp };
+// FileInput.decode shadows the file-level decode inside FileInput.
+const codec = @This();
 
 const probe_prefix_bytes = 4096;
 
 /// Checks the encoded size, image dimensions and decode budget before
-/// allocating pixels. The caller owns the result.
-pub fn decode(allocator: Allocator, bytes: []const u8) DecodeError!Decoded {
-    return decodeCapped(allocator, bytes, value.max_decode_bytes);
-}
-
-/// Decodes bytes with a caller-supplied cap no higher than the default.
-pub fn decodeCapped(allocator: Allocator, bytes: []const u8, cap: usize) DecodeError!Decoded {
+/// allocating pixels. cap is the decode memory budget in bytes, clamped to
+/// max_decode_bytes. The caller owns the result.
+pub fn decode(allocator: Allocator, bytes: []const u8, cap: usize) DecodeError!Decoded {
     if (bytes.len > max_encoded_bytes) return error.ImageTooLarge;
     inline for (@typeInfo(@TypeOf(formats)).@"struct".field_names) |name| {
         const format = @field(formats, name);
@@ -112,19 +108,16 @@ pub fn decodeCapped(allocator: Allocator, bytes: []const u8, cap: usize) DecodeE
             const tag: Format = @field(Format, name);
             const probed = try probeFormat(format.probe, allocator, bytes, cap);
             const pixels = try format.decode(allocator, bytes, probed.header, probed.limit);
-            return owned(probed.header.size, pixels, allocator, tag);
+            return owned(probed.header.size, pixels, tag);
         }
     }
     return error.UnsupportedImageFormat;
 }
 
-/// Reads a file of at most max_encoded_bytes and decodes it. The caller owns the result.
-pub fn decodeFile(io: Io, allocator: Allocator, path: []const u8) (ReadError || DecodeError)!Decoded {
-    return decodeFileCapped(io, allocator, path, value.max_decode_bytes);
-}
-
-/// Reads an input file and decodes it with a caller-supplied cap.
-pub fn decodeFileCapped(io: Io, allocator: Allocator, path: []const u8, cap: usize) (ReadError || DecodeError)!Decoded {
+/// Reads a file of at most max_encoded_bytes and decodes it within cap, the
+/// decode memory budget in bytes, clamped to max_decode_bytes. The caller
+/// owns the result.
+pub fn decodeFile(io: Io, allocator: Allocator, path: []const u8, cap: usize) (ReadError || DecodeError)!Decoded {
     const input = try FileInput.open(io, path);
     defer input.close(io);
     return input.decode(io, allocator, cap);
@@ -177,11 +170,10 @@ noinline fn probeFormat(comptime probe: anytype, allocator: Allocator, bytes: []
     return .{ .header = header, .limit = limit };
 }
 
-fn owned(size: Size, pixels: []const Pixel, allocator: Allocator, format: Format) Decoded {
+fn owned(size: Size, pixels: []const Pixel, format: Format) Decoded {
     return .{
         .image = .{ .width = size.width, .height = size.height, .pixels = pixels },
         .format = format,
-        .allocator = allocator,
     };
 }
 
@@ -208,8 +200,8 @@ fn pixelCount(size: Size) DecodeError!usize {
 }
 
 test "invalid PNG input fails instead of looking unchanged" {
-    try std.testing.expectError(error.UnsupportedImageFormat, decode(std.testing.allocator, "not a PNG"));
-    try std.testing.expectError(error.InvalidImage, decode(std.testing.allocator, "\x89PNG\r\n\x1a\n"));
+    try std.testing.expectError(error.UnsupportedImageFormat, decode(std.testing.allocator, "not a PNG", value.max_decode_bytes));
+    try std.testing.expectError(error.InvalidImage, decode(std.testing.allocator, "\x89PNG\r\n\x1a\n", value.max_decode_bytes));
 }
 
 test "an encoded PNG decodes to the same pixels" {
@@ -217,7 +209,7 @@ test "an encoded PNG decodes to the same pixels" {
     var out: Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
     try encodePng(std.testing.allocator, .{ .width = 2, .height = 2, .pixels = &pixels }, &out.writer);
-    var decoded = try decode(std.testing.allocator, out.written());
+    var decoded = try decode(std.testing.allocator, out.written(), value.max_decode_bytes);
     defer decoded.deinit();
     try std.testing.expectEqualSlices(Pixel, &pixels, decoded.image.pixels);
 }
@@ -235,7 +227,7 @@ test "incompressible PNG rows round trip without expansion beyond stored blocks"
     try encodePng(allocator, .{ .width = width, .height = height, .pixels = pixels }, &output.writer);
     const raw_bytes = width * height * @sizeOf(Pixel);
     try std.testing.expect(output.written().len <= raw_bytes + height + 128);
-    var decoded = try decode(allocator, output.written());
+    var decoded = try decode(allocator, output.written(), value.max_decode_bytes);
     defer decoded.deinit();
     try std.testing.expectEqualSlices(Pixel, pixels, decoded.image.pixels);
 }

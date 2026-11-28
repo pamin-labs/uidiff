@@ -46,7 +46,7 @@ const Failed = struct {
 };
 
 /// Why one line failed before or during its comparison.
-const LineError = uidiff.FileCompareError || uidiff.report.PixelWriteError || error{ InvalidInput, InvalidScale, LineTooLong };
+const LineError = uidiff.FileCompareError || uidiff.report.WriteError || error{ InvalidInput, InvalidScale, LineTooLong };
 
 /// Failures that end the batch: reading its input or writing its output.
 pub const Error = error{ReadFailed} || Io.Writer.Error || Allocator.Error;
@@ -120,9 +120,9 @@ fn parseLine(arena: Allocator, line: []const u8) error{ InvalidInput, InvalidSca
     if (request.annotate) |path| {
         // The single run refuses an empty --annotate value too.
         if (path.len == 0) return error.InvalidInput;
-        command.paths.annotate = path;
+        command.paths.sheet = path;
     }
-    if (request.scale) |text| command.options.compare.scale = args.parseScale(text) orelse return error.InvalidScale;
+    if (request.scale) |text| command.options.compare.scale = uidiff.Scale.parse(text) orelse return error.InvalidScale;
     return command;
 }
 
@@ -174,10 +174,10 @@ fn compareLine(io: Io, allocator: Allocator, arena: Allocator, line: []const u8,
     const command = try parseLine(arena, line);
     const result = try uidiff.compareFiles(io, allocator, command.paths, command.options, diagnostics);
     defer result.deinit(allocator);
-    uidiff.report.writeWholePixels(report, result.regions, result.canvas(), result.moves) catch |err| switch (err) {
+    uidiff.report.write(result.regions, result.canvas(), result.moves, report) catch |err| switch (err) {
         // The report buffer fails only when it cannot grow.
         error.WriteFailed => return error.OutOfMemory,
-        error.InvalidRegionBox => return error.InvalidRegionBox,
+        error.InvalidRegionBox, error.InvalidRegionNumber, error.InvalidMove => |invalid| return invalid,
     };
     return Status.of(result);
 }
@@ -215,13 +215,13 @@ test "a request line becomes the single run's command" {
     );
     try std.testing.expectEqualStrings("a.png", full.paths.before);
     try std.testing.expectEqualStrings("b.png", full.paths.after);
-    try std.testing.expectEqualStrings("sheet.png", full.paths.annotate.?);
+    try std.testing.expectEqualStrings("sheet.png", full.paths.sheet.?);
     try std.testing.expectEqual(@as(f64, 1.5), full.options.compare.scale.factor);
     try std.testing.expect(full.output == .json);
     const plain = try parseLine(arena.allocator(), "{\"before\":\"a\",\"after\":\"b\",\"annotate\":null}\r");
     const defaults: args.Command = .{ .paths = .{ .before = "a", .after = "b" } };
     try std.testing.expectEqual(defaults.options.compare.scale.factor, plain.options.compare.scale.factor);
-    try std.testing.expectEqual(@as(?[]const u8, null), plain.paths.annotate);
+    try std.testing.expectEqual(@as(?[]const u8, null), plain.paths.sheet);
 }
 
 test "malformed lines are refused with a code" {

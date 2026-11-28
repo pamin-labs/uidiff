@@ -56,7 +56,7 @@ fn fuzzJpeg(_: void, smith: *testing.Smith) !void {
     // Mutated dimensions may be large. Bound the arena used per fuzz case.
     var scratch: [scratch_bytes]u8 = undefined;
     var fixed: std.heap.FixedBufferAllocator = .init(&scratch);
-    var decoded = uidiff.decode(fixed.allocator(), bytes[0..len]) catch |err| switch (err) {
+    var decoded = uidiff.decode(fixed.allocator(), bytes[0..len], uidiff.max_decode_bytes) catch |err| switch (err) {
         error.InvalidImage, error.ImageTooLarge, error.OutOfMemory => return,
         else => return err,
     };

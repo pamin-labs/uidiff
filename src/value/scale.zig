@@ -36,8 +36,8 @@ pub const Scale = struct {
 
     /// Parses a device scale written as plain decimal digits with an optional
     /// fraction ("2", "1.25"). Returns null for anything else: hexadecimal, digit
-    /// separators, exponents, signs, special values, and scales too long to
-    /// parse exactly. A parsed zero is invalid for comparison.
+    /// separators, exponents, signs, special values, zero, and scales too
+    /// long to parse exactly, so every parsed scale is valid.
     ///
     /// Exact means at most 15 digits after leading zeros and at most 22
     /// fraction digits once trailing zeros are dropped: both the digits and
@@ -58,7 +58,8 @@ pub const Scale = struct {
             if (significant > max_significant_digits) return null;
             mantissa = mantissa * 10 + (c - '0');
         };
-        return .{ .factor = @as(f64, @floatFromInt(mantissa)) / powers_of_ten[kept.len] };
+        const scale: Scale = .{ .factor = @as(f64, @floatFromInt(mantissa)) / powers_of_ten[kept.len] };
+        return if (scale.isValid()) scale else null;
     }
 };
 
@@ -80,15 +81,15 @@ fn digits(text: []const u8) bool {
     return true;
 }
 
-test "scale is parsed strictly as a finite decimal number" {
-    for ([_][]const u8{ "1", "2", "1.125", "0.5", "0" }) |text| {
+test "scale is parsed strictly as a positive finite decimal number" {
+    for ([_][]const u8{ "1", "2", "1.125", "0.5" }) |text| {
         try std.testing.expectEqual(try std.fmt.parseFloat(f64, text), Scale.parse(text).?.factor);
     }
     for ([_][]const u8{ "123456789012345", "0.0000000000000000000001", "1.50000000000000000000000000" }) |text| {
         try std.testing.expectEqual(try std.fmt.parseFloat(f64, text), Scale.parse(text).?.factor);
     }
     const huge: [400]u8 = @splat('9');
-    for ([_][]const u8{ "1_0", "0x10", "1e2", "nan", "inf", "-1", "+1", ".5", "1.", "", " 1", "1.2.3", &huge }) |text| {
+    for ([_][]const u8{ "0", "00.000", "1_0", "0x10", "1e2", "nan", "inf", "-1", "+1", ".5", "1.", "", " 1", "1.2.3", &huge }) |text| {
         try std.testing.expectEqual(@as(?Scale, null), Scale.parse(text));
     }
 }

@@ -42,8 +42,10 @@ pub const Scale = value.Scale;
 /// Padding added around each reported box, in CSS pixels, before conversion
 /// to device pixels and clipping to the corresponding image.
 pub const region_padding = diff.region_padding;
-/// Upper bound on the number of reported regions after grouping.
-pub const max_regions = diff.max_regions;
+/// The most regions a comparison reports and a sheet accepts.
+pub const max_regions = value.max_regions;
+/// Source dimensions per side, which Region.check and Move.check take.
+pub const Sizes = value.Sizes;
 /// The encoded format identified by the decoder.
 pub const Format = codec.Format;
 /// An image with decoder-owned pixels, released by deinit.
@@ -62,11 +64,13 @@ pub const max_extent = value.max_extent;
 pub const max_pixels = value.max_pixels;
 /// Default and largest per-image decode memory budget, in bytes.
 pub const max_decode_bytes = value.max_decode_bytes;
-/// Decodes PNG, JPEG, or WebP bytes within max_encoded_bytes and max_decode_bytes.
-/// Release the result with Decoded.deinit.
+/// Decodes PNG, JPEG, or WebP bytes of at most max_encoded_bytes within a
+/// decode memory budget, clamped to max_decode_bytes. Release the result
+/// with Decoded.deinit.
 pub const decode = codec.decode;
-/// Reads and decodes a PNG, JPEG, or WebP file within max_encoded_bytes and
-/// max_decode_bytes. Release the result with Decoded.deinit.
+/// Reads and decodes a PNG, JPEG, or WebP file of at most max_encoded_bytes
+/// within a decode memory budget, clamped to max_decode_bytes. Release the
+/// result with Decoded.deinit.
 pub const decodeFile = codec.decodeFile;
 /// Reads an image file without decoding it, up to max_encoded_bytes.
 /// Free the returned bytes with the supplied allocator.
@@ -79,8 +83,6 @@ pub const Sheet = annotate.Sheet;
 pub const RenderError = annotate.RenderError;
 /// A vertically moved row range and its source columns.
 pub const Move = value.Move;
-/// One horizontal position or extent in source device pixels.
-pub const DevicePx = value.DevicePx;
 /// A row range in source device pixels.
 pub const RowRange = value.RowRange;
 /// A length in CSS pixels.
@@ -88,8 +90,9 @@ pub const CssPx = value.CssPx;
 /// Renders an RGBA8 sheet from the source images, regions, and moves.
 /// Release the result with Sheet.deinit and the supplied allocator.
 pub const renderSheet = annotate.renderSheet;
-/// Streams a comparison sheet as PNG without allocating the full sheet.
-/// The caller owns the writer and its flush.
+/// Streams a comparison sheet as PNG without allocating the full sheet,
+/// compressing large sheets concurrently through io. The caller owns the
+/// writer and its flush.
 pub const encodeSheet = pipeline.encodeSheet;
 /// Borrows the two input paths and the optional sheet destination.
 pub const Paths = pipeline.Paths;

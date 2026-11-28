@@ -8,10 +8,9 @@ const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
 const zlib = @import("zlib_c");
 const format = @import("png_format");
-const Image = value.Image;
 
-/// Allocation, invalid image or output failures.
-pub const EncodeError = Allocator.Error || Writer.Error || Image.Invalid;
+/// Allocation or output failures while compressing.
+pub const CompressError = Allocator.Error || Writer.Error;
 
 /// zlib-ng's streaming compressor. Each full output buffer becomes one
 /// IDAT chunk, so the encoder needs no room for the whole compressed stream.
@@ -21,7 +20,7 @@ pub const Deflater = struct {
     out: []u8,
 
     /// Initializes zlib to write into the supplied chunk buffer.
-    pub fn init(self: *Deflater, allocator: *Allocator, output: *Writer, out: []u8) EncodeError!void {
+    pub fn init(self: *Deflater, allocator: *Allocator, output: *Writer, out: []u8) CompressError!void {
         self.* = .{ .stream = undefined, .output = output, .out = out };
         try initStream(&self.stream, allocator, window_bits);
         self.stream.next_out = out.ptr;
@@ -34,7 +33,7 @@ pub const Deflater = struct {
     }
 
     /// Feeds more bytes into the compressed stream.
-    pub fn write(self: *Deflater, bytes: []const u8) EncodeError!void {
+    pub fn write(self: *Deflater, bytes: []const u8) CompressError!void {
         self.stream.next_in = bytes.ptr;
         self.stream.avail_in = @intCast(bytes.len);
         while (self.stream.avail_in != 0) {
@@ -44,7 +43,7 @@ pub const Deflater = struct {
     }
 
     /// Finishes the stream and writes any remaining image data.
-    pub fn finish(self: *Deflater) EncodeError!void {
+    pub fn finish(self: *Deflater) CompressError!void {
         self.stream.avail_in = 0;
         while (true) {
             const status = zlib.zng_deflate(&self.stream, zlib.Z_FINISH);
@@ -74,7 +73,7 @@ pub const Strip = struct {
         input_len: usize,
     };
 
-    pub fn init(self: *Strip, allocator: *Allocator) EncodeError!void {
+    pub fn init(self: *Strip, allocator: *Allocator) CompressError!void {
         try initStream(&self.stream, allocator, -window_bits);
     }
 
@@ -88,7 +87,7 @@ pub const Strip = struct {
         return zlib.zng_deflateBound(null, @intCast(input_len)) + 6;
     }
 
-    pub fn compress(self: *Strip, history: []const u8, input: []const u8, out: []u8, flush: Flush) EncodeError!Result {
+    pub fn compress(self: *Strip, history: []const u8, input: []const u8, out: []u8, flush: Flush) CompressError!Result {
         const stream = &self.stream;
         if (zlib.zng_deflateReset(stream) != zlib.Z_OK) return error.WriteFailed;
         if (history.len != 0 and zlib.zng_deflateSetDictionary(stream, history.ptr, @intCast(history.len)) != zlib.Z_OK) return error.WriteFailed;
@@ -214,7 +213,7 @@ fn inflateBlock(stream: *zlib.zng_stream) c_int {
     return zlib.zng_inflate(stream, zlib.Z_NO_FLUSH);
 }
 
-fn initStream(stream: *zlib.zng_stream, allocator: *Allocator, window: c_int) EncodeError!void {
+fn initStream(stream: *zlib.zng_stream, allocator: *Allocator, window: c_int) CompressError!void {
     stream.* = std.mem.zeroes(zlib.zng_stream);
     stream.zalloc = zalloc;
     stream.zfree = zfree;

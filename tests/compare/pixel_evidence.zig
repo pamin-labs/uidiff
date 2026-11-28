@@ -254,6 +254,6 @@ test "one changed pixel is reported consistently in small rasters" {
         const found = try expect.compareCanvases(before, after, 1);
         defer found.deinit(std.testing.allocator);
         try std.testing.expectEqual(@as(usize, 1), found.regions.len);
-        try std.testing.expectEqual(Kind.changed, found.regions[0].kind);
+        try std.testing.expectEqual(Kind.changed, found.regions[0].kind());
     }
 }

@@ -106,11 +106,11 @@ test "an annotated sheet is written atomically beside a normal report" {
         try testing.expectEqual(checksums.computed, checksums.stored);
     }
     try testing.expectEqual(0, chunks.remaining.len);
-    var sheet = try uidiff.decode(allocator, bytes);
+    var sheet = try uidiff.decode(allocator, bytes, uidiff.max_decode_bytes);
     defer sheet.deinit();
-    var source = try uidiff.decodeFile(testing.io, allocator, before);
+    var source = try uidiff.decodeFile(testing.io, allocator, before, uidiff.max_decode_bytes);
     defer source.deinit();
-    var target = try uidiff.decodeFile(testing.io, allocator, after);
+    var target = try uidiff.decodeFile(testing.io, allocator, after, uidiff.max_decode_bytes);
     defer target.deinit();
     const changes = try uidiff.compare(allocator, .{ .before = source.image, .after = target.image }, .{ .scale = .{ .factor = fixtures.scale } });
     defer changes.deinit(allocator);
@@ -190,7 +190,7 @@ test "sheet encoding keeps nonopaque pixels and their RGB channels" {
     try status(result, 0);
     const bytes = try tmp.dir.readFileAlloc(testing.io, "sheet.png", allocator, .limited(uidiff.max_encoded_bytes));
     defer allocator.free(bytes);
-    var decoded = try uidiff.decode(allocator, bytes);
+    var decoded = try uidiff.decode(allocator, bytes, uidiff.max_decode_bytes);
     defer decoded.deinit();
     const expected = try uidiff.renderSheet(allocator, .{ .before = image, .after = image }, &.{}, &.{});
     defer expected.deinit(allocator);

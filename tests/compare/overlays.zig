@@ -35,16 +35,16 @@ test "a dimmed viewport with a new opaque center pane is an inserted overlay" {
     defer after.deinit();
     const dimmed = try expect.compareCanvases(before, after, 1);
     defer dimmed.deinit(std.testing.allocator);
-    try std.testing.expectEqual(Kind.changed, dimmed.regions[0].kind);
+    try std.testing.expectEqual(Kind.changed, dimmed.regions[0].kind());
     after.fill(52, 52, 88, 56, canvas.inkShade(216, 4));
     const shown = try expect.compareCanvases(before, after, 1);
     defer shown.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 1), shown.regions.len);
-    try std.testing.expectEqual(Kind.inserted, shown.regions[0].kind);
+    try std.testing.expectEqual(Kind.inserted, shown.regions[0].kind());
     const hidden = try expect.compareCanvases(after, before, 1);
     defer hidden.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 1), hidden.regions.len);
-    try std.testing.expectEqual(Kind.removed, hidden.regions[0].kind);
+    try std.testing.expectEqual(Kind.removed, hidden.regions[0].kind());
 }
 
 test "a colored edit next to a floating panel remains visible on both sides" {
@@ -147,6 +147,6 @@ test "a modal does not hide a changed page behind its scrim" {
     const result = try expect.compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 1), result.regions.len);
-    try std.testing.expectEqual(Kind.changed, result.regions[0].kind);
+    try std.testing.expectEqual(Kind.changed, result.regions[0].kind());
     try std.testing.expect(result.regions[0].before != null);
 }

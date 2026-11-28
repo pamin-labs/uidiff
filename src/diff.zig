@@ -11,9 +11,6 @@ const Collector = regions.Collector;
 const Image = value.Image;
 const Scale = value.Scale;
 
-/// The most regions a comparison reports; nearby ones merge to fit.
-pub const max_regions = regions.max_regions;
-
 const ScaleError = error{InvalidScale};
 
 /// The validated scale consumed by compareChecked.
@@ -115,7 +112,7 @@ test "comparison releases each allocation on failure" {
             const result = try compare(allocator, before, after, .{});
             defer result.deinit(allocator);
             try std.testing.expectEqual(@as(usize, 1), result.regions.len);
-            try std.testing.expectEqual(value.Kind.inserted, result.regions[0].kind);
+            try std.testing.expectEqual(value.Kind.inserted, result.regions[0].kind());
         }
     };
     const old = [_]value.Pixel{ .{ 0, 0, 0, 255 }, .{ 10, 0, 0, 255 }, .{ 20, 0, 0, 255 }, .{ 30, 0, 0, 255 } };

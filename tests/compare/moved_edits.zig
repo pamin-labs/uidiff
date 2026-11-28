@@ -267,7 +267,7 @@ test "repeated table rows keep recoloured or deleted cells after a shift" {
                 try std.testing.expectEqual(@as(usize, 0), result.moves.len);
                 try std.testing.expectEqual(@as(usize, 2), result.regions.len);
                 for (result.regions) |region| {
-                    try std.testing.expectEqual(Kind.changed, region.kind);
+                    try std.testing.expectEqual(Kind.changed, region.kind());
                     try std.testing.expectEqual(region.before, region.after);
                 }
             }
@@ -323,6 +323,6 @@ test "redrawn status pills in stationary rows cannot borrow each other's offset"
     const result = try expect.compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 2), result.regions.len);
-    for (result.regions) |region| try std.testing.expectEqual(Kind.changed, region.kind);
+    for (result.regions) |region| try std.testing.expectEqual(Kind.changed, region.kind());
     try std.testing.expectEqual(@as(usize, 0), result.moves.len);
 }

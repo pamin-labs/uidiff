@@ -17,7 +17,7 @@ pub const single_rgb_header: stb.Header = .{ .size = .{ .width = 1, .height = 1 
 pub const single_rgb_pixel: value.Pixel = .{ 23, 57, 91, 255 };
 
 /// Builds the one-pixel RGB fixture. The caller owns the output writer.
-pub fn singleRgbPng(allocator: Allocator) zlib.EncodeError!Writer.Allocating {
+pub fn singleRgbPng(allocator: Allocator) zlib.CompressError!Writer.Allocating {
     var encoded: Writer.Allocating = .init(allocator);
     errdefer encoded.deinit();
     const r, const g, const b, _ = single_rgb_pixel;
@@ -26,18 +26,18 @@ pub fn singleRgbPng(allocator: Allocator) zlib.EncodeError!Writer.Allocating {
 }
 
 /// Writes a complete PNG from already filtered rows.
-pub fn writePng(allocator: Allocator, out: *Writer, size: value.Size, colour: png_format.Colour, filtered_rows: []const u8) zlib.EncodeError!void {
+pub fn writePng(allocator: Allocator, out: *Writer, size: value.Size, colour: png_format.Colour, filtered_rows: []const u8) zlib.CompressError!void {
     try writeHeader(out, size, colour);
     try writeData(allocator, out, filtered_rows);
 }
 
 /// Writes the signature and an eight-bit, noninterlaced IHDR.
-pub fn writeHeader(out: *Writer, size: value.Size, colour: png_format.Colour) zlib.EncodeError!void {
+pub fn writeHeader(out: *Writer, size: value.Size, colour: png_format.Colour) zlib.CompressError!void {
     try png_format.writeHeader(zlib.chunk, out, @intCast(size.width), @intCast(size.height), colour);
 }
 
 /// Compresses the given rows and terminates the PNG stream.
-pub fn writeData(allocator: Allocator, out: *Writer, filtered_rows: []const u8) zlib.EncodeError!void {
+pub fn writeData(allocator: Allocator, out: *Writer, filtered_rows: []const u8) zlib.CompressError!void {
     var staging: [zlib.chunk_bytes]u8 = undefined;
     var backing = allocator;
     var deflater: zlib.Deflater = undefined;
@@ -80,7 +80,7 @@ pub fn firstIdat(idat: []const u8) []const u8 {
 }
 
 /// Writes the same compressed bytes across separate IDAT chunks.
-pub fn splitIdat(out: *Writer, prefix: []const u8, data: []const u8, at: usize) zlib.EncodeError!void {
+pub fn splitIdat(out: *Writer, prefix: []const u8, data: []const u8, at: usize) zlib.CompressError!void {
     try out.writeAll(prefix);
     try zlib.chunk(out, png_format.idat_type, data[0..at]);
     try zlib.chunk(out, png_format.idat_type, "");

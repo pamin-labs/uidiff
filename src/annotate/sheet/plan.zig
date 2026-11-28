@@ -16,7 +16,7 @@ const Pane = geometry.Pane;
 const margin = geometry.margin;
 const max_sheet_width = geometry.max_sheet_width;
 const offsetMark = geometry.offsetMark;
-const imageRect = geometry.imageRect;
+const sourceRect = geometry.sourceRect;
 const kindBit = palette.kindBit;
 const Text = text.Text;
 const textWidth = text.textWidth;
@@ -40,8 +40,9 @@ const Size = value.Size;
 const Region = value.Region;
 const Move = value.Move;
 
-/// Invalid images or regions, a sheet past the pixel cap, or an allocation failure.
-pub const RenderError = Allocator.Error || Image.Invalid || error{ SheetTooLarge, InvalidRegionBox, InvalidRegionNumber };
+/// Invalid images, regions or moves, more than max_regions regions, a sheet
+/// past the pixel cap, or an allocation failure.
+pub const RenderError = Allocator.Error || Image.Invalid || Region.CheckError || Move.CheckError || error{ SheetTooLarge, TooManyRegions };
 
 const Captions = struct { size: usize, bounds: geometry.SideRects };
 
@@ -95,6 +96,10 @@ pub const Plan = struct {
     /// Lays out the sheet and checks that the complete output fits image bounds.
     pub fn init(allocator: Allocator, pair: value.Pair, regions: []const Region, moves: []const Move) RenderError!Plan {
         if (!pair.before.valid() or !pair.after.valid()) return error.InvalidImage;
+        if (regions.len > value.max_regions) return error.TooManyRegions;
+        const sizes = pair.sizes();
+        for (regions) |region| try region.check(sizes);
+        for (moves) |move| try move.check(sizes);
         const pane_layout = PaneLayout.init(pair.before.size(), pair.after.size());
         var size = try minimumSize(pair.before.size(), pair.after.size());
         const before_pane = try Pane.init(allocator, pair.before, pane_layout);
@@ -121,11 +126,11 @@ pub const Plan = struct {
         errdefer allocator.free(details);
         errdefer allocator.free(focuses);
         const captions = layoutCaptions(pane_layout, panes, size.width);
-        try placeBadges(allocator, details, focuses, panes, pair, size, pane_layout, captions.bounds, if (moves.len != 0 and !pane_layout.panoramic) .ribbons else .plain);
+        try placeBadges(allocator, details, focuses, panes, pair, size, pane_layout, captions.bounds, if (moves.len != 0 and pane_layout.arrangement == .side_by_side) .ribbons else .plain);
         if (details.len != 0) size.height = content.end + pane_layout.px(margin) - pane_layout.px(detail_gap);
         if (size.width > max_sheet_width or size.pixelCount() == null) return error.SheetTooLarge;
 
-        const planned_ribbons = try planRibbons(allocator, moves, details, pair.before.size(), pair.after.size(), pane_layout);
+        const planned_ribbons = try planRibbons(allocator, moves, details, pane_layout);
         errdefer allocator.free(planned_ribbons);
         return .{
             .sources = .init(.{ .before = before_pane, .after = after_pane }),
@@ -186,7 +191,7 @@ pub fn minimumSize(before: Size, after: Size) error{SheetTooLarge}!Size {
     const pane_layout = PaneLayout.init(before, after);
     const panes = pane_layout.panes(before, after);
     const size: Size = .{
-        .width = if (pane_layout.panoramic)
+        .width = if (pane_layout.arrangement == .panoramic)
             geometry.overview_width + 2 * pane_layout.px(margin)
         else
             @max(panes.get(.before).right(), panes.get(.after).right()) + pane_layout.px(margin),
@@ -204,57 +209,53 @@ fn planDetails(allocator: Allocator, pair: value.Pair, regions: []const Region, 
     errdefer allocator.free(details);
     var top = placement.top;
     var kinds: u8 = 0;
-    const focuses = try allocator.alloc(Focus, if (pane_layout.panoramic) regions.len else 0);
+    const focuses = try allocator.alloc(Focus, if (pane_layout.arrangement == .panoramic) regions.len else 0);
     errdefer allocator.free(focuses);
     for (regions, details, 0..) |region, *detail, index| {
-        const old = imageRect(pair.before, region.before);
-        const new = imageRect(pair.after, region.after);
-        if ((region.before != null and old == null) or (region.after != null and new == null)) return error.InvalidRegionBox;
-        if (region.number == 0 and (old != null or new != null)) return error.InvalidRegionNumber;
-        kinds |= kindBit(region.kind);
-        const patches = if (pane_layout.panoramic) std.EnumArray(value.Side, ?crops.Crop).initFill(null) else cropPair(pair, .init(.{ .before = old, .after = new }), placement.x, top, slot, pane_layout);
-        const height = @max(pane_layout.px(min_slot_h), if (patches.get(.before)) |p| p.framedHeight(pane_layout) else 0, if (patches.get(.after)) |p| p.framedHeight(pane_layout) else 0);
+        const old = sourceRect(region.before);
+        const new = sourceRect(region.after);
+        kinds |= kindBit(region.kind());
         const before_mark = offsetMark(old, panes.get(.before), pair.before.size());
         const after_mark = offsetMark(new, panes.get(.after), pair.after.size());
+        const view: focus.View = switch (pane_layout.arrangement) {
+            .side_by_side => close_ups: {
+                const patches = cropPair(pair, .init(.{ .before = old, .after = new }), placement.x, top, slot, pane_layout);
+                const height = @max(pane_layout.px(min_slot_h), if (patches.get(.before)) |p| p.framedHeight(pane_layout) else 0, if (patches.get(.after)) |p| p.framedHeight(pane_layout) else 0);
+                const close_ups: focus.CloseUps = .{ .crops = patches, .top = top, .height = height };
+                top = std.math.add(usize, top, height + pane_layout.px(detail_gap)) catch return error.SheetTooLarge;
+                if (top > value.max_extent) return error.SheetTooLarge;
+                break :close_ups .{ .side_by_side = close_ups };
+            },
+            .panoramic => shown: {
+                focuses[index] = .{ .windows = .init(.{ .before = focusWindow(old orelse new, pair.before.size()), .after = focusWindow(new orelse old, pair.after.size()) }) };
+                break :shown .{ .panoramic = .{ .focus = index } };
+            },
+        };
         detail.* = .{
             .region = region,
-            .crops = patches,
             .marks = .init(.{ .before = before_mark, .after = after_mark }),
-            .focus = index,
             .number = try Text.format(copy.number_format, .{region.number}),
-            .top = top,
-            .height = height,
+            .view = view,
         };
-        if (pane_layout.panoramic) {
-            focuses[index] = .{ .windows = .init(.{ .before = focusWindow(old orelse new, pair.before.size()), .after = focusWindow(new orelse old, pair.after.size()) }) };
-        } else {
-            top = std.math.add(usize, top, height + pane_layout.px(detail_gap)) catch return error.SheetTooLarge;
-            if (top > value.max_extent) return error.SheetTooLarge;
-        }
     }
-    if (pane_layout.panoramic) top = try layoutFocus(details, focuses, .init(.{ .before = pair.before.size(), .after = pair.after.size() }), top);
+    if (pane_layout.arrangement == .panoramic) top = try layoutFocus(details, focuses, top);
     return .{ .details = details, .focuses = focuses, .end = top, .kinds = kinds };
 }
 
-fn planRibbons(allocator: Allocator, moves: []const Move, details: []const Detail, before: Size, after: Size, pane_layout: PaneLayout) RenderError![]Ribbon {
+fn planRibbons(allocator: Allocator, moves: []const Move, details: []const Detail, pane_layout: PaneLayout) RenderError![]Ribbon {
     // A single gutter represents a single vertical path. For independent
     // columns depict the path that covers the most moved pixels.
     var area: usize = 0;
     var column: ?Move = null;
     for (moves) |move| {
-        if (move.before.y > before.height or move.before.height > before.height - move.before.y or
-            move.after.y > after.height or move.after.height > after.height - move.after.y or
-            move.before.height == 0 or move.before.height != move.after.height or move.before.y == move.after.y or
-            move.x.count() > @min(before.width, after.width) or move.width.count() > @min(before.width, after.width) - move.x.count() or
-            move.width.count() == 0) return error.InvalidImage;
-        const weight = move.width.count() *| move.before.height;
+        const weight = move.width *| move.before.height;
         if (weight > area) {
             area = weight;
             column = move;
         }
     }
     var count: usize = 0;
-    if (!pane_layout.panoramic) if (column) |chosen| {
+    if (pane_layout.arrangement == .side_by_side) if (column) |chosen| {
         for (moves) |move| {
             if (move.x == chosen.x and move.width == chosen.width and previewMove(move, pane_layout) != null) count += 1;
         }
@@ -262,7 +263,7 @@ fn planRibbons(allocator: Allocator, moves: []const Move, details: []const Detai
     const planned_ribbons = try allocator.alloc(Ribbon, count);
     errdefer allocator.free(planned_ribbons);
     var index: usize = 0;
-    if (!pane_layout.panoramic) if (column) |chosen| {
+    if (pane_layout.arrangement == .side_by_side) if (column) |chosen| {
         for (moves) |move| {
             if (move.x != chosen.x or move.width != chosen.width) continue;
             const drawn = previewMove(move, pane_layout) orelse continue;
@@ -296,7 +297,7 @@ fn layoutLabels(pane_layout: PaneLayout, left: usize, pane_end: usize, kinds: u8
     var labels: Labels = .{
         .title = makeLabel(left, pane_layout.px(title_top), pane_layout.px(title_size), .bold),
         .legend = @splat(null),
-        .details = makeLabel(if (pane_layout.panoramic) pane_layout.px(margin) else left, pane_end + pane_layout.px(detail_title_gap), pane_layout.px(detail_title_size), .bold),
+        .details = makeLabel(if (pane_layout.arrangement == .panoramic) pane_layout.px(margin) else left, pane_end + pane_layout.px(detail_title_gap), pane_layout.px(detail_title_size), .bold),
         .detail_kind_x = left + pane_layout.px(detail_kind_gap),
         .detail_kind_offset = mark / 2 - text.Face.regular.height(body) / 2,
         .detail_badge = mark,
@@ -322,7 +323,7 @@ fn makeLabel(x: usize, y: usize, size: usize, face: text.Face) Label {
 }
 
 fn layoutCaptions(pane_layout: PaneLayout, panes: geometry.SideRects, width: usize) Captions {
-    const available_before = if (pane_layout.panoramic) width - panes.get(.before).x else panes.get(.after).x - panes.get(.before).x -| pane_layout.px(caption_gap);
+    const available_before = if (pane_layout.arrangement == .panoramic) width - panes.get(.before).x else panes.get(.after).x - panes.get(.before).x -| pane_layout.px(caption_gap);
     var size = pane_layout.px(24);
     while (size > 1 and (textWidth(.bold, size, copy.before) > available_before or
         textWidth(.bold, size, copy.after) > width - panes.get(.after).x)) size -= 1;
@@ -344,12 +345,12 @@ fn reserveBadgeLanes(panes: *geometry.SideRects, size: *Size, pane_layout: PaneL
         for (panes.values, std.enums.values(value.Side)) |pane, side| {
             const image = pair.get(side);
             const box = region.boxOn(side);
-            const mark = offsetMark(imageRect(image, box), pane, image.size()) orelse continue;
+            const mark = offsetMark(sourceRect(box), pane, image.size()) orelse continue;
             const near_left = mark.x - pane.x < diameter;
             const near_right = pane.right() - mark.right() < diameter;
-            left = left or (near_left and (side == .before or pane_layout.panoramic));
-            right = right or (near_right and (side == .after or pane_layout.panoramic));
-            middle = middle or (!pane_layout.panoramic and (if (side == .before) near_right else near_left));
+            left = left or (near_left and (side == .before or pane_layout.arrangement == .panoramic));
+            right = right or (near_right and (side == .after or pane_layout.arrangement == .panoramic));
+            middle = middle or (pane_layout.arrangement == .side_by_side and (if (side == .before) near_right else near_left));
         }
     }
     if (left) {
@@ -430,7 +431,7 @@ test {
     const allocator = std.testing.allocator;
     const pixels: [80 * 80]Pixel = @splat(page);
     const image: Image = .{ .width = 80, .height = 80, .pixels = &pixels };
-    const insert: Region = .{ .number = 1, .kind = .inserted, .after = value.Box.fromPixels(0, 0, 4, 4) };
+    const insert: Region = .{ .number = 1, .after = value.Box.fromPixels(0, 0, 4, 4) };
     const plan = try Plan.init(allocator, .{ .before = image, .after = image }, &.{insert}, &.{});
     defer plan.deinit(allocator);
     const bounds = plan.details[0].badges.get(.after).position().?;
@@ -444,17 +445,33 @@ test {
     const allocator = std.testing.allocator;
     const pixels: [900 * 12]Pixel = @splat(page);
     const image: Image = .{ .width = 900, .height = 12, .pixels = &pixels };
-    const region: Region = .{ .number = 1, .kind = .changed, .after = value.Box.fromPixels(400, 0, 12, 12) };
+    const region: Region = .{ .number = 1, .after = value.Box.fromPixels(400, 0, 12, 12) };
     const plan = try Plan.init(allocator, .{ .before = image, .after = image }, &.{region}, &.{});
     defer plan.deinit(allocator);
     const detail = plan.details[0];
     const overview = detail.badges.get(.after).position().?;
-    const focus_badge = detail.focus_badges.get(.after).position().?;
+    const focus_badge = detail.view.panoramic.badges.get(.after).position().?;
     const pane_layout = PaneLayout.init(image.size(), image.size());
     try std.testing.expectEqual(overviewDiameter(pane_layout), overview.width);
     try std.testing.expectEqual(@as(usize, 59), focus_badge.width);
     try std.testing.expectEqual(plan.panes.get(.after).y, overview.bottom());
     try std.testing.expectEqual(plan.focuses[0].crops.get(.after).?.to.y, focus_badge.bottom());
+}
+
+test "plans refuse invalid caller regions and moves before laying out" {
+    const page = palette.page;
+    const Pixel = value.Pixel;
+    const allocator = std.testing.allocator;
+    const pixels: [40 * 40]Pixel = @splat(page);
+    const image: Image = .{ .width = 40, .height = 40, .pixels = &pixels };
+    const pair: value.Pair = .{ .before = image, .after = image };
+    var fractional = value.Box.fromPixels(1, 1, 4, 4);
+    fractional.width += 0.5;
+    const many: [value.max_regions + 1]Region = @splat(.{ .number = 1, .after = value.Box.fromPixels(1, 1, 4, 4) });
+    const still: Move = .{ .before = .{ .y = 4, .height = 8 }, .after = .{ .y = 4, .height = 8 }, .x = 0, .width = 40 };
+    try std.testing.expectError(error.TooManyRegions, Plan.init(allocator, pair, &many, &.{}));
+    try std.testing.expectError(error.InvalidRegionBox, Plan.init(allocator, pair, &.{.{ .number = 1, .after = fractional }}, &.{}));
+    try std.testing.expectError(error.InvalidMove, Plan.init(allocator, pair, &.{}, &.{still}));
 }
 
 test "edge badges stay near their numbered boxes and avoid all other marks" {
@@ -470,7 +487,7 @@ test "edge badges stay near their numbered boxes and avoid all other marks" {
         .fromPixels(0, 296, 4, 4), .fromPixels(396, 296, 4, 4),
     };
     var regions: [boxes.len]Region = undefined;
-    for (&regions, boxes, 1..) |*r, box, i| r.* = .{ .number = i, .kind = .changed, .before = box, .after = box };
+    for (&regions, boxes, 1..) |*r, box, i| r.* = .{ .number = i, .before = box, .after = box };
     const plan = try Plan.init(allocator, .{ .before = image, .after = image }, &regions, &.{});
     defer plan.deinit(allocator);
     for (plan.details, 0..) |detail, i| {
@@ -490,7 +507,7 @@ test "whole-image wide changes have a badge in both overviews" {
     const pixels: [900 * 12]Pixel = @splat(page);
     const image: Image = .{ .width = 900, .height = 12, .pixels = &pixels };
     const box = value.Box.fromPixels(0, 0, 900, 12);
-    const plan = try Plan.init(allocator, .{ .before = image, .after = image }, &.{.{ .number = 1, .kind = .changed, .before = box, .after = box }}, &.{});
+    const plan = try Plan.init(allocator, .{ .before = image, .after = image }, &.{.{ .number = 1, .before = box, .after = box }}, &.{});
     defer plan.deinit(allocator);
     try std.testing.expect(plan.details[0].badges.get(.before).position().?.bottom() <= plan.panes.get(.before).y);
     try std.testing.expect(plan.details[0].badges.get(.after).position().?.bottom() <= plan.panes.get(.after).y);
@@ -504,10 +521,10 @@ test "edge badges use the gutter margins and the space above the caption" {
     @memset(pixels, .{ 45, 67, 85, 255 });
     const image: Image = .{ .width = 400, .height = 300, .pixels = pixels };
     const regions = [_]Region{
-        .{ .number = 1, .kind = .removed, .before = .fromPixels(0, 145, 5, 10) },
-        .{ .number = 2, .kind = .changed, .before = .fromPixels(395, 130, 5, 10), .after = .fromPixels(395, 130, 5, 10) },
-        .{ .number = 3, .kind = .inserted, .after = .fromPixels(220, 0, 10, 8) },
-        .{ .number = 4, .kind = .changed, .before = .fromPixels(195, 145, 10, 10) },
+        .{ .number = 1, .before = .fromPixels(0, 145, 5, 10) },
+        .{ .number = 2, .before = .fromPixels(395, 130, 5, 10), .after = .fromPixels(395, 130, 5, 10) },
+        .{ .number = 3, .after = .fromPixels(220, 0, 10, 8) },
+        .{ .number = 4, .before = .fromPixels(195, 145, 10, 10) },
     };
     const plan = try Plan.init(allocator, .{ .before = image, .after = image }, &regions, &.{});
     defer plan.deinit(allocator);
@@ -539,9 +556,9 @@ test "panoramic sheets use bounded overviews and merge overlapping focus crops" 
     @memset(pixels, canvas.white);
     const image: Image = .{ .width = 3600, .height = 300, .pixels = pixels };
     const regions = [_]Region{
-        .{ .number = 1, .kind = .changed, .before = value.Box.fromPixels(450, 30, 80, 20), .after = value.Box.fromPixels(450, 30, 80, 20) },
-        .{ .number = 2, .kind = .changed, .before = value.Box.fromPixels(900, 185, 80, 20), .after = value.Box.fromPixels(900, 185, 80, 20) },
-        .{ .number = 3, .kind = .inserted, .after = value.Box.fromPixels(1600, 40, 1950, 18) },
+        .{ .number = 1, .before = value.Box.fromPixels(450, 30, 80, 20), .after = value.Box.fromPixels(450, 30, 80, 20) },
+        .{ .number = 2, .before = value.Box.fromPixels(900, 185, 80, 20), .after = value.Box.fromPixels(900, 185, 80, 20) },
+        .{ .number = 3, .after = value.Box.fromPixels(1600, 40, 1950, 18) },
     };
     const plan = try Plan.init(allocator, .{ .before = image, .after = image }, &regions, &.{});
     defer plan.deinit(allocator);
@@ -549,8 +566,8 @@ test "panoramic sheets use bounded overviews and merge overlapping focus crops" 
     try std.testing.expectEqual(@as(usize, geometry.overview_width), plan.panes.get(.before).width);
     try std.testing.expectEqual(@as(usize, 0), plan.panes.get(.after).x - plan.panes.get(.before).x);
     try std.testing.expectEqual(@as(usize, overview_caption_gap), plan.panes.get(.after).y - plan.panes.get(.before).bottom());
-    try std.testing.expectEqual(plan.details[0].focus, plan.details[1].focus);
-    try std.testing.expect(plan.details[2].focus != plan.details[0].focus);
+    try std.testing.expectEqual(plan.details[0].view.panoramic.focus, plan.details[1].view.panoramic.focus);
+    try std.testing.expect(plan.details[2].view.panoramic.focus != plan.details[0].view.panoramic.focus);
     const first = plan.focuses[0];
     const before = first.crops.get(.before).?;
     const after = first.crops.get(.after).?;
@@ -564,7 +581,7 @@ test "panoramic sheets use bounded overviews and merge overlapping focus crops" 
     try std.testing.expect(shrunk.to.height < shrunk.from.height);
     for (plan.details) |detail| {
         if (detail.badges.get(.after).position()) |b| try std.testing.expect(!b.overlaps(detail.marks.get(.after).?));
-        if (detail.focus_badges.get(.after).position()) |b| try std.testing.expect(!b.overlaps(detail.focus_marks.get(.after).?));
+        if (detail.view.panoramic.badges.get(.after).position()) |b| try std.testing.expect(!b.overlaps(detail.view.panoramic.marks.get(.after).?));
     }
 }
 
@@ -577,16 +594,16 @@ test "wide removed strips get distinct focus badges and a scaled caption" {
     @memset(pixels, page);
     const image: Image = .{ .width = 3800, .height = 120, .pixels = pixels };
     const regions = [_]Region{
-        .{ .number = 1, .kind = .removed, .before = value.Box.fromPixels(100, 4, 3100, 14) },
-        .{ .number = 2, .kind = .removed, .before = value.Box.fromPixels(100, 44, 3100, 14) },
+        .{ .number = 1, .before = value.Box.fromPixels(100, 4, 3100, 14) },
+        .{ .number = 2, .before = value.Box.fromPixels(100, 44, 3100, 14) },
     };
     const plan = try Plan.init(allocator, .{ .before = image, .after = image }, &regions, &.{});
     defer plan.deinit(allocator);
-    const first = plan.details[0].focus_badges.get(.before).position().?;
-    const second = plan.details[1].focus_badges.get(.before).position().?;
+    const first = plan.details[0].view.panoramic.badges.get(.before).position().?;
+    const second = plan.details[1].view.panoramic.badges.get(.before).position().?;
     try std.testing.expect(!first.overlaps(second));
-    try std.testing.expect(!first.overlaps(plan.details[1].focus_marks.get(.before).?));
-    try std.testing.expect(!second.overlaps(plan.details[0].focus_marks.get(.before).?));
+    try std.testing.expect(!first.overlaps(plan.details[1].view.panoramic.marks.get(.before).?));
+    try std.testing.expect(!second.overlaps(plan.details[0].view.panoramic.marks.get(.before).?));
     try std.testing.expect(std.mem.indexOf(u8, plan.focuses[0].captions.get(.before).bytes(), "scaled 35%") != null);
 }
 
@@ -599,7 +616,7 @@ test "focus badges use space outside a crop when available" {
     @memset(pixels, page);
     const image: Image = .{ .width = 1600, .height = 530, .pixels = pixels };
     const box = value.Box.fromPixels(1588, 460, 8, 6);
-    const plan = try Plan.init(allocator, .{ .before = image, .after = image }, &.{.{ .number = 1, .kind = .changed, .before = box, .after = box }}, &.{});
+    const plan = try Plan.init(allocator, .{ .before = image, .after = image }, &.{.{ .number = 1, .before = box, .after = box }}, &.{});
     defer plan.deinit(allocator);
-    try std.testing.expect(!plan.details[0].focus_badges.get(.before).position().?.overlaps(plan.focuses[0].crops.get(.before).?.to));
+    try std.testing.expect(!plan.details[0].view.panoramic.badges.get(.before).position().?.overlaps(plan.focuses[0].crops.get(.before).?.to));
 }

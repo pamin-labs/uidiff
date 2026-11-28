@@ -78,7 +78,7 @@ test "card corner edits never align their narrow border columns as moves" {
     try std.testing.expectEqual(@as(usize, 0), result.moves.len);
     try std.testing.expectEqual(@as(usize, 2), result.regions.len);
     for (result.regions) |edit| {
-        try std.testing.expectEqual(Kind.changed, edit.kind);
+        try std.testing.expectEqual(Kind.changed, edit.kind());
         try std.testing.expectEqual(edit.before, edit.after);
     }
 }
@@ -107,8 +107,8 @@ test "a blank sidebar group keeps a new mark stationary beside inserted cards" {
         try std.testing.expect(expect.hasRegion(result.regions, .after, 560, 150, .inserted));
         try std.testing.expectEqual(@as(usize, 1), result.moves.len);
         try std.testing.expectEqual(@as(usize, 40), result.moves[0].after.y - result.moves[0].before.y);
-        try std.testing.expect(result.moves[0].x.count() >= 180);
-        try std.testing.expect(result.moves[0].width.count() >= 380);
+        try std.testing.expect(result.moves[0].x >= 180);
+        try std.testing.expect(result.moves[0].width >= 380);
     }
 }
 
@@ -143,7 +143,7 @@ test "stationary sidebar with a small colour difference does not prevent a 606-p
     const result = try expect.compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 1), result.regions.len);
-    try std.testing.expectEqual(Kind.inserted, result.regions[0].kind);
+    try std.testing.expectEqual(Kind.inserted, result.regions[0].kind());
     const box = result.regions[0].after.?;
     try std.testing.expect(box.x >= 20 and box.y >= at - region_padding and box.bottom() <= at + shift + region_padding);
 }
@@ -278,7 +278,7 @@ test "independently aligned columns retain clipped text and different strides" {
             try std.testing.expect(expect.hasRegion(result.regions, .after, 30, 440, .inserted));
             try std.testing.expect(expect.hasRegion(result.regions, .after, x + 2, y + 2, .changed));
             for (result.regions) |region| {
-                if (region.kind != .changed) continue;
+                if (region.kind() != .changed) continue;
                 try std.testing.expect(region.after.?.width <= 3 + 2 * region_padding);
             }
         }
@@ -305,8 +305,8 @@ test "a moved main column describes its own x span beside a fixed sidebar" {
         defer result.deinit(std.testing.allocator);
         try std.testing.expectEqual(pass + 1, result.regions.len);
         try std.testing.expectEqual(@as(usize, 1), result.moves.len);
-        try std.testing.expectEqual(@as(usize, 96), result.moves[0].x.count());
-        try std.testing.expectEqual(@as(usize, 217), result.moves[0].width.count());
+        try std.testing.expectEqual(@as(usize, 96), result.moves[0].x);
+        try std.testing.expectEqual(@as(usize, 217), result.moves[0].width);
         try std.testing.expectEqual(@as(usize, 40), result.moves[0].after.y - result.moves[0].before.y);
     }
 }
@@ -325,7 +325,7 @@ test "a compact insertion at the end of a narrow column retains its shift" {
     const found = try expect.compareCanvases(before, after, 1);
     defer found.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 1), found.regions.len);
-    try std.testing.expectEqual(Kind.inserted, found.regions[0].kind);
+    try std.testing.expectEqual(Kind.inserted, found.regions[0].kind());
     try std.testing.expect(found.moves.len != 0);
     try std.testing.expectEqual(@as(usize, 20), found.moves[0].after.y - found.moves[0].before.y);
 }

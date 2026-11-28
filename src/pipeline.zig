@@ -24,7 +24,7 @@ pub const Paths = struct {
     /// Path to the after image.
     after: []const u8,
     /// Where to write the annotated sheet, if requested.
-    annotate: ?[]const u8 = null,
+    sheet: ?[]const u8 = null,
 };
 
 /// Holds the path of the file a failure concerns, borrowed from Paths.
@@ -92,18 +92,18 @@ const SharedAllocator = struct {
 const write_buffer_bytes = 64 * 1024;
 
 /// Checks the options, decodes both files, compares them, and writes the
-/// sheet when paths.annotate is set. On failure, diagnostics names the file
+/// sheet when paths.sheet is set. On failure, diagnostics names the file
 /// concerned, or null when no file is. The caller owns the comparison.
 pub fn compareFiles(io: Io, allocator: Allocator, paths: Paths, options: FileCompareOptions, diagnostics: *Diagnostics) FileCompareError!diff.Comparison {
     diagnostics.path = null;
     const checked = try diff.checkOptions(options.compare);
-    if (paths.annotate) |path| try preflightSheet(io, allocator, paths, path, options.max_decode_bytes, diagnostics);
+    if (paths.sheet) |path| try preflightSheet(io, allocator, paths, path, options.max_decode_bytes, diagnostics);
     var shared: SharedAllocator = .{ .io = io, .backing = allocator };
     var decoded = try loadPair(io, &shared, paths, options.max_decode_bytes, diagnostics);
     defer decoded.before.deinit();
     defer decoded.after.deinit();
     const pair: value.Pair = .{ .before = decoded.before.image, .after = decoded.after.image };
-    if (paths.annotate) |path| {
+    if (paths.sheet) |path| {
         // A file may have changed since its header was checked.
         diagnostics.path = path;
         _ = try annotate.minimumSheetSize(pair.before.size(), pair.after.size());
@@ -111,7 +111,7 @@ pub fn compareFiles(io: Io, allocator: Allocator, paths: Paths, options: FileCom
     diagnostics.path = null;
     const result = try diff.compareChecked(allocator, pair.before, pair.after, checked);
     errdefer result.deinit(allocator);
-    if (paths.annotate) |path| {
+    if (paths.sheet) |path| {
         diagnostics.path = path;
         try writeSheet(io, allocator, path, pair, result);
         diagnostics.path = null;
@@ -119,12 +119,10 @@ pub fn compareFiles(io: Io, allocator: Allocator, paths: Paths, options: FileCom
     return result;
 }
 
-/// Streams a comparison sheet as PNG into a caller-supplied writer.
-pub fn encodeSheet(allocator: Allocator, pair: value.Pair, regions: []const value.Region, moves: []const value.Move, output: *Io.Writer) EncodeSheetError!void {
-    return encodeSheetWithIo(null, allocator, pair, regions, moves, output);
-}
-
-fn encodeSheetWithIo(io: ?Io, allocator: Allocator, pair: value.Pair, regions: []const value.Region, moves: []const value.Move, output: *Io.Writer) EncodeSheetError!void {
+/// Streams a comparison sheet as PNG into a caller-supplied writer,
+/// compressing a large sheet's strips concurrently through io as
+/// compareFiles does, so both give the same bytes.
+pub fn encodeSheet(io: Io, allocator: Allocator, pair: value.Pair, regions: []const value.Region, moves: []const value.Move, output: *Io.Writer) EncodeSheetError!void {
     const sheet = try annotate.SheetRows.init(allocator, pair.before, pair.after, regions, moves);
     defer sheet.deinit(allocator);
     try codec.encodePngRowsWithIo(io, allocator, sheet.size(), sheet, output);
@@ -162,7 +160,7 @@ fn decodeInOrder(io: Io, allocator: Allocator, first: codec.FileInput, second: ?
     var before = try first.decode(io, allocator, cap);
     errdefer before.deinit();
     diagnostics.path = paths.after;
-    const after = if (second) |input| try input.decode(io, allocator, cap) else try codec.decodeFileCapped(io, allocator, paths.after, cap);
+    const after = if (second) |input| try input.decode(io, allocator, cap) else try codec.decodeFile(io, allocator, paths.after, cap);
     return .{ .before = before, .after = after };
 }
 
@@ -184,7 +182,7 @@ fn writeSheet(io: Io, allocator: Allocator, path: []const u8, pair: value.Pair, 
     const buffer = try value.allocUnfilled(u8, allocator, write_buffer_bytes);
     defer value.freeUnfilled(u8, allocator, buffer);
     var writer = file.file.writer(io, buffer);
-    encodeSheetWithIo(io, allocator, pair, result.regions, result.moves, &writer.interface) catch |err| switch (err) {
+    encodeSheet(io, allocator, pair, result.regions, result.moves, &writer.interface) catch |err| switch (err) {
         error.WriteFailed => return writer.err orelse err,
         else => |other| return other,
     };
@@ -265,9 +263,9 @@ test "overlapped decodes preserve PNG and JPEG errors and results" {
     const samples = [_][]const u8{ output.written(), &jpeg.gray };
     for (samples) |old| {
         for (samples) |new| {
-            var a = try codec.decode(allocator, old);
+            var a = try codec.decode(allocator, old, value.max_decode_bytes);
             defer a.deinit();
-            var b = try codec.decode(allocator, new);
+            var b = try codec.decode(allocator, new, value.max_decode_bytes);
             defer b.deinit();
             const expected = try diff.compare(allocator, a.image, b.image, .{});
             defer expected.deinit(allocator);

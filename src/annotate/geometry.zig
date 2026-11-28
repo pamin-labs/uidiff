@@ -13,12 +13,20 @@ pub const Rect = value.SheetRect;
 /// Sheet rectangles indexed by source side.
 pub const SideRects = std.EnumArray(value.Side, Rect);
 
+/// How a sheet arranges its panes and details.
+pub const Arrangement = enum {
+    /// Panes side by side, each region's close-ups in a detail row.
+    side_by_side,
+    /// Panes stacked, regions marked on shared focus windows.
+    panoramic,
+};
+
 /// Preview scale, UI scale, and pane arrangement for a sheet.
 pub const PaneLayout = struct {
     percent: usize,
     numerator: usize,
     denominator: usize,
-    panoramic: bool,
+    arrangement: Arrangement,
 
     /// Chooses the preview scale and pane arrangement from source dimensions.
     pub fn init(before: Size, after: Size) PaneLayout {
@@ -40,7 +48,7 @@ pub const PaneLayout = struct {
             .percent = if (panoramic) 100 else @min(205, @max(100, (view_width * 100 + 390) / 780)),
             .numerator = scale[0],
             .denominator = scale[1],
-            .panoramic = panoramic,
+            .arrangement = if (panoramic) .panoramic else .side_by_side,
         };
     }
 
@@ -56,17 +64,19 @@ pub const PaneLayout = struct {
 
     /// Returns the scaled dimensions of a source pane.
     pub fn preview(self: PaneLayout, size: Size) Size {
-        if (self.panoramic) {
-            if (size.width * overview_max_height >= size.height * overview_width) return .{
-                .width = overview_width,
-                .height = @max(1, size.height * overview_width / size.width),
-            };
-            return .{
-                .width = @max(1, size.width * overview_max_height / size.height),
-                .height = overview_max_height,
-            };
+        switch (self.arrangement) {
+            .side_by_side => return .{ .width = self.extent(size.width), .height = self.extent(size.height) },
+            .panoramic => {
+                if (size.width * overview_max_height >= size.height * overview_width) return .{
+                    .width = overview_width,
+                    .height = @max(1, size.height * overview_width / size.width),
+                };
+                return .{
+                    .width = @max(1, size.width * overview_max_height / size.height),
+                    .height = overview_max_height,
+                };
+            },
         }
-        return .{ .width = self.extent(size.width), .height = self.extent(size.height) };
     }
 
     /// Returns the two overview rectangles in sheet coordinates.
@@ -76,8 +86,8 @@ pub const PaneLayout = struct {
         const a = paneRect(x, y, self.preview(before));
         const after_size = self.preview(after);
         const b = paneRect(
-            if (self.panoramic) x else a.right() + self.gutterFor(a.width, after_size.width),
-            if (self.panoramic) a.bottom() + overview_caption_gap else y,
+            if (self.arrangement == .panoramic) x else a.right() + self.gutterFor(a.width, after_size.width),
+            if (self.arrangement == .panoramic) a.bottom() + overview_caption_gap else y,
             after_size,
         );
         return .init(.{ .before = a, .after = b });
@@ -183,20 +193,9 @@ pub fn mapMark(region: SourceRect, source: SourceRect, pane: Rect) ?Rect {
     };
 }
 
-/// Validates fractional device coordinates and rounds them outward.
-pub fn imageRect(image: Image, box: ?value.Box) ?SourceRect {
-    return rectAtSize(image.size(), box);
-}
-
-/// Validates and rounds a box against a known source image size.
-pub noinline fn rectAtSize(size: Size, box: ?value.Box) ?SourceRect {
-    const b = box orelse return null;
-    const w: f64 = @floatFromInt(size.width);
-    const h: f64 = @floatFromInt(size.height);
-    if (!(b.x >= 0 and b.y >= 0 and b.width > 0 and b.height > 0 and b.right() <= w and b.bottom() <= h)) return null;
-    const x: usize = @intFromFloat(@floor(b.x));
-    const y: usize = @intFromFloat(@floor(b.y));
-    return .{ .x = x, .y = y, .width = @as(usize, @intFromFloat(@ceil(b.right()))) - x, .height = @as(usize, @intFromFloat(@ceil(b.bottom()))) - y };
+/// Converts a box that passed Region.check to whole pixels.
+pub noinline fn sourceRect(box: ?value.Box) ?SourceRect {
+    return (box orelse return null).wholePixels();
 }
 
 test "stacked overviews fit both axes at a single scale" {
@@ -216,7 +215,7 @@ test "stacked overviews fit both axes at a single scale" {
     };
     for (cases) |case| {
         const pane_layout = PaneLayout.init(case.sources[0], case.sources[1]);
-        try std.testing.expect(pane_layout.panoramic);
+        try std.testing.expect(pane_layout.arrangement == .panoramic);
         for (case.sources, case.previews) |source, expected| {
             try std.testing.expectEqual(expected, pane_layout.preview(source));
         }

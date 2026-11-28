@@ -2,16 +2,22 @@
 const std = @import("std");
 const value = @import("value.zig");
 
-/// Version-one coordinates in device pixels.
+/// Version-one coordinates in whole device pixels.
 pub const Box = struct {
     /// Left edge in source device pixels.
-    x: f64,
+    x: usize,
     /// Top edge in source device pixels.
-    y: f64,
+    y: usize,
     /// Horizontal extent in source device pixels.
-    width: f64,
+    width: usize,
     /// Vertical extent in source device pixels.
-    height: f64,
+    height: usize,
+
+    /// Converts a box that passed Region.check to its wire form.
+    fn convert(box: ?value.Box) ?Box {
+        const rect = (box orelse return null).wholePixels();
+        return .{ .x = rect.x, .y = rect.y, .width = rect.width, .height = rect.height };
+    }
 };
 
 /// Version-one region. An absent side is serialized as null.
@@ -24,6 +30,11 @@ pub const Region = struct {
     before: ?Box,
     /// Box on the after image, or null when absent on that side.
     after: ?Box,
+
+    /// Converts a region that passed Region.check to its wire form.
+    fn convert(region: value.Region) Region {
+        return .{ .number = region.number, .kind = region.kind(), .before = .convert(region.before), .after = .convert(region.after) };
+    }
 };
 
 /// Version-one row start and length in source device pixels.
@@ -50,8 +61,8 @@ pub const Move = struct {
         return .{
             .before = .{ .y = move.before.y, .height = move.before.height },
             .after = .{ .y = move.after.y, .height = move.after.height },
-            .x = move.x.count(),
-            .width = move.width.count(),
+            .x = move.x,
+            .width = move.width,
         };
     }
 };
@@ -70,41 +81,21 @@ pub const Report = struct {
     moves: []const Move = &.{},
 };
 
-/// Report failures, including a coordinate outside the whole-pixel domain.
-pub const PixelWriteError = std.Io.Writer.Error || error{InvalidRegionBox};
-
-const PixelBox = struct {
-    x: usize,
-    y: usize,
-    width: usize,
-    height: usize,
-
-    fn validate(box: ?value.Box) error{InvalidRegionBox}!void {
-        const b = box orelse return;
-        const geometry: @Vector(4, f64) = .{ b.x, b.y, b.width, b.height };
-        if (!@reduce(.And, geometry >= @as(@Vector(4, f64), @splat(0))) or
-            !@reduce(.And, geometry <= @as(@Vector(4, f64), @splat(value.max_extent))) or
-            !@reduce(.And, @floor(geometry) == geometry)) return error.InvalidRegionBox;
-    }
-
-    fn fromValidated(box: ?value.Box) ?PixelBox {
-        const b = box orelse return null;
-        return .{ .x = @intFromFloat(b.x), .y = @intFromFloat(b.y), .width = @intFromFloat(b.width), .height = @intFromFloat(b.height) };
-    }
-};
-
-const PixelRegion = struct { number: usize, kind: value.Kind, before: ?PixelBox, after: ?PixelBox };
+/// Output failures, or a region or move that fails its check.
+pub const WriteError = std.Io.Writer.Error || value.Region.CheckError || value.Move.CheckError;
 
 /// Schema version emitted with each report.
 pub const version: u32 = 1;
 
-/// Writes a comparison's rounded boxes without linking float formatting.
-pub fn writeWholePixels(output: *std.Io.Writer, regions: []const value.Region, canvas: value.Size, moves: []const value.Move) PixelWriteError!void {
-    // Keep invalid geometry from producing a partial report.
-    for (regions) |region| {
-        try PixelBox.validate(region.before);
-        try PixelBox.validate(region.after);
-    }
+/// Writes a comparison's whole-pixel boxes without linking float formatting.
+/// Checks every region and move first, so a failed check writes nothing.
+/// The caller owns the writer and its flush.
+pub fn write(regions: []const value.Region, canvas: value.Size, moves: []const value.Move, output: *std.Io.Writer) WriteError!void {
+    // Keep invalid geometry from producing a partial report. The report
+    // knows only the canvas, so each side is checked against it.
+    const sizes: value.Sizes = .initFill(canvas);
+    for (regions) |region| try region.check(sizes);
+    for (moves) |move| try move.check(sizes);
     var json: std.json.Stringify = .{ .writer = output };
     try json.beginObject();
     inline for (comptime std.meta.tags(std.meta.FieldEnum(Report))) |field| {
@@ -115,12 +106,7 @@ pub fn writeWholePixels(output: *std.Io.Writer, regions: []const value.Region, c
             .height => try json.write(canvas.height),
             .regions => {
                 try json.beginArray();
-                for (regions) |region| try json.write(PixelRegion{
-                    .number = region.number,
-                    .kind = region.kind,
-                    .before = PixelBox.fromValidated(region.before),
-                    .after = PixelBox.fromValidated(region.after),
-                });
+                for (regions) |region| try json.write(Region.convert(region));
                 try json.endArray();
             },
             .moves => {
@@ -139,7 +125,7 @@ test "version one writes inserted geometry and a null before box" {
     const after = value.Box.fromPixels(11, 20, 28, 14);
     var output = std.Io.Writer.Allocating.init(allocator);
     defer output.deinit();
-    try writeWholePixels(&output.writer, &.{.{ .number = 1, .kind = .inserted, .after = after }}, .{ .width = 64, .height = 64 }, &.{});
+    try write(&.{.{ .number = 1, .after = after }}, .{ .width = 64, .height = 64 }, &.{}, &output.writer);
     const parsed = try std.json.parseFromSlice(Report, allocator, output.written(), .{ .ignore_unknown_fields = true });
     defer parsed.deinit();
     try std.testing.expectEqual(version, parsed.value.version);
@@ -156,9 +142,9 @@ test "whole-pixel reports reject fractional geometry before writing" {
     defer rounded.deinit();
     var box = value.Box.fromPixels(15, 28, 41, 6);
     box.x += 0.5;
-    const edits = [_]value.Region{.{ .number = 1, .kind = .inserted, .after = box }};
+    const edits = [_]value.Region{.{ .number = 1, .after = box }};
     const canvas: value.Size = .{ .width = 90, .height = 60 };
-    try std.testing.expectError(error.InvalidRegionBox, writeWholePixels(&rounded.writer, &edits, canvas, &.{}));
+    try std.testing.expectError(error.InvalidRegionBox, write(&edits, canvas, &.{}, &rounded.writer));
     try std.testing.expectEqual(@as(usize, 0), rounded.written().len);
 }
 

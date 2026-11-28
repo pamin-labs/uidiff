@@ -41,7 +41,7 @@ pub fn badgeDiameter(pane_layout: PaneLayout) usize {
 
 /// Returns the outside diameter of a badge over the main panes.
 pub fn overviewDiameter(pane_layout: PaneLayout) usize {
-    return if (pane_layout.panoramic) overview_badge_diameter else badgeDiameter(pane_layout);
+    return if (pane_layout.arrangement == .panoramic) overview_badge_diameter else badgeDiameter(pane_layout);
 }
 
 /// Returns the space a badge keeps from a pane's edge, which is nonzero only
@@ -80,11 +80,11 @@ fn placeOverview(details: []Detail, storage: []Rect, panes: geometry.SideRects, 
     }
     for (panes.values, std.enums.values(value.Side)) |pane, side| {
         const image = pair.get(side);
-        const left_edge = @min(pane.x, clearance + if (!pane_layout.panoramic and side == .after) panes.get(.before).right() else 0);
-        const right_edge = @max(pane.right(), (if (!pane_layout.panoramic and side == .before) panes.get(.after).x else size.width) -| clearance);
+        const left_edge = @min(pane.x, clearance + if (pane_layout.arrangement == .side_by_side and side == .after) panes.get(.before).right() else 0);
+        const right_edge = @max(pane.right(), (if (pane_layout.arrangement == .side_by_side and side == .before) panes.get(.after).x else size.width) -| clearance);
         const inner_left = pane.x -| clearance;
         const inner_right = @min(right_edge, pane.right() + clearance);
-        const lower_edge = if (pane_layout.panoramic and side == .before) panes.get(.after).y - diameter else @max(panes.get(.before).bottom(), panes.get(.after).bottom());
+        const lower_edge = if (pane_layout.arrangement == .panoramic and side == .before) panes.get(.after).y - diameter else @max(panes.get(.before).bottom(), panes.get(.after).bottom());
         const outside: [4]Rect = .{
             .{ .x = left_edge, .y = pane.y - diameter, .width = right_edge - left_edge, .height = diameter },
             .{ .x = inner_right, .y = pane.y, .width = right_edge - inner_right, .height = pane.height },
@@ -151,8 +151,8 @@ fn placeFocus(details: []Detail, storage: []Rect, image: Image, patch: Crop, sid
     storage[0] = Rect{ .x = pane.x, .y = pane.y -| diameter, .width = caption_width, .height = diameter };
     var len: usize = 1;
     for (details) |d| {
-        if (d.focus != group) continue;
-        if (d.focus_marks.get(side)) |r| {
+        if (d.view.panoramic.focus != group) continue;
+        if (d.view.panoramic.marks.get(side)) |r| {
             storage[len] = r;
             len += 1;
         }
@@ -161,13 +161,14 @@ fn placeFocus(details: []Detail, storage: []Rect, image: Image, patch: Crop, sid
     const beside: Rect = .{ .x = pane.right(), .y = pane.y, .width = focus_slot_width - pane.width, .height = pane.height };
     const below: Rect = .{ .x = pane.x, .y = pane.bottom(), .width = pane.width, .height = row_bottom - pane.bottom() };
     for (details) |*d| {
-        if (d.focus != group) continue;
-        const mark = d.focus_marks.get(side) orelse continue;
+        const shown = &d.view.panoramic;
+        if (shown.focus != group) continue;
+        const mark = shown.marks.get(side) orelse continue;
         const used = storage[0..len];
         const outside = placement.placeOutside(mark, header, diameter, used) orelse placement.placeOutside(mark, beside, diameter, used) orelse
             placement.placeOutside(mark, below, diameter, used);
         const route = routing.routeBadge(mark, outside, image, patch, diameter, used);
-        d.focus_badges.set(side, route);
+        shown.badges.set(side, route);
         if (route.position()) |position| {
             storage[len] = position;
             len += 1;

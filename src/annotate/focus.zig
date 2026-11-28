@@ -10,7 +10,7 @@ const Rect = geometry.Rect;
 const SourceRect = geometry.SourceRect;
 const margin = geometry.margin;
 const overview_width = geometry.overview_width;
-const rectAtSize = geometry.rectAtSize;
+const sourceRect = geometry.sourceRect;
 const mapMark = geometry.mapMark;
 const Text = text.Text;
 const Crop = crops.Crop;
@@ -42,18 +42,36 @@ pub const Badge = union(enum) {
     }
 };
 
-/// One numbered region's crops, marks and badges in the overview and detail rows.
-pub const Detail = struct {
-    region: Region,
+/// A detail row's paired close-up crops and its vertical extent.
+pub const CloseUps = struct {
     crops: std.EnumArray(value.Side, ?Crop),
-    marks: std.EnumArray(value.Side, ?Rect),
-    badges: std.EnumArray(value.Side, Badge) = .initFill(.none),
-    focus: usize = 0,
-    focus_marks: std.EnumArray(value.Side, ?Rect) = .initFill(null),
-    focus_badges: std.EnumArray(value.Side, Badge) = .initFill(.none),
-    number: Text,
     top: usize,
     height: usize,
+};
+
+/// A region's marks and badges on the focus window that shows it.
+pub const FocusMarks = struct {
+    /// The region's own index until layoutFocus merges windows, then the
+    /// index of the focus that shows it.
+    focus: usize,
+    marks: std.EnumArray(value.Side, ?Rect) = .initFill(null),
+    badges: std.EnumArray(value.Side, Badge) = .initFill(.none),
+};
+
+/// A detail's own row of close-ups, or its marks on a shared focus window,
+/// following the sheet's arrangement.
+pub const View = union(geometry.Arrangement) {
+    side_by_side: CloseUps,
+    panoramic: FocusMarks,
+};
+
+/// One numbered region's overview marks and badges, and how its detail is shown.
+pub const Detail = struct {
+    region: Region,
+    marks: std.EnumArray(value.Side, ?Rect),
+    badges: std.EnumArray(value.Side, Badge) = .initFill(.none),
+    number: Text,
+    view: View,
 };
 
 const focus_gap = 40;
@@ -85,8 +103,9 @@ pub fn focusColumn(side: value.Side) usize {
     return margin + @as(usize, @backingInt(side)) * (focus_slot_width + focus_gap);
 }
 
-/// Groups overlapping source windows and lays out the focus rows.
-pub fn layoutFocus(details: []Detail, focuses: []Focus, sizes: std.EnumArray(value.Side, Size), start: usize) error{SheetTooLarge}!usize {
+/// Groups overlapping source windows and lays out the focus rows. Asserts
+/// every detail is shown on a focus.
+pub fn layoutFocus(details: []Detail, focuses: []Focus, start: usize) error{SheetTooLarge}!usize {
     // Find connected crop windows on either side. Keep the first region's
     // position in the sheet when merging a group.
     for (focuses, 0..) |focus, i| {
@@ -94,18 +113,18 @@ pub fn layoutFocus(details: []Detail, focuses: []Focus, sizes: std.EnumArray(val
             if (!windowsOverlap(focus.windows, prior.windows)) continue;
             const a = focusRoot(details, i);
             const b = focusRoot(details, j);
-            details[@max(a, b)].focus = @min(a, b);
+            details[@max(a, b)].view.panoramic.focus = @min(a, b);
         }
     }
     for (details, 0..) |*detail, i| {
         const root = focusRoot(details, i);
-        detail.focus = root;
+        detail.view.panoramic.focus = root;
         if (root == i) continue;
         for (&focuses[root].windows.values, focuses[i].windows.values) |*to, from| to.* = unionWindow(to.*, from);
     }
     var top = start;
     for (focuses, details, 0..) |*focus, detail, index| {
-        if (detail.focus != index) continue;
+        if (detail.view.panoramic.focus != index) continue;
         focus.top = top;
         var height: usize = 32;
         var zoom: Zoom = .{ .numerator = 1 };
@@ -131,10 +150,11 @@ pub fn layoutFocus(details: []Detail, focuses: []Focus, sizes: std.EnumArray(val
         if (top > value.max_extent) return error.SheetTooLarge;
     }
     for (details) |*detail| {
-        const patches = focuses[detail.focus].crops;
-        for (patches.values, sizes.values, &detail.focus_marks.values, std.enums.values(value.Side)) |maybe_patch, size, *mark, side| {
+        const shown = &detail.view.panoramic;
+        const patches = focuses[shown.focus].crops;
+        for (patches.values, &shown.marks.values, std.enums.values(value.Side)) |maybe_patch, *mark, side| {
             const patch = maybe_patch orelse continue;
-            const source = rectAtSize(size, detail.region.boxOn(side)) orelse continue;
+            const source = sourceRect(detail.region.boxOn(side)) orelse continue;
             mark.* = mapMark(source, patch.from, patch.to);
         }
     }
@@ -143,7 +163,7 @@ pub fn layoutFocus(details: []Detail, focuses: []Focus, sizes: std.EnumArray(val
 
 fn focusRoot(details: []const Detail, index: usize) usize {
     var root = index;
-    while (details[root].focus != root) root = details[root].focus;
+    while (details[root].view.panoramic.focus != root) root = details[root].view.panoramic.focus;
     return root;
 }
 
