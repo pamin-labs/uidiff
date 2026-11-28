@@ -10,6 +10,7 @@ const chrome = @import("rows/chrome.zig");
 const insertion = @import("rows/insertion.zig");
 const recolour = @import("rows/recolour.zig");
 const refinement = @import("rows/refinement.zig");
+const columns = @import("columns.zig");
 const value = @import("../value.zig");
 const Image = value.Image;
 const Allocator = std.mem.Allocator;
@@ -105,7 +106,7 @@ pub fn matchBands(allocator: Allocator, before: band.Keys, after: band.Keys, lim
         for (before[edit.end..], after[edit.end..], edit.end..) |old, new, y| {
             if (old == new and anchors.isContent(old, old_background, new_background)) {
                 if (limits.sample) |sample| {
-                    if (y >= before.len - before.len / chrome.footer_zone_divisor and recolour.flatPaint(sample.pair.before, y, y + 1, 0, sample.pair.before.width)) break;
+                    if (y >= before.len - before.len / chrome.footer_zone_divisor and columns.blankBand(sample.pair.before, y, 1, .{ .left = 0, .width = sample.pair.before.width })) break;
                 }
                 if (edit.cost <= distance + 2 * edit.limit) return null;
                 break;

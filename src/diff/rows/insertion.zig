@@ -3,7 +3,6 @@
 const std = @import("std");
 const band = @import("band.zig");
 const search = @import("search.zig");
-const recolour = @import("recolour.zig");
 const columns = @import("../columns.zig");
 
 const min_panel_evidence = 4;
@@ -50,7 +49,7 @@ pub fn panelInsertion(before: band.Keys, after: band.Keys, first: usize, limits:
         const closed_panel = edge == last and columns.closesRoundedPanel(image, inset, edge, shift);
         if (!closed_panel) {
             if (length < 2 * shift or before[edge - shift - 1] != before[edge - shift] or
-                !recolour.flatPaint(image, edge - shift, edge, sample.columns.left, sample.columns.width)) continue;
+                !columns.blankBand(image, edge - shift, shift, sample.columns)) continue;
         }
         var moved_rows: usize = 0;
         for (before[first..][0..length], before[start..edge]) |old, stationary| {

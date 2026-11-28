@@ -5,7 +5,6 @@ const band = @import("band.zig");
 const value = @import("../../value.zig");
 const pixel = @import("../pixel.zig");
 const columns = @import("../columns.zig");
-const Image = value.Image;
 
 // Narrow paint can extend beyond the length of a normal row replacement.
 const narrow_paint_rows = 128;
@@ -50,8 +49,8 @@ pub fn positionalPaintBands(before: band.Keys, after: band.Keys, first: usize, l
         if (bottom == before.len) return null;
         const span = columns.spanRows(sample.pair, bounds, start, bottom);
         if (span.width == 0 or span.width > max_width) return null;
-        const old_flat = flatPaint(sample.pair.before, start, bottom, span.left, span.width);
-        const new_flat = flatPaint(sample.pair.after, start, bottom, span.left, span.width);
+        const old_flat = columns.blankBand(sample.pair.before, start, bottom - start, span);
+        const new_flat = columns.blankBand(sample.pair.after, start, bottom - start, span);
         // Two distant overpaints can overlap vertically. In that case the
         // bounding rectangle includes paint and untouched space between them.
         if (!old_flat and !new_flat and !flatChanges(sample.pair, span, start, bottom) and
@@ -78,20 +77,9 @@ pub fn localEditCost(before: band.Keys, after: band.Keys, first: usize, limits: 
     if (paint_density_denominator * replaced < paint_density_numerator * (end - first)) return null;
     if (!limits.narrow_edit) {
         const sample = limits.sample orelse return null;
-        if (!flatPaint(sample.pair.before, first, end, sample.columns.left, sample.columns.width) and !flatPaint(sample.pair.after, first, end, sample.columns.left, sample.columns.width)) return null;
+        if (!columns.blankBand(sample.pair.before, first, end - first, sample.columns) and !columns.blankBand(sample.pair.after, first, end - first, sample.columns)) return null;
     }
     return .{ .cost = 2 * replaced, .end = end, .limit = limit };
-}
-
-/// Reports whether the strip in every row is uniformly painted.
-pub fn flatPaint(image: Image, first: usize, end: usize, left: usize, width: usize) bool {
-    const first_row = image.rowBytes(first, left, width);
-    const pixel_bytes = @sizeOf(value.Pixel);
-    if (!std.mem.eql(u8, first_row[pixel_bytes..], first_row[0 .. first_row.len - pixel_bytes])) return false;
-    for (first + 1..end) |y| {
-        if (!std.mem.eql(u8, image.rowBytes(y, left, width), first_row)) return false;
-    }
-    return true;
 }
 
 fn stationaryContour(pair: value.Pair, span: columns.Span, top: usize, bottom: usize) bool {
