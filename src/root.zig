@@ -64,11 +64,13 @@ pub const max_extent = value.max_extent;
 pub const max_pixels = value.max_pixels;
 /// Default and largest per-image decode memory budget, in bytes.
 pub const max_decode_bytes = value.max_decode_bytes;
-/// Decodes PNG, JPEG, or WebP bytes within max_encoded_bytes and max_decode_bytes.
-/// Release the result with Decoded.deinit.
+/// Decodes PNG, JPEG, or WebP bytes of at most max_encoded_bytes within a
+/// decode memory budget, clamped to max_decode_bytes. Release the result
+/// with Decoded.deinit.
 pub const decode = codec.decode;
-/// Reads and decodes a PNG, JPEG, or WebP file within max_encoded_bytes and
-/// max_decode_bytes. Release the result with Decoded.deinit.
+/// Reads and decodes a PNG, JPEG, or WebP file of at most max_encoded_bytes
+/// within a decode memory budget, clamped to max_decode_bytes. Release the
+/// result with Decoded.deinit.
 pub const decodeFile = codec.decodeFile;
 /// Reads an image file without decoding it, up to max_encoded_bytes.
 /// Free the returned bytes with the supplied allocator.

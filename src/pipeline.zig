@@ -162,7 +162,7 @@ fn decodeInOrder(io: Io, allocator: Allocator, first: codec.FileInput, second: ?
     var before = try first.decode(io, allocator, cap);
     errdefer before.deinit();
     diagnostics.path = paths.after;
-    const after = if (second) |input| try input.decode(io, allocator, cap) else try codec.decodeFileCapped(io, allocator, paths.after, cap);
+    const after = if (second) |input| try input.decode(io, allocator, cap) else try codec.decodeFile(io, allocator, paths.after, cap);
     return .{ .before = before, .after = after };
 }
 
@@ -265,9 +265,9 @@ test "overlapped decodes preserve PNG and JPEG errors and results" {
     const samples = [_][]const u8{ output.written(), &jpeg.gray };
     for (samples) |old| {
         for (samples) |new| {
-            var a = try codec.decode(allocator, old);
+            var a = try codec.decode(allocator, old, value.max_decode_bytes);
             defer a.deinit();
-            var b = try codec.decode(allocator, new);
+            var b = try codec.decode(allocator, new, value.max_decode_bytes);
             defer b.deinit();
             const expected = try diff.compare(allocator, a.image, b.image, .{});
             defer expected.deinit(allocator);

@@ -28,7 +28,7 @@ fn fuzzSheet(_: void, smith: *testing.Smith) !void {
     var encoded: std.Io.Writer.Allocating = .init(testing.allocator);
     defer encoded.deinit();
     try uidiff.encodeSheet(testing.allocator, .{ .before = before, .after = after }, comparison.regions, comparison.moves, &encoded.writer);
-    var decoded = try uidiff.decode(testing.allocator, encoded.written());
+    var decoded = try uidiff.decode(testing.allocator, encoded.written(), uidiff.max_decode_bytes);
     defer decoded.deinit();
     try testing.expect(decoded.image.valid());
 }
