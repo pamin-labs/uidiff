@@ -44,3 +44,7 @@ pub const shift_format = "{d} px";
 pub const heading_format = "{d} {s}";
 /// Prints region and move counts with an optional direction.
 pub const moved_heading_format = "{d} {s}, {d} {s} " ++ moved ++ "{s}";
+
+test {
+    std.testing.refAllDecls(@This());
+}

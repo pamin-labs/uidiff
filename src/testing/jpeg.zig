@@ -17,3 +17,7 @@ pub fn frame(kind: Frame) [124]u8 {
         [_]u8{ 0xff, @backingInt(kind) } ++ "\x00\x0b\x08\x00\x01\x00\x01\x01\x01\x11\x00".* ++
         "\xff\xc4\x00\x26\x00\x01".* ++ huffman_tail ++ "\x10\x01".* ++ huffman_tail;
 }
+
+test {
+    std.testing.refAllDecls(@This());
+}

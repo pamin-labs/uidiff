@@ -17,3 +17,7 @@ pub fn image(smith: *std.testing.Smith, storage: *Storage) uidiff.Image {
     smith.bytes(std.mem.sliceAsBytes(data));
     return .{ .width = width, .height = height, .pixels = data };
 }
+
+test {
+    std.testing.refAllDecls(@This());
+}

@@ -342,3 +342,7 @@ test "a wide close-up keeps a neighbouring partial line out of its context" {
     try std.testing.expect(patch.from.bottom() <= 113);
     try std.testing.expect(patch.to.width <= max_crop_width);
 }
+
+test {
+    std.testing.refAllDecls(@This());
+}

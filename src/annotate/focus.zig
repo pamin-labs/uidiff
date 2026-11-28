@@ -167,3 +167,7 @@ test {
     try std.testing.expectEqual(@as(usize, 130), tall.y);
     try std.testing.expectEqual(@as(usize, 260), tall.height);
 }
+
+test {
+    std.testing.refAllDecls(@This());
+}

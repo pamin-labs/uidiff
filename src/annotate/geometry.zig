@@ -222,3 +222,7 @@ test "stacked overviews fit both axes at a single scale" {
         }
     }
 }
+
+test {
+    std.testing.refAllDecls(@This());
+}
