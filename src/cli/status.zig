@@ -1,9 +1,8 @@
-//! The command's exit statuses, shared by the single run and the batch.
+//! The statuses of a comparison and of the process.
 const std = @import("std");
 const uidiff = @import("uidiff");
 
-/// A comparison's status: the process exit status of a single run, and each
-/// batch line's `status` field.
+/// A comparison's status, each output line's `status` field.
 pub const Status = enum(u8) {
     unchanged = 0,
     changed = 1,
@@ -14,7 +13,7 @@ pub const Status = enum(u8) {
         return if (result.regions.len == 0) .unchanged else .changed;
     }
 
-    /// The more severe of two statuses, as a batch exits with.
+    /// The more severe of two statuses; the process exits with the worst.
     pub fn worst(self: Status, other: Status) Status {
         return if (@backingInt(other) > @backingInt(self)) other else self;
     }

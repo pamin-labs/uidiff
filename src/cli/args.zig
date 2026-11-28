@@ -1,12 +1,12 @@
 //! Owns the CLI argument syntax.
 const std = @import("std");
 const uidiff = @import("uidiff");
+const Request = @import("request.zig").Request;
+const Allocator = std.mem.Allocator;
 
 const Flag = enum {
     scale,
-    json,
     annotate,
-    batch,
     help,
     version,
 
@@ -17,7 +17,7 @@ const Flag = enum {
     // A plain scan over the names: std.meta.stringToEnum's lookup table
     // measured larger on Linux ReleaseSafe.
     noinline fn fromArgument(arg: []const u8) ?Flag {
-        if (!std.mem.startsWith(u8, arg, "--")) return null;
+        if (!isFlag(arg)) return null;
         for (std.enums.values(Flag), std.meta.fieldNames(Flag)) |flag, name| {
             if (std.mem.eql(u8, name, arg[2..])) return flag;
         }
@@ -25,22 +25,20 @@ const Flag = enum {
     }
 };
 
-/// What the command prints on standard output.
-pub const Output = enum { count, json };
-
-/// What a flag used on its own asks for.
-pub const Standalone = enum { batch, help, version };
-
-/// Parsed paths and output options. Path slices borrow the arguments.
-pub const Command = struct {
-    paths: uidiff.Paths,
-    options: uidiff.FileCompareOptions = .{},
-    output: Output = .count,
+/// What the arguments ask for.
+pub const Command = union(enum) {
+    /// The comparisons named on the command line, in order, at least one.
+    /// Slices borrow the arguments.
+    compare: []const Request,
+    /// No arguments: requests come as JSON lines on standard input.
+    stdin,
+    help,
+    version,
 };
 
 /// The offending argument and why it could not be used.
 pub const Issue = struct {
-    /// Empty when no argument is to blame (no paths were given).
+    /// Empty when no argument is to blame.
     argument: []const u8,
     reason: Reason,
 
@@ -77,55 +75,55 @@ pub const usage = @embedFile("usage.txt");
 
 const max_fuzz_args = 8;
 const max_fuzz_arg_bytes = 8;
-const fuzz_words = [_][:0]const u8{ Flag.json.spelling(), Flag.scale.spelling(), Flag.annotate.spelling(), "2", "1.5", "0x10", "1_0", "out.png" };
+const fuzz_words = [_][:0]const u8{ Flag.scale.spelling(), Flag.annotate.spelling(), Flag.help.spelling(), "2", "1.5", "0x10", "1_0", "out.png" };
 
-/// Recognises a standalone flag with no other arguments. It compares the
-/// spellings directly: going through `Flag.fromArgument` here measured
-/// larger on Linux ReleaseSafe.
-pub fn standalone(args: []const [:0]const u8) ?Standalone {
-    if (args.len != 2) return null;
-    if (std.mem.eql(u8, args[1], Flag.batch.spelling())) return .batch;
-    if (std.mem.eql(u8, args[1], Flag.help.spelling())) return .help;
-    if (std.mem.eql(u8, args[1], Flag.version.spelling())) return .version;
-    return null;
-}
-
-/// Parses paths and flags from process arguments.
-pub fn parse(args: []const [:0]const u8) ParseResult {
-    if (args.len == 0) return invalid("", .missing_paths);
-    for (args[1..@min(3, args.len)]) |arg| {
-        if (!std.mem.startsWith(u8, arg, "--")) continue;
-        const reason: Issue.Reason = switch (Flag.fromArgument(arg) orelse return invalid(arg, .unknown_flag)) {
-            .batch, .help, .version => .standalone_only,
-            .scale, .json, .annotate => .flag_before_paths,
-        };
-        return invalid(arg, reason);
+/// Parses process arguments into a command. Every group is checked before
+/// any is returned, so a usage issue runs no comparison. The request list
+/// lives in arena.
+pub fn parse(arena: Allocator, args: []const [:0]const u8) Allocator.Error!ParseResult {
+    if (args.len <= 1) return .{ .command = .stdin };
+    if (args.len == 2) {
+        // A plain comparison of the spellings: going through Flag.fromArgument
+        // here measured larger on Linux ReleaseSafe.
+        if (std.mem.eql(u8, args[1], Flag.help.spelling())) return .{ .command = .help };
+        if (std.mem.eql(u8, args[1], Flag.version.spelling())) return .{ .command = .version };
     }
-    if (args.len < 3) return invalid(if (args.len == 2) args[1] else "", .missing_paths);
-    var parsed: Command = .{ .paths = .{ .before = args[1], .after = args[2] } };
+    // Each group takes at least its two paths.
+    const list = try arena.alloc(Request, (args.len - 1) / 2);
+    var count: usize = 0;
     var seen: std.EnumSet(Flag) = .empty;
-    var i: usize = 3;
+    var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
+        if (!isFlag(arg)) {
+            const after = if (i + 1 < args.len) args[i + 1] else return invalid(arg, .missing_paths);
+            if (isFlag(after)) return refuseFlag(after, .flag_before_paths);
+            list[count] = .{ .paths = .{ .before = arg, .after = after } };
+            count += 1;
+            seen = .empty;
+            i += 1;
+            continue;
+        }
+        if (count == 0) return refuseFlag(arg, .flag_before_paths);
+        const group = &list[count - 1];
         const flag = Flag.fromArgument(arg) orelse return invalid(arg, .unknown_flag);
         // A standalone flag is never inserted, so it falls through to its refusal.
         if (seen.contains(flag)) return invalid(arg, .repeated_flag);
         switch (flag) {
-            .batch, .help, .version => return invalid(arg, .standalone_only),
-            .json => parsed.output = .json,
+            .help, .version => return invalid(arg, .standalone_only),
             .scale => {
                 i += 1;
                 const text = flagValue(args, i) orelse return invalid(arg, .missing_value);
-                parsed.options.compare.scale = uidiff.Scale.parse(text) orelse return invalid(text, .invalid_scale);
+                group.options.compare.scale = uidiff.Scale.parse(text) orelse return invalid(text, .invalid_scale);
             },
             .annotate => {
                 i += 1;
-                parsed.paths.sheet = flagValue(args, i) orelse return invalid(arg, .missing_value);
+                group.paths.sheet = flagValue(args, i) orelse return invalid(arg, .missing_value);
             },
         }
         seen.insert(flag);
     }
-    return .{ .command = parsed };
+    return .{ .command = .{ .compare = list[0..count] } };
 }
 
 /// Parses arguments the fuzzer builds; the CLI's one fuzz target calls it.
@@ -142,18 +140,42 @@ pub fn fuzzParse(_: void, smith: *std.testing.Smith) !void {
             arg.* = buffer[0..len :0];
         }
     }
-    const command = switch (parse(args[0..count])) {
-        .command => |command| command,
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const list = switch (try parse(arena.allocator(), args[0..count])) {
+        .command => |command| switch (command) {
+            .compare => |list| list,
+            .stdin, .help, .version => return,
+        },
         .issue => return,
     };
-    try std.testing.expectEqualStrings(args[1], command.paths.before);
-    try std.testing.expectEqualStrings(args[2], command.paths.after);
-    try std.testing.expect(command.options.compare.scale.isValid());
+    try std.testing.expect(list.len != 0);
+    try std.testing.expectEqualStrings(args[1], list[0].paths.before);
+    try std.testing.expectEqualStrings(args[2], list[0].paths.after);
+    for (list) |item| {
+        try std.testing.expect(!isFlag(item.paths.before));
+        try std.testing.expect(!isFlag(item.paths.after));
+        try std.testing.expect(item.options.compare.scale.isValid());
+    }
+}
+
+fn isFlag(arg: []const u8) bool {
+    return std.mem.startsWith(u8, arg, "--");
+}
+
+/// Refuses a flag found where a path belongs: an unknown or standalone flag
+/// says so, any other is out of place.
+fn refuseFlag(arg: []const u8, misplaced: Issue.Reason) ParseResult {
+    const reason: Issue.Reason = switch (Flag.fromArgument(arg) orelse return invalid(arg, .unknown_flag)) {
+        .help, .version => .standalone_only,
+        .scale, .annotate => misplaced,
+    };
+    return invalid(arg, reason);
 }
 
 /// The value after a valued flag at `index`, or null when it is missing.
 fn flagValue(args: []const [:0]const u8, index: usize) ?[:0]const u8 {
-    if (index == args.len or args[index].len == 0 or std.mem.startsWith(u8, args[index], "--")) return null;
+    if (index == args.len or args[index].len == 0 or isFlag(args[index])) return null;
     return args[index];
 }
 
@@ -161,51 +183,67 @@ fn invalid(arg: []const u8, reason: Issue.Reason) ParseResult {
     return .{ .issue = .{ .argument = arg, .reason = reason } };
 }
 
+fn expectIssue(argv: []const [:0]const u8, reason: Issue.Reason, argument: []const u8) !void {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try parse(arena.allocator(), argv);
+    try std.testing.expect(result == .issue);
+    try std.testing.expectEqual(reason, result.issue.reason);
+    try std.testing.expectEqualStrings(argument, result.issue.argument);
+}
+
 test "usage agrees with every flag spelling" {
     const expected = comptime std.fmt.comptimePrint(
-        "Usage: uidiff <before> <after> [{s} N] [{s}] [{s} <out.png>]\n       uidiff {s} < requests.jsonl\n       uidiff {s}\n       uidiff {s}\n",
-        .{ Flag.scale.spelling(), Flag.json.spelling(), Flag.annotate.spelling(), Flag.batch.spelling(), Flag.help.spelling(), Flag.version.spelling() },
+        "Usage: uidiff <before> <after> [{s} N] [{s} <out.png>] [<before> <after> ...]\n       uidiff < requests.jsonl\n       uidiff {s}\n       uidiff {s}\n",
+        .{ Flag.scale.spelling(), Flag.annotate.spelling(), Flag.help.spelling(), Flag.version.spelling() },
     );
     try std.testing.expectEqualStrings(expected, usage);
 }
 
-test "argument order preserves scale and rejects repeated flags" {
-    const result = parse(&.{ "uidiff", "before", "after", "--json", "--scale", "2", "--annotate", "sheet.png" });
-    try std.testing.expect(result == .command);
-    const args = result.command;
-    try std.testing.expectEqual(@as(f64, 2), args.options.compare.scale.factor);
-    try std.testing.expect(args.output == .json);
-    try std.testing.expectEqualStrings("sheet.png", args.paths.sheet.?);
-    const repeated = parse(&.{ "uidiff", "before", "after", "--annotate", "a.png", "--annotate", "b.png" });
-    try std.testing.expect(repeated == .issue);
-    try std.testing.expectEqual(.repeated_flag, repeated.issue.reason);
-    try std.testing.expectEqualStrings("--annotate", repeated.issue.argument);
-    for ([_][]const [:0]const u8{
-        &.{ "uidiff", "before", "after", "--annotate" },
-        &.{ "uidiff", "before", "after", "--annotate", "--json" },
-    }) |argv| {
-        const missing = parse(argv);
-        try std.testing.expect(missing == .issue);
-        try std.testing.expectEqual(.missing_value, missing.issue.reason);
-        try std.testing.expectEqualStrings("--annotate", missing.issue.argument);
+test "options apply to the group they follow" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try parse(arena.allocator(), &.{ "uidiff", "a1", "b1", "--annotate", "s1.png", "a2", "b2", "--scale", "3", "--annotate", "s2.png", "a3", "b3" });
+    const list = result.command.compare;
+    try std.testing.expectEqual(@as(usize, 3), list.len);
+    const defaults: Request = .{ .paths = .{ .before = "", .after = "" } };
+    try std.testing.expectEqualStrings("a1", list[0].paths.before);
+    try std.testing.expectEqualStrings("b1", list[0].paths.after);
+    try std.testing.expectEqualStrings("s1.png", list[0].paths.sheet.?);
+    try std.testing.expectEqual(defaults.options.compare.scale.factor, list[0].options.compare.scale.factor);
+    try std.testing.expectEqualStrings("s2.png", list[1].paths.sheet.?);
+    try std.testing.expectEqual(@as(f64, 3), list[1].options.compare.scale.factor);
+    try std.testing.expectEqualStrings("a3", list[2].paths.before);
+    try std.testing.expectEqual(@as(?[]const u8, null), list[2].paths.sheet);
+    try std.testing.expectEqual(defaults.options.compare.scale.factor, list[2].options.compare.scale.factor);
+    for ([_][]const [:0]const u8{ &.{"uidiff"}, &.{} }) |argv| {
+        try std.testing.expect((try parse(arena.allocator(), argv)).command == .stdin);
     }
-    const bare = parse(&.{"uidiff"});
-    try std.testing.expect(bare == .issue);
-    try std.testing.expectEqual(.missing_paths, bare.issue.reason);
-    try std.testing.expectEqualStrings("", bare.issue.argument);
+    try std.testing.expect((try parse(arena.allocator(), &.{ "uidiff", "--help" })).command == .help);
+    try std.testing.expect((try parse(arena.allocator(), &.{ "uidiff", "--version" })).command == .version);
+}
+
+test "malformed groups are usage issues" {
+    try expectIssue(&.{ "uidiff", "a", "b", "--annotate", "x.png", "--annotate", "y.png" }, .repeated_flag, "--annotate");
+    try expectIssue(&.{ "uidiff", "a", "b", "--annotate" }, .missing_value, "--annotate");
+    try expectIssue(&.{ "uidiff", "a", "b", "--annotate", "--scale" }, .missing_value, "--annotate");
+    try expectIssue(&.{ "uidiff", "a" }, .missing_paths, "a");
+    try expectIssue(&.{ "uidiff", "a", "b", "c" }, .missing_paths, "c");
+    try expectIssue(&.{ "uidiff", "--scale", "2", "a", "b" }, .flag_before_paths, "--scale");
+    try expectIssue(&.{ "uidiff", "a", "b", "c", "--scale", "2", "d" }, .flag_before_paths, "--scale");
+    try expectIssue(&.{ "uidiff", "a", "--json" }, .unknown_flag, "--json");
+    try expectIssue(&.{ "uidiff", "a", "b", "--batch" }, .unknown_flag, "--batch");
+    try expectIssue(&.{ "uidiff", "--help", "x" }, .standalone_only, "--help");
+    try expectIssue(&.{ "uidiff", "a", "b", "--version" }, .standalone_only, "--version");
 }
 
 test "a scale that is not a plain decimal is a usage error" {
-    const valid = parse(&.{ "uidiff", "a", "b", "--scale", "1.5" });
-    try std.testing.expect(valid == .command);
-    try std.testing.expectEqual(@as(f64, 1.5), valid.command.options.compare.scale.factor);
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const valid = try parse(arena.allocator(), &.{ "uidiff", "a", "b", "--scale", "1.5" });
+    try std.testing.expectEqual(@as(f64, 1.5), valid.command.compare[0].options.compare.scale.factor);
     const huge: [400:0]u8 = @splat('9');
-    for ([_][:0]const u8{ "1e2", "nan", "-1", &huge }) |text| {
-        const result = parse(&.{ "uidiff", "a", "b", "--scale", text });
-        try std.testing.expect(result == .issue);
-        try std.testing.expectEqual(.invalid_scale, result.issue.reason);
-        try std.testing.expectEqualStrings(text, result.issue.argument);
-    }
+    for ([_][:0]const u8{ "1e2", "nan", "-1", &huge }) |text| try expectIssue(&.{ "uidiff", "a", "b", "--scale", text }, .invalid_scale, text);
 }
 
 test {

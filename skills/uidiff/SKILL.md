@@ -48,15 +48,17 @@ your change:
 ## 3. Run it
 
 ```sh
-uidiff before.png after.png --scale 2 --json --annotate sheet.png > report.json
+uidiff before.png after.png --scale 2 --annotate sheet.png > result.json
 ```
 
 Pass captures as files. `-` does not read stdin, and input pipes are unsupported.
-For many pairs, `uidiff --batch` reads one JSON request per stdin line
-(`{"before":"a.png","after":"b.png","scale":"2","annotate":"sheet.png"}`) and
-prints one line per request, `{"status":N,"report":{...}}` or
-`{"status":2,"error":"FileNotFound","path":"a.png"}`, faster than one process
-per pair.
+It prints one JSON line, `{"status":1,"report":{...}}`, or
+`{"status":2,"error":"FileNotFound","path":"a.png"}` when the comparison fails.
+For many pairs, name them all in one command, each pair followed by its own
+options (`uidiff a1.png b1.png --annotate s1.png a2.png b2.png --scale 3`), or
+run `uidiff` with no arguments and send one JSON request per stdin line
+(`{"before":"a.png","after":"b.png","scale":"2","annotate":"sheet.png"}`).
+Either way each pair gets one line, in order, faster than one process per pair.
 A symlink at the sheet path is replaced by the PNG itself, unless it points to
 an input, which raises `SheetIsInput`.
 
@@ -70,7 +72,7 @@ fine; coordinates are always in device pixels.
 | --- | --- |
 | `0` | No change regions. `moves` may still list shifted content. |
 | `1` | Change regions found: read the report and look at the sheet. |
-| `2` | Error. Read stderr for the failing path or argument. `SheetIsInput` means the sheet path names either input, including through a link. |
+| `2` | Error. The line's `error` and `path` name the failure; a usage error is on stderr instead. `SheetIsInput` means the sheet path names either input, including through a link. |
 
 Exit 1 is a result, not a failure. In scripts that stop on errors, capture
 it with `status=0; uidiff ... || status=$?`, then fail on `2`, and on `1`
@@ -84,7 +86,7 @@ changed, green for inserted, red for removed. The gutter between them shows
 which rows stayed and which shifted, with the offset. Below, each numbered
 change has a close-up of both sides.
 
-`report.json` (version 1) carries the same numbers. This excerpt shows two regions and one move.
+The line's `report` (version 1) carries the same numbers. This excerpt shows two regions and one move.
 
 ```json
 { "version": 1,

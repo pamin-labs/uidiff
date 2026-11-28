@@ -1,6 +1,7 @@
-//! The batch's allocator: keeps freed large blocks for the next comparison,
-//! so one batch process stays near the memory of a single run instead of
-//! growing as each pair's images and scratch land in fresh pages.
+//! The allocator a run of several requests compares through: keeps freed
+//! large blocks for the next comparison, so the process stays near the
+//! memory of one comparison instead of growing as each pair's images and
+//! scratch land in fresh pages.
 const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;

@@ -116,7 +116,7 @@ def bench_lto():
         for name, before, after, scale in workloads:
             for output in ("JSON", "JSON + sheet"):
                 sheet = root / "sheet.png" if output == "JSON + sheet" else None
-                args = [before, after, "--scale", scale, "--json"]
+                args = [before, after, "--scale", scale]
                 outputs = {}
                 commands = {}
                 for arm, binary in binaries.items():
