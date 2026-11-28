@@ -54,6 +54,8 @@ pub fn collect(allocator: Allocator, collector: *Collector, moves: *std.ArrayLis
     const before = scope.pair.before;
     const after = scope.pair.after;
     const row_count = before.height + after.height;
+    // alignSpan writes each row key and filtered key before reading it, and the
+    // band builder writes each band it returns.
     const storage = try value.allocUnfilled(u64, allocator, 2 * row_count);
     defer value.freeUnfilled(u64, allocator, storage);
     const keys = storage[0..row_count];
@@ -67,6 +69,7 @@ pub fn collect(allocator: Allocator, collector: *Collector, moves: *std.ArrayLis
     var aligned = try alignSpan(allocator, scope, scroll_limit_px, local_limit_px, keys, bands, filtered, &buffers.alignment);
     const ambiguous = if (aligned) |whole| mixedShifts(whole) else true;
     if (scope.span.width > columns.min_gutter and (ambiguous or hasFlatEdge(scope))) {
+        // columns.partition sets every column first.
         const stationary = try value.allocUnfilled(bool, allocator, scope.span.width);
         defer value.freeUnfilled(bool, allocator, stationary);
         var parts = columns.partition(scope.pair, scope.span, stationary);

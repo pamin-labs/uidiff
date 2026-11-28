@@ -91,6 +91,8 @@ fn writeSerial(allocator: Allocator, size: value.Size, source: anytype, output: 
     const row_bytes = size.width * @sizeOf(value.Pixel);
     const staged_rows: usize = if (@TypeOf(source).staged) strip_rows + 1 else 0;
     const buffer_bytes = zlib.chunk_bytes + row_bytes + staged_rows * row_bytes;
+    // filterRow writes each filtered row, staging is written row by row before
+    // it is read, and zlib reads only output it has written.
     const words = try value.allocUnfilled(u32, allocator, unfilledWords(buffer_bytes));
     defer value.freeUnfilled(u32, allocator, words);
     const buffer = std.mem.sliceAsBytes(words)[0..buffer_bytes];
