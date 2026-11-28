@@ -13,8 +13,6 @@ const Io = std.Io;
 const Writer = Io.Writer;
 const Image = value.Image;
 
-const Filtered = struct { method: png_format.Filter, bytes: []const u8 };
-
 /// Allocation, invalid image or output failures while encoding.
 pub const EncodeError = zlib.CompressError || Image.Invalid;
 
@@ -86,12 +84,12 @@ pub fn writeRowsWithIo(io: ?Io, allocator: Allocator, size: value.Size, source: 
         // One worker gains nothing from handing each strip to a thread.
         try writeStrips(if (workers > 1) io else null, allocator, size, source, output, rgb_only, encoded_row_bytes, workers);
     } else {
-        try writeSerial(allocator, size, source, output, rgb_only);
+        try writeSerial(allocator, size, source, output, rgb_only, encoded_row_bytes);
     }
     try zlib.chunk(output, png_format.iend_type, "");
 }
 
-fn writeSerial(allocator: Allocator, size: value.Size, source: anytype, output: *Writer, rgb_only: bool) EncodeError!void {
+fn writeSerial(allocator: Allocator, size: value.Size, source: anytype, output: *Writer, rgb_only: bool, encoded_row_bytes: usize) EncodeError!void {
     const row_bytes = size.width * @sizeOf(value.Pixel);
     const staged_rows: usize = if (@TypeOf(source).staged) strip_rows + 1 else 0;
     const buffer_bytes = zlib.chunk_bytes + row_bytes + staged_rows * row_bytes;
@@ -121,9 +119,10 @@ fn writeSerial(allocator: Allocator, size: value.Size, source: anytype, output: 
             break :staged staging[(y % staged_rows) * size.width ..][0..size.width];
         };
         const row = std.mem.sliceAsBytes(pixels);
-        const encoded = filterRow(row, above, filtered, rgb_only);
-        try compress.write(&.{@backingInt(encoded.method)});
-        try compress.write(encoded.bytes);
+        const encoded = filtered[0 .. encoded_row_bytes - 1];
+        const method = filterRow(row, above, encoded, filtered, rgb_only);
+        try compress.write(&.{@backingInt(method)});
+        try compress.write(encoded);
         above = row;
     }
     try compress.finish();
@@ -190,10 +189,8 @@ fn writeStrips(io: ?Io, allocator: Allocator, size: value.Size, source: anytype,
             // the copy keeps it readable as the predictor's row above.
             if (@TypeOf(source).staged and produced.ptr != scratch.ptr) @memcpy(scratch, produced);
             const row = std.mem.sliceAsBytes(if (@TypeOf(source).staged) scratch else produced);
-            const encoded = filterRow(row, above, filtered, rgb_only);
             const encoded_row = input[(y - first) * encoded_row_bytes ..][0..encoded_row_bytes];
-            encoded_row[0] = @backingInt(encoded.method);
-            @memcpy(encoded_row[1..], encoded.bytes);
+            encoded_row[0] = @backingInt(filterRow(row, above, encoded_row[1..], filtered, rgb_only));
             above = row;
         }
         const out = workspace[zlib.history_bytes + strip_bytes ..];
@@ -220,38 +217,37 @@ fn unfilledWords(bytes: usize) usize {
     return std.math.divCeil(usize, bytes, @sizeOf(u32)) catch unreachable;
 }
 
-fn filterRow(row: []const u8, above: []const u8, filtered: []u8, rgb_only: bool) Filtered {
+/// Writes row's filtered bytes, 3 or 4 per pixel, into out and returns the
+/// filter used. Paeth works in scratch, which holds 4 bytes per pixel and
+/// may be out itself.
+fn filterRow(row: []const u8, above: []const u8, out: []u8, scratch: []u8, rgb_only: bool) png_format.Filter {
     const pixel = @sizeOf(value.Pixel);
-    if (above.len == 0) return .{
-        .method = .up,
-        .bytes = if (rgb_only) packRgb(false, filtered, row, &.{}) else row,
-    };
+    if (above.len == 0) {
+        if (rgb_only) packRgb(false, out, row, &.{}) else @memcpy(out, row);
+        return .up;
+    }
     if (rgb_only and std.mem.eql(u8, row, above)) {
-        const zeros = filtered[0 .. row.len / pixel * 3];
-        @memset(zeros, 0);
-        return .{ .method = .up, .bytes = zeros };
+        @memset(out, 0);
+        return .up;
     }
     const method = if (rgb_only) preferredFilter(row, above) else .up;
-    const bytes = switch (method) {
-        .sub => sub: {
-            filtered[0..3].* = row[0..3].*;
-            const encoded = packRgb(true, filtered[3..], row[pixel..], row[0 .. row.len - pixel]);
-            break :sub filtered[0 .. 3 + encoded.len];
+    switch (method) {
+        .sub => {
+            out[0..3].* = row[0..3].*;
+            packRgb(true, out[3..], row[pixel..], row[0 .. row.len - pixel]);
         },
-        .paeth => paeth: {
-            filterPaeth(filtered, row, above);
-            break :paeth packRgb(false, filtered, filtered, &.{});
+        .paeth => {
+            filterPaeth(scratch, row, above);
+            packRgb(false, out, scratch, &.{});
         },
-        else => up: {
-            if (rgb_only) break :up packRgb(true, filtered, row, above);
-            filter(filtered, row, above);
-            break :up filtered;
-        },
-    };
-    return .{ .method = method, .bytes = bytes };
+        else => if (rgb_only) {
+            packRgb(true, out, row, above);
+        } else filter(out, row, above),
+    }
+    return method;
 }
 
-fn packRgb(comptime subtract: bool, bytes: []u8, current: []const u8, predictor: []const u8) []const u8 {
+fn packRgb(comptime subtract: bool, bytes: []u8, current: []const u8, predictor: []const u8) void {
     const lanes = simd.scanline_bytes;
     const Blocks = @Vector(lanes, u8);
     const indices = [_]i32{ 0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, 15, 15, 15, 15 };
@@ -259,10 +255,10 @@ fn packRgb(comptime subtract: bool, bytes: []u8, current: []const u8, predictor:
     comptime std.debug.assert(@typeInfo(@TypeOf(picks)).vector.len == lanes);
     var i: usize = 0;
     var out: usize = 0;
-    while (i + lanes <= current.len) : (i += lanes) {
+    while (i + lanes <= current.len and out + lanes <= bytes.len) : (i += lanes) {
         // A 12-byte store is split into scalar moves. The whole-vector store
-        // stays within the supplied RGBA-sized buffer, and its four surplus
-        // bytes are overwritten by the next block or excluded from the result.
+        // stays within bytes, and its four surplus bytes are overwritten by
+        // the next block or the scalar tail.
         var block = @as(*align(1) const Blocks, @ptrCast(current[i..][0..lanes])).*;
         if (subtract) block -%= @as(*align(1) const Blocks, @ptrCast(predictor[i..][0..lanes])).*;
         @as(*align(1) Blocks, @ptrCast(bytes[out..][0..lanes])).* = @shuffle(u8, block, undefined, picks);
@@ -273,7 +269,7 @@ fn packRgb(comptime subtract: bool, bytes: []u8, current: []const u8, predictor:
         bytes[out..][0..3].* = if (subtract) block -% @as(@Vector(3, u8), predictor[i..][0..3].*) else block;
         out += 3;
     }
-    return bytes[0..out];
+    std.debug.assert(out == bytes.len);
 }
 
 fn filter(out: []u8, current: []const u8, predictor: []const u8) void {
