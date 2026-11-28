@@ -55,13 +55,13 @@ def check_launcher(launcher, binary):
     fixtures = ROOT / "tests/fixtures/images"
     for case, expected_status in (("identical", 0), ("changed", 1)):
         pair = fixtures / case
-        args = [str(pair / "before.png"), str(pair / "after.png"), "--json"]
+        args = [str(pair / "before.png"), str(pair / "after.png")]
         direct = subprocess.run([binary, *args], capture_output=True, text=True)
         result = subprocess.run(["node", launcher, *args], capture_output=True, text=True)
         assert direct.returncode == result.returncode == expected_status, result.stderr
         assert json.loads(result.stdout) == json.loads(direct.stdout)
 
-    result = subprocess.run(["node", launcher], capture_output=True, text=True)
+    result = subprocess.run(["node", launcher, "--unknown"], capture_output=True, text=True)
     assert result.returncode == 2, result.stderr
 
 

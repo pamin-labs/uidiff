@@ -31,7 +31,7 @@ irm https://uidiff.paminlabs.com/install.ps1 | iex
 
 - **Checking an AI agent's UI work.** In vibe coding the screen changes every few minutes. Capture before and after, and the sheet shows what the agent really changed, including edits it did not mention.
 - **Reviewing a pull request.** Attach the sheet to the PR so reviewers see each visual change, numbered, instead of comparing two screenshots by eye.
-- **Visual regression tests.** Fail only when something actually changed, not when content above it shifted. The exit code and the `--json` report plug into CI.
+- **Visual regression tests.** Fail only when something actually changed, not when content above it shifted. The exit code and the JSON report plug into CI.
 - **Long pages and feeds.** Inserted or removed content moves everything below it; uidiff reports that as one shifted block with its offset, not as a page of differences.
 - **Any platform with screenshots.** It reads only the two images, so the same command works for websites, iOS and Android apps, desktop apps, games, canvas and mini programs.
 
@@ -54,7 +54,7 @@ irm https://uidiff.paminlabs.com/install.ps1 | iex
 
 ### The report
 
-`--json` prints one object for scripts, CI and agents. This is the report for the comparison at the top of this page:
+Each comparison prints one JSON line for scripts, CI and agents: `{"status":1,"report":{...}}`. This is the report for the comparison at the top of this page, spread over several lines here:
 
 ```json
 {
@@ -95,40 +95,54 @@ Boxes are in device pixels. A region has a box on each side where it exists. A m
 ## Usage
 
 ```text
-uidiff <before> <after> [--scale N] [--json] [--annotate <out.png>]
-uidiff --batch < requests.jsonl
+uidiff <before> <after> [--scale N] [--annotate <out.png>] [<before> <after> ...]
+uidiff < requests.jsonl
 uidiff --help
 uidiff --version
+```
+
+One command runs one or more comparisons. Two paths start a comparison, and the options after them apply to that comparison only:
+
+```sh
+uidiff a1.png b1.png --annotate s1.png a2.png b2.png --scale 3 --annotate s2.png
 ```
 
 | Argument | Meaning |
 | --- | --- |
 | `<before>`, `<after>` | The two captures: PNG, JPEG or WebP. Different heights are fine; a different width is reported as added or removed columns. |
 | `--scale N` | Device pixels per logical pixel (CSS px, points or dp), as a plain decimal such as `2` or `1.5`, with at most 15 digits after leading zeros and 22 decimal places after trailing zeros. Default `1`. It sets padding and merge distances in logical pixels; boxes stay in device pixels. |
-| `--json` | Print the report as one JSON object instead of the region count. |
 | `--annotate <out.png>` | Also write the sheet to this PNG. The file is replaced only once the sheet is complete. Large sheets are compressed on several cores; for a given uidiff version the PNG bytes are the same on every machine. |
-| `--batch` | Run many comparisons in one process, reading JSON Lines on stdin. See [Batch](#batch). |
 | `--help` | Print usage and exit 0. |
 | `--version` | Print the installed version and exit 0. |
 
-| Exit code | Meaning |
-| --- | --- |
-| `0` | No change regions detected. |
-| `1` | Change regions found. |
-| `2` | A comparison or usage error, reported on stderr. `SheetIsInput` means the sheet path names either input, including through a link. |
-
-### Batch
-
-`--batch` takes no other arguments. Each line of stdin is one JSON object: `before` and `after` are paths, `scale` is optional and uses the `--scale` grammar as a string such as `"2"`, and `annotate` optionally names a sheet to write. Other fields are ignored. Each input line gets one output line on stdout, in order and flushed as it is written:
+Each comparison prints one line on stdout, in order and flushed as it is written:
 
 ```text
 {"status":1,"report":{"version":1,"regions":[...],"width":1170,"height":2532,"moves":[]}}
 {"status":2,"error":"FileNotFound","path":"missing.png"}
 ```
 
-`status` is the exit code a single run would give. `report` is exactly the report `--json` prints. A failed comparison gives its error name and, when a file caused it, `path`, and the batch moves on. A line that is not a valid request gives `InvalidInput`: that includes a blank line and a field given twice, while `null` counts as an absent field. An invalid `scale` gives `InvalidScale`, and a line longer than the batch line limit gives `LineTooLong`; requests are a few hundred bytes, far below it. The batch exits with the highest status it printed. Sheets are byte-identical to a single run's. One process for many pairs skips the start-up each run pays.
+`status` is `0` for no change regions, `1` when regions were found and `2` when the comparison failed. A failed comparison gives its error name and, when a file caused it, `path`, and the next comparison still runs. `SheetIsInput` means the sheet path names either input, including through a link.
 
-Pass captures as files. `-` does not read stdin, and input pipes are unsupported. A symlink at the sheet path is replaced by the PNG itself, unless it points to an input, which raises `SheetIsInput`.
+| Exit code | Meaning |
+| --- | --- |
+| `0` | No comparison found change regions. |
+| `1` | At least one comparison found change regions, and none failed. |
+| `2` | A comparison failed, the arguments could not be used, or reading stdin or writing stdout failed. A usage error prints the reason and usage on stderr and runs no comparison; a failed stream is named on stderr. |
+
+### Requests on stdin
+
+With no arguments, uidiff reads requests from stdin, one JSON object per line: `before` and `after` are paths, `scale` is optional and uses the `--scale` grammar as a string such as `"2"`, and `annotate` optionally names a sheet to write. Other fields are ignored. Each request gets one output line, as above. When stdin is a terminal, uidiff prints usage on stderr and exits 2 instead.
+
+A request line:
+
+```text
+{"before":"a.png","after":"b.png","scale":"2","annotate":"sheet.png"}
+```
+
+A line that is not a valid request gives `InvalidInput`: that includes a blank line and a field given twice, while `null` counts as an absent field. An invalid `scale` gives `InvalidScale`, and a line longer than the request line limit gives `LineTooLong`; requests are a few hundred bytes, far below it. One process for many pairs skips the start-up each run pays, whether the pairs come as arguments or on stdin.
+
+Pass captures as files. `-` does not read stdin, and a capture cannot come through a pipe. A symlink at the sheet path is replaced by the PNG itself, unless it points to an input, which raises `SheetIsInput`.
 
 Connected changes smaller than four pixels are treated as noise. If the smaller capture has at most 1024 pixels, single-pixel regions can be reported.
 

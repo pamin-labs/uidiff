@@ -29,7 +29,7 @@ change regions and, for 56 moved cases, their vertical offsets.
 
 The full comparison corpus and raw results are outside this repository.
 For a local CLI measurement, build with `zig build -Doptimize=safe` and run
-`zig-out/bin/uidiff "$BEFORE" "$AFTER" --scale "$SCALE" --json` on your pair.
+`zig-out/bin/uidiff "$BEFORE" "$AFTER" --scale "$SCALE"` on your pair.
 Count exit statuses 0 and 1 as completed comparisons. On macOS,
 `/usr/bin/time -l` reports elapsed time, CPU time and peak RSS per process.
 Use `wc -c < zig-out/bin/uidiff` for the file size. The

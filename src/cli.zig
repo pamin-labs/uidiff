@@ -3,7 +3,8 @@ const std = @import("std");
 const uidiff = @import("uidiff");
 const args = @import("cli/args.zig");
 const pages = @import("cli/pages.zig");
-const batch = @import("cli/batch.zig");
+const request = @import("cli/request.zig");
+const run = @import("cli/run.zig");
 const reuse = @import("cli/reuse.zig");
 const Status = @import("cli/status.zig").Status;
 const cli_options = @import("cli_options");
@@ -13,8 +14,7 @@ const Allocator = std.mem.Allocator;
 /// Prints the panic message without linking stack-trace formatting.
 pub const panic = std.debug.simple_panic;
 
-const RunError = std.process.Args.ToSliceError || uidiff.FileCompareError || uidiff.report.WriteError ||
-    Io.File.Writer.Error || Io.File.Reader.Error || error{ReadFailed};
+const StartError = std.process.Args.ToSliceError || Allocator.Error || Io.Cancelable || Io.File.Writer.Error || Io.File.Reader.Error || run.Error;
 
 /// Empty: main maps every failure to exit status 2 and a log line, because an
 /// error returned from main would exit with 1, the status for changed images.
@@ -25,29 +25,29 @@ pub const std_options: std.Options = .{ .networking = false };
 
 /// What the command names when standard output fails.
 const stdout_name = "stdout";
-/// What the batch names when standard input fails.
+/// What the command names when standard input fails.
 const stdin_name = "stdin";
 
 const log = std.log.scoped(.uidiff);
 
-/// Runs one comparison, or a batch, and returns its process exit status.
+/// Runs the requested comparisons and returns the process exit status.
 pub fn main(init: std.process.Init.Minimal) MainError!u8 {
     // The decoders' many short-lived blocks go through this allocator. libc
     // is linked for the decoders already, and its malloc reuses freed blocks;
-    // tests use std.testing.allocator to check for leaks. On Linux, large
-    // blocks go on huge pages instead.
-    var huge_pages: pages.HugePages = .{ .backing = std.heap.c_allocator };
-    const allocator = huge_pages.allocator();
+    // tests use std.testing.allocator to check for leaks. Large blocks get
+    // mappings of their own instead.
+    var mapped: pages.Mapped = .{ .backing = std.heap.c_allocator };
+    const allocator = mapped.allocator();
     var threaded: Io.Threaded = .init(allocator, .{ .argv0 = .init(init.args), .environ = init.environ });
     defer threaded.deinit();
     const io = threaded.io();
-    // Retain the argument strings until diagnostics have been written.
-    var argument_storage: std.heap.ArenaAllocator = .init(allocator);
-    defer argument_storage.deinit();
-    var diagnostics: uidiff.Diagnostics = .{};
-    const status = run(io, allocator, init.args, argument_storage.allocator(), &diagnostics) catch |err| status: {
-        if (diagnostics.path) |path| {
-            logPathError(path, @errorName(err));
+    // Holds the arguments and the request list for the whole run.
+    var arena: std.heap.ArenaAllocator = .init(allocator);
+    defer arena.deinit();
+    var failed_stream: ?[]const u8 = null;
+    const status = start(io, allocator, arena.allocator(), init.args, &failed_stream) catch |err| status: {
+        if (failed_stream) |name| {
+            log.err("{s}: {t}", .{ name, err });
         } else {
             log.err("{t}", .{err});
         }
@@ -56,65 +56,54 @@ pub fn main(init: std.process.Init.Minimal) MainError!u8 {
     return @backingInt(status);
 }
 
-fn run(io: Io, allocator: Allocator, input: std.process.Args, arena: Allocator, diagnostics: *uidiff.Diagnostics) RunError!Status {
+/// Runs the command; on a failed stream, failed_stream names it.
+fn start(io: Io, allocator: Allocator, arena: Allocator, input: std.process.Args, failed_stream: *?[]const u8) StartError!Status {
     const argv = try input.toSlice(arena);
-    if (args.standalone(argv)) |request| {
-        const message = switch (request) {
-            .batch => return runBatch(io, allocator, arena, diagnostics),
-            .help => args.usage,
-            .version => cli_options.version ++ "\n",
-        };
-        diagnostics.path = stdout_name;
-        try Io.File.stdout().writeStreamingAll(io, message);
-        diagnostics.path = null;
-        return .unchanged;
-    }
-    const command = switch (args.parse(argv)) {
+    const command = switch (try args.parse(arena, argv)) {
         .command => |command| command,
         .issue => |issue| {
             writeUsageError(io, issue);
             return .failed;
         },
     };
-    const result = try uidiff.compareFiles(io, allocator, command.paths, command.options, diagnostics);
-    defer result.deinit(allocator);
-    diagnostics.path = stdout_name;
-    var buffer: [4096]u8 = undefined;
-    var stdout = Io.File.stdout().writerStreaming(io, &buffer);
-    write(&stdout.interface, command.output, result) catch |err| return stdout.err orelse err;
-    stdout.interface.flush() catch |err| return stdout.err orelse err;
-    diagnostics.path = null;
-    return Status.of(result);
-}
-
-fn runBatch(io: Io, allocator: Allocator, arena: Allocator, diagnostics: *uidiff.Diagnostics) RunError!Status {
-    var blocks: reuse.LargeBlocks = .{ .io = io, .backing = allocator };
-    defer blocks.deinit();
-    const input_buffer = try arena.alloc(u8, batch.max_line_bytes + 1);
-    var stdin = Io.File.stdin().readerStreaming(io, input_buffer);
+    if (command == .stdin and try Io.File.stdin().isTty(io)) {
+        writeUsageError(io, args.no_paths);
+        return .failed;
+    }
     var output_buffer: [4096]u8 = undefined;
     var stdout = Io.File.stdout().writerStreaming(io, &output_buffer);
-    return batch.run(io, blocks.allocator(), &stdin.interface, &stdout.interface) catch |err| switch (err) {
+    // Given a buffer only when requests come on standard input.
+    var stdin = Io.File.stdin().readerStreaming(io, &.{});
+    // Keeps freed large blocks for the next request, holding the process near
+    // one request's memory; it allocates nothing until a comparison does, and
+    // the run marks its last request.
+    var blocks: reuse.LargeBlocks = .{ .io = io, .backing = allocator };
+    defer blocks.deinit();
+    const result = switch (command) {
+        .help => writeMessage(&stdout.interface, args.usage),
+        .version => writeMessage(&stdout.interface, cli_options.version ++ "\n"),
+        .compare => |list| run.requests(io, &blocks, list, &stdout.interface),
+        .stdin => lines: {
+            stdin = Io.File.stdin().readerStreaming(io, try arena.alloc(u8, run.max_line_bytes + 1));
+            break :lines run.lines(io, &blocks, &stdin, &stdout.interface);
+        },
+    };
+    return result catch |err| switch (err) {
         error.ReadFailed => {
-            diagnostics.path = stdin_name;
+            failed_stream.* = stdin_name;
             return stdin.err orelse err;
         },
         error.WriteFailed => {
-            diagnostics.path = stdout_name;
+            failed_stream.* = stdout_name;
             return stdout.err orelse err;
         },
-        error.OutOfMemory => return error.OutOfMemory,
     };
 }
 
-fn write(output: *Io.Writer, format: args.Output, result: uidiff.Comparison) uidiff.report.WriteError!void {
-    switch (format) {
-        .json => try uidiff.report.write(result.regions, result.canvas(), result.moves, output),
-        .count => {
-            const count = result.regions.len;
-            try output.print("{d} {s}\n", .{ count, if (count == 1) "region" else "regions" });
-        },
-    }
+fn writeMessage(output: *Io.Writer, message: []const u8) Io.Writer.Error!Status {
+    try output.writeAll(message);
+    try output.flush();
+    return .unchanged;
 }
 
 noinline fn writeUsageError(io: Io, issue: args.Issue) void {
@@ -126,25 +115,22 @@ noinline fn writeUsageError(io: Io, issue: args.Issue) void {
     stderr.interface.writeVecAll(&message) catch {};
 }
 
-noinline fn logPathError(argument: []const u8, reason: []const u8) void {
-    log.err("{f}: {s}", .{ std.zig.fmtString(argument), reason });
-}
-
 // The fuzzer runs one fuzz test per test binary, so the CLI's argument and
-// batch request parsers share this target.
+// request line parsers share this target.
 fn fuzzInput(_: void, smith: *std.testing.Smith) !void {
     if (smith.value(bool)) return args.fuzzParse({}, smith);
-    return batch.fuzzParseLine({}, smith);
+    return request.fuzzParseLine({}, smith);
 }
 
-test "fuzz command arguments and batch request lines" {
+test "fuzz command arguments and request lines" {
     try std.testing.fuzz({}, fuzzInput, .{});
 }
 
 test {
     std.testing.refAllDecls(args);
     std.testing.refAllDecls(pages);
-    std.testing.refAllDecls(batch);
+    std.testing.refAllDecls(request);
+    std.testing.refAllDecls(run);
     std.testing.refAllDecls(reuse);
     std.testing.refAllDecls(@import("cli/status.zig"));
 }
