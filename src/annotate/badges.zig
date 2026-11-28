@@ -31,8 +31,8 @@ const badge_r = 26;
 
 const overview_badge_diameter = 2 * (18 + paint.badge_ring) + 1;
 
-/// Keeps overview badges away from the pane and sheet edges on thin sheets.
-pub const thin_badge_gap = 8;
+// Keeps overview badges away from the pane and sheet edges on thin sheets.
+const thin_badge_gap = 8;
 
 /// Returns the outside diameter of a detail badge in sheet pixels.
 pub fn badgeDiameter(pane_layout: PaneLayout) usize {
@@ -42,6 +42,13 @@ pub fn badgeDiameter(pane_layout: PaneLayout) usize {
 /// Returns the outside diameter of a badge over the main panes.
 pub fn overviewDiameter(pane_layout: PaneLayout) usize {
     return if (pane_layout.panoramic) overview_badge_diameter else badgeDiameter(pane_layout);
+}
+
+/// Returns the space a badge keeps from a pane's edge, which is nonzero only
+/// when a pane is thinner than an overview badge.
+pub fn thinPaneClearance(panes: geometry.SideRects, pane_layout: PaneLayout) usize {
+    const thin = @min(panes.get(.before).width, panes.get(.after).width) < overviewDiameter(pane_layout);
+    return if (thin) pane_layout.px(thin_badge_gap) else 0;
 }
 
 /// Assigns non-overlapping overview and focus badge positions.
@@ -59,7 +66,7 @@ pub fn placeBadges(allocator: Allocator, details: []Detail, focuses: []const Foc
 
 fn placeOverview(details: []Detail, storage: []Rect, panes: geometry.SideRects, pair: value.Pair, size: value.Size, pane_layout: PaneLayout, captions: geometry.SideRects, gutter: Gutter) void {
     const diameter = overviewDiameter(pane_layout);
-    const clearance = if (@min(panes.get(.before).width, panes.get(.after).width) < diameter) pane_layout.px(thin_badge_gap) else 0;
+    const clearance = thinPaneClearance(panes, pane_layout);
     var len: usize = 0;
     for (captions.values) |caption| {
         storage[len] = caption;

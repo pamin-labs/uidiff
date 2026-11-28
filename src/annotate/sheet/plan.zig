@@ -335,7 +335,8 @@ fn layoutCaptions(pane_layout: PaneLayout, panes: geometry.SideRects, width: usi
 
 fn reserveBadgeLanes(panes: *geometry.SideRects, size: *Size, pane_layout: PaneLayout, pair: value.Pair, regions: []const Region) void {
     const diameter = overviewDiameter(pane_layout);
-    const needed = diameter + if (@min(panes.get(.before).width, panes.get(.after).width) < diameter) 2 * pane_layout.px(badges.thin_badge_gap) else 0;
+    // A lane holds the badge and keeps its clearance on both sides.
+    const needed = diameter + 2 * badges.thinPaneClearance(panes.*, pane_layout);
     var left = false;
     var right = false;
     var middle = false;
