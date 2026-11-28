@@ -8,6 +8,22 @@ const Decoders = codecs.Decoders;
 const ShippedLinkage = codecs.ShippedLinkage;
 const X86Simd = codecs.X86Simd;
 
+/// The target, mode, decoders and zlib-ng dispatch of the checked test library.
+const CheckedBuild = struct {
+    target: Build.ResolvedTarget,
+    optimize: Optimize,
+    decoders: Decoders,
+    x86_simd: X86Simd,
+};
+/// A checked test runner: its root, mode, imports beyond the shared test
+/// modules, and whether it holds a fuzz target.
+const Runner = struct {
+    source: []const u8,
+    optimize: Optimize,
+    imports: []const Build.Module.Import,
+    fuzz: bool,
+};
+
 // The shipped Zig binary retains runtime safety checks. The C decoders
 // run with UBSan in the checked test build and in fuzzing.
 const shipped_mode: Optimize = .safe;
@@ -88,7 +104,7 @@ pub fn build(b: *Build) void {
     addSizeCheck(b, install_cli);
     const generator = fixtureGenerator(b, target, decoders);
     const host_generator = if (target.query.isNative()) generator else fixtureGenerator(b, b.graph.host, codecs.addDecoders(b, b.graph.host));
-    addTests(b, target, test_mode, decoders, install_cli, host_generator, x86_simd, cli_config, version);
+    addTests(b, .{ .target = target, .optimize = test_mode, .decoders = decoders, .x86_simd = x86_simd }, install_cli, host_generator, cli_config, version);
     addThreadedTest(b, target, decoders);
     addPngTestGates(b, target, test_mode, decoders);
     addBenchmark(b, target, optimize, uidiff);
@@ -154,7 +170,8 @@ fn addSizeCheck(b: *Build, install_cli: *Build.Step.InstallArtifact) void {
     b.step("size", "Check the CLI binary against its size budget").dependOn(&run.step);
 }
 
-fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoders: Decoders, install_cli: *Build.Step.InstallArtifact, host_generator: *Build.Step.Compile, x86_simd: X86Simd, cli_config: *Build.Module, version: []const u8) void {
+fn addTests(b: *Build, checked: CheckedBuild, install_cli: *Build.Step.InstallArtifact, host_generator: *Build.Step.Compile, cli_config: *Build.Module, version: []const u8) void {
+    const target, const optimize, const decoders, const x86_simd = .{ checked.target, checked.optimize, checked.decoders, checked.x86_simd };
     const uidiff = addCheckedLibrary(b, target, optimize, decoders, x86_simd);
     const fixtures_module = b.createModule(.{ .root_source_file = b.path("tests/fixtures.zig"), .target = target, .optimize = optimize });
     const uidiff_testing = addTestingModule(b, uidiff);
@@ -182,33 +199,44 @@ fn addTests(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoder
     b.step("fuzz-target-count", "Discover fuzz tests from the compiled runners").dependOn(&fuzz_count_install.step);
     addFuzzInventory(b, inventory, uidiff);
     const fuzz_sources = fuzzSources(b);
-    const checked_sources = b.allocator.alloc([]const u8, fuzz_sources.len + 1) catch @panic("OOM");
-    @memcpy(checked_sources[0..fuzz_sources.len], fuzz_sources);
-    checked_sources[fuzz_sources.len] = "tests/decode.zig";
-    for (checked_sources, 0..) |source, index| {
+    var runners: std.ArrayList(Runner) = .empty;
+    for (fuzz_sources) |source| {
         // The styled target encodes its full output. Use safe optimization
         // for this pixel-heavy workload while retaining decoder UBSan.
         const styled = std.mem.eql(u8, source, styled_sheet_fuzz_source);
-        const mode = if (styled) Optimize.safe else optimize;
-        const tested = if (styled and optimize != .safe) addCheckedLibrary(b, target, .safe, decoders, x86_simd) else uidiff;
+        const cli = std.mem.eql(u8, source, cli_source);
+        runners.append(b.allocator, .{
+            .source = source,
+            .optimize = if (styled) .safe else optimize,
+            .imports = if (cli) b.allocator.dupe(Build.Module.Import, &.{.{ .name = "cli_options", .module = cli_config }}) catch @panic("OOM") else &.{},
+            .fuzz = true,
+        }) catch @panic("OOM");
+    }
+    runners.append(b.allocator, .{
+        .source = "tests/decode.zig",
+        .optimize = optimize,
+        .imports = b.allocator.dupe(Build.Module.Import, &.{.{ .name = "png_format", .module = decoders.png_format }}) catch @panic("OOM"),
+        .fuzz = false,
+    }) catch @panic("OOM");
+    for (runners.items) |runner| {
+        const tested = if (runner.optimize != optimize) addCheckedLibrary(b, target, runner.optimize, decoders, x86_simd) else uidiff;
         const fuzz_helpers = if (tested == uidiff) uidiff_testing else addTestingModule(b, tested);
         const test_module = b.createModule(.{
-            .root_source_file = b.path(source),
+            .root_source_file = b.path(runner.source),
             .target = target,
-            .optimize = mode,
+            .optimize = runner.optimize,
             .imports = &.{
                 .{ .name = "uidiff", .module = tested },
                 .{ .name = "uidiff_testing", .module = fuzz_helpers },
                 .{ .name = "fixtures", .module = fixtures_module },
             },
         });
-        if (index == fuzz_sources.len) test_module.addImport("png_format", decoders.png_format);
-        if (std.mem.eql(u8, source, cli_source)) test_module.addImport("cli_options", cli_config);
+        for (runner.imports) |import| test_module.addImport(import.name, import.module);
         step.dependOn(&b.addRunArtifact(b.addTest(.{
             .root_module = test_module,
-            .use_llvm = if (index < fuzz_sources.len) fuzz_use_llvm else null,
+            .use_llvm = if (runner.fuzz) fuzz_use_llvm else null,
         })).step);
-        if (index < fuzz_sources.len) addFuzzInventory(b, inventory, test_module);
+        if (runner.fuzz) addFuzzInventory(b, inventory, test_module);
     }
     for (source_tests) |source| {
         const run = b.addRunArtifact(b.addTest(.{ .root_module = b.createModule(.{
