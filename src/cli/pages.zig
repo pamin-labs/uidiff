@@ -1,28 +1,29 @@
-//! The CLI's allocator: on Linux, blocks of at least one huge page sit on
-//! huge-page-aligned anonymous mappings advised for transparent huge pages, which
-//! cuts the page faults of decoded pixels and comparison buffers.
+//! The CLI's allocator: large blocks get mappings of their own, which return
+//! their pages when freed instead of fragmenting malloc's regions. On Linux
+//! they are huge-page-aligned anonymous mappings advised for transparent huge
+//! pages, which cuts the page faults of decoded pixels and comparison buffers.
 const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
 
-/// Wraps backing; small blocks and every other OS go to backing unchanged.
-pub const HugePages = struct {
+/// Wraps backing; blocks below `mapped_bytes` go to it unchanged.
+pub const Mapped = struct {
     const linux = std.os.linux;
 
     backing: Allocator,
 
     const vtable: Allocator.VTable = .{ .alloc = alloc, .resize = resize, .remap = remap, .free = free };
 
-    /// Returns the allocator, or backing itself where huge pages do not apply.
-    pub fn allocator(self: *HugePages) Allocator {
-        if (builtin.os.tag != .linux) return self.backing;
+    /// Returns the allocator over self.
+    pub fn allocator(self: *Mapped) Allocator {
         return .{ .ptr = self, .vtable = &vtable };
     }
 
     fn alloc(context: *anyopaque, len: usize, alignment: Alignment, ra: usize) ?[*]u8 {
-        const self: *HugePages = @ptrCast(@alignCast(context));
-        if (len < huge_page_bytes) return self.backing.rawAlloc(len, alignment, ra);
+        const self: *Mapped = @ptrCast(@alignCast(context));
+        if (len < mapped_bytes) return self.backing.rawAlloc(len, alignment, ra);
+        if (builtin.os.tag != .linux) return std.heap.page_allocator.rawAlloc(len, alignment, ra);
         // An aligned start needs one huge page of slack, trimmed off below.
         // A len this close to the address space limit fails in mmap anyway.
         const mapped = std.mem.alignForward(usize, len, std.heap.pageSize());
@@ -42,28 +43,33 @@ pub const HugePages = struct {
     }
 
     fn resize(context: *anyopaque, memory: []u8, alignment: Alignment, len: usize, ra: usize) bool {
-        const self: *HugePages = @ptrCast(@alignCast(context));
-        if (memory.len < huge_page_bytes) return len < huge_page_bytes and self.backing.rawResize(memory, alignment, len, ra);
+        const self: *Mapped = @ptrCast(@alignCast(context));
+        if (memory.len < mapped_bytes) return len < mapped_bytes and self.backing.rawResize(memory, alignment, len, ra);
         return false;
     }
 
     fn remap(context: *anyopaque, memory: []u8, alignment: Alignment, len: usize, ra: usize) ?[*]u8 {
-        const self: *HugePages = @ptrCast(@alignCast(context));
-        if (memory.len < huge_page_bytes and len < huge_page_bytes) return self.backing.rawRemap(memory, alignment, len, ra);
+        const self: *Mapped = @ptrCast(@alignCast(context));
+        if (memory.len < mapped_bytes and len < mapped_bytes) return self.backing.rawRemap(memory, alignment, len, ra);
         return null;
     }
 
     fn free(context: *anyopaque, memory: []u8, alignment: Alignment, ra: usize) void {
-        const self: *HugePages = @ptrCast(@alignCast(context));
-        if (memory.len < huge_page_bytes) return self.backing.rawFree(memory, alignment, ra);
+        const self: *Mapped = @ptrCast(@alignCast(context));
+        if (memory.len < mapped_bytes) return self.backing.rawFree(memory, alignment, ra);
+        if (builtin.os.tag != .linux) return std.heap.page_allocator.rawFree(memory, alignment, ra);
         _ = linux.munmap(memory.ptr, std.mem.alignForward(usize, memory.len, std.heap.pageSize()));
     }
 };
 
 const huge_page_bytes = 2 * 1024 * 1024;
+/// Blocks at least this large get their own mapping. Elsewhere than Linux,
+/// 1 MiB measured lowest: from 256 KiB, a single phone sheet peaked 0.3 MiB
+/// higher than with malloc.
+const mapped_bytes = if (builtin.os.tag == .linux) huge_page_bytes else 1024 * 1024;
 
-test "large blocks are huge-page aligned and small blocks use backing" {
-    var pages: HugePages = .{ .backing = std.testing.allocator };
+test "large blocks get their own mapping and small blocks use backing" {
+    var pages: Mapped = .{ .backing = std.testing.allocator };
     const allocator = pages.allocator();
     const large = try allocator.alloc(u8, huge_page_bytes + 32);
     @memset(large, 0x5a);

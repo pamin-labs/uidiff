@@ -34,10 +34,10 @@ const log = std.log.scoped(.uidiff);
 pub fn main(init: std.process.Init.Minimal) MainError!u8 {
     // The decoders' many short-lived blocks go through this allocator. libc
     // is linked for the decoders already, and its malloc reuses freed blocks;
-    // tests use std.testing.allocator to check for leaks. On Linux, large
-    // blocks go on huge pages instead.
-    var huge_pages: pages.HugePages = .{ .backing = std.heap.c_allocator };
-    const allocator = huge_pages.allocator();
+    // tests use std.testing.allocator to check for leaks. Large blocks get
+    // mappings of their own instead.
+    var mapped: pages.Mapped = .{ .backing = std.heap.c_allocator };
+    const allocator = mapped.allocator();
     var threaded: Io.Threaded = .init(allocator, .{ .argv0 = .init(init.args), .environ = init.environ });
     defer threaded.deinit();
     const io = threaded.io();
