@@ -28,7 +28,7 @@ pub const LargeBlocks = struct {
 
     /// Releases the idle blocks. Every lent block must have been freed.
     pub fn deinit(self: *LargeBlocks) void {
-        for (self.idle) |block| if (block.ptr) |ptr| self.backing.rawFree(ptr[0..block.capacity], max_alignment, @returnAddress());
+        self.releaseIdle(@returnAddress());
         self.* = undefined;
     }
 
@@ -72,11 +72,7 @@ pub const LargeBlocks = struct {
             // In the last request a miss releases every idle block before the
             // new one is taken, so backing can reuse their pages and the
             // request peaks no higher than backing alone would hold.
-            for (&self.idle) |*block| {
-                const ptr = block.ptr orelse continue;
-                self.backing.rawFree(ptr[0..block.capacity], max_alignment, ra);
-                block.* = .{};
-            }
+            self.releaseIdle(ra);
         } else if (smallest) |block| {
             // ponytail: dropping the smallest idle block on a miss keeps the
             // retained count at most the most blocks one pair held at once; a
@@ -86,6 +82,16 @@ pub const LargeBlocks = struct {
         }
         slot.* = .{ .ptr = self.backing.rawAlloc(len, max_alignment, ra) orelse return null, .capacity = len };
         return slot.ptr;
+    }
+
+    /// Returns every idle block to backing. Kept out of line so alloc, called
+    /// for every block, stays small.
+    noinline fn releaseIdle(self: *LargeBlocks, ra: usize) void {
+        for (&self.idle) |*block| {
+            const ptr = block.ptr orelse continue;
+            self.backing.rawFree(ptr[0..block.capacity], max_alignment, ra);
+            block.* = .{};
+        }
     }
 
     fn resize(context: *anyopaque, memory: []u8, alignment: Alignment, len: usize, ra: usize) bool {
