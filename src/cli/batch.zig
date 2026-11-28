@@ -122,7 +122,7 @@ fn parseLine(arena: Allocator, line: []const u8) error{ InvalidInput, InvalidSca
         if (path.len == 0) return error.InvalidInput;
         command.paths.sheet = path;
     }
-    if (request.scale) |text| command.options.compare.scale = args.parseScale(text) orelse return error.InvalidScale;
+    if (request.scale) |text| command.options.compare.scale = uidiff.Scale.parse(text) orelse return error.InvalidScale;
     return command;
 }
 

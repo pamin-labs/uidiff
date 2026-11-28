@@ -116,7 +116,7 @@ pub fn parse(args: []const [:0]const u8) ParseResult {
             .scale => {
                 i += 1;
                 const text = flagValue(args, i) orelse return invalid(arg, .missing_value);
-                parsed.options.compare.scale = parseScale(text) orelse return invalid(text, .invalid_scale);
+                parsed.options.compare.scale = uidiff.Scale.parse(text) orelse return invalid(text, .invalid_scale);
             },
             .annotate => {
                 i += 1;
@@ -126,12 +126,6 @@ pub fn parse(args: []const [:0]const u8) ParseResult {
         seen.insert(flag);
     }
     return .{ .command = parsed };
-}
-
-/// Parses a `--scale` value, also the grammar of a batch request's scale.
-pub noinline fn parseScale(text: []const u8) ?uidiff.Scale {
-    const scale = uidiff.Scale.parse(text) orelse return null;
-    return if (scale.isValid()) scale else null;
 }
 
 /// Parses arguments the fuzzer builds; the CLI's one fuzz target calls it.
