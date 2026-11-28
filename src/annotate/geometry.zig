@@ -195,10 +195,7 @@ pub fn mapMark(region: SourceRect, source: SourceRect, pane: Rect) ?Rect {
 
 /// Converts a box that passed Region.check to whole pixels.
 pub noinline fn sourceRect(box: ?value.Box) ?SourceRect {
-    const b = box orelse return null;
-    // Region.check accepts only whole, non-negative coordinates within
-    // max_extent, so each conversion is exact and in range.
-    return .{ .x = @intFromFloat(b.x), .y = @intFromFloat(b.y), .width = @intFromFloat(b.width), .height = @intFromFloat(b.height) };
+    return (box orelse return null).wholePixels();
 }
 
 test "stacked overviews fit both axes at a single scale" {

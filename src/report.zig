@@ -15,10 +15,8 @@ pub const Box = struct {
 
     /// Converts a box that passed Region.check to its wire form.
     fn convert(box: ?value.Box) ?Box {
-        const b = box orelse return null;
-        // Region.check accepts only whole, non-negative coordinates within
-        // max_extent, so each conversion is exact and in range.
-        return .{ .x = @intFromFloat(b.x), .y = @intFromFloat(b.y), .width = @intFromFloat(b.width), .height = @intFromFloat(b.height) };
+        const rect = (box orelse return null).wholePixels();
+        return .{ .x = rect.x, .y = rect.y, .width = rect.width, .height = rect.height };
     }
 };
 

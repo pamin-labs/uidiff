@@ -5,6 +5,11 @@ const Size = image.Size;
 
 const PixelSpace = enum { device, sheet };
 
+/// A whole-pixel rectangle in source device coordinates.
+pub const PixelRect = PixelRectFor(.device);
+/// A whole-pixel rectangle in rendered sheet coordinates.
+pub const SheetRect = PixelRectFor(.sheet);
+
 /// A rectangle in source device pixels.
 pub const Box = struct {
     /// Left edge.
@@ -46,6 +51,13 @@ pub const Box = struct {
         return dx * dx + dy * dy;
     }
 
+    /// Converts a box that passed Region.check to whole pixels.
+    pub fn wholePixels(self: Self) PixelRect {
+        // Region.check accepts only whole, non-negative coordinates within
+        // max_extent, so each conversion is exact and in range.
+        return .{ .x = @intFromFloat(self.x), .y = @intFromFloat(self.y), .width = @intFromFloat(self.width), .height = @intFromFloat(self.height) };
+    }
+
     /// Accepts whole, non-negative pixel coordinates with a positive area
     /// that lie within an image of the given size and within max_extent, so
     /// each converts exactly to usize. NaN fails every test.
@@ -58,11 +70,6 @@ pub const Box = struct {
             self.width > 0 and self.height > 0 and self.right() <= width and self.bottom() <= height;
     }
 };
-
-/// A whole-pixel rectangle in source device coordinates.
-pub const PixelRect = PixelRectFor(.device);
-/// A whole-pixel rectangle in rendered sheet coordinates.
-pub const SheetRect = PixelRectFor(.sheet);
 
 /// Which side contains the difference. Non-exhaustive, so a later release
 /// may add a kind (a moved block, say) without breaking callers; a switch
