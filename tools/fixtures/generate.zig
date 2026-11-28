@@ -12,6 +12,10 @@ const Pixel = uidiff.Pixel;
 const Palette = struct { background: u8, chrome: u8, field: u8, ink: u8, highlight: u8 };
 /// A rectangle in logical pixels.
 const Rect = struct { x: usize, y: usize, width: usize, height: usize };
+/// The block a settings case moves, in device pixels: the inserted card's
+/// columns, the before rows that shift, and the rows of those holding ink.
+/// The comparison may trim blank rows at either end, never ink.
+const MovedBlock = struct { x: usize, width: usize, top: usize, end: usize, ink_top: usize, ink_end: usize };
 const Canvas = struct {
     pixels: []Pixel,
     width: usize,
@@ -47,6 +51,24 @@ const Canvas = struct {
         const width = rect.width * scale;
         for (rect.y * scale..(rect.y + rect.height) * scale) |y|
             @memset(self.pixels[y * self.width + x ..][0..width], color);
+    }
+
+    /// Measures the block of rows top..end within columns, whose rows not
+    /// filled with the background hold ink.
+    fn movedBlock(self: Canvas, columns: Rect, top: usize, end: usize, background: u8) MovedBlock {
+        const scale = cases.scale;
+        const x = columns.x * scale;
+        const width = columns.width * scale;
+        var block: MovedBlock = .{ .x = x, .width = width, .top = top * scale, .end = end * scale, .ink_top = end * scale, .ink_end = top * scale };
+        for (block.top..block.end) |y| {
+            for (self.pixels[y * self.width + x ..][0..width]) |pixel| {
+                if (std.meta.eql(pixel, gray(background))) continue;
+                block.ink_top = @min(block.ink_top, y);
+                block.ink_end = y + 1;
+                break;
+            }
+        }
+        return block;
     }
 
     fn image(self: Canvas) uidiff.Image {
@@ -212,7 +234,8 @@ fn generate(io: Io, allocator: Allocator, out: Io.Dir, comptime spec: cases.Case
     const moves = try allocator.alloc(report.Move, comparison.moves.len);
     defer allocator.free(moves);
     for (moves, comparison.moves) |*move, found| move.* = .convert(found);
-    try checkMoves(moves, drawnShift(spec.change));
+    const block: ?MovedBlock = if (settings) old.movedBlock(inserted, insert_y, cutoff, palette.background) else null;
+    try checkMoves(moves, drawnShift(spec.change), block);
     const expected: report.Report = .{ .version = report.version, .regions = regions, .width = old.width, .height = old.height, .moves = moves };
     var output = Io.Writer.Allocating.init(allocator);
     defer output.deinit();
@@ -283,13 +306,18 @@ fn drawnShift(change: cases.Change) ?isize {
     };
 }
 
-/// The comparison sets each move's rows; the drawing fixes how far they moved.
-fn checkMoves(moves: []const report.Move, shift: ?isize) error{UnexpectedMoves}!void {
+/// The drawing fixes how far the rows moved and, where it moves one block,
+/// its columns and the rows the move must cover and stay within.
+fn checkMoves(moves: []const report.Move, shift: ?isize, block: ?MovedBlock) error{UnexpectedMoves}!void {
     const expected = shift orelse return if (moves.len == 0) {} else error.UnexpectedMoves;
     if (moves.len != 1) return error.UnexpectedMoves;
     const move = moves[0];
     const found = @as(isize, @intCast(move.after.y)) - @as(isize, @intCast(move.before.y));
     if (found != expected * cases.scale or move.before.height != move.after.height) return error.UnexpectedMoves;
+    const drawn = block orelse return;
+    const end = move.before.y + move.before.height;
+    if (move.x != drawn.x or move.width != drawn.width) return error.UnexpectedMoves;
+    if (move.before.y < drawn.top or move.before.y > drawn.ink_top or end < drawn.ink_end or end > drawn.end) return error.UnexpectedMoves;
 }
 
 fn gray(tone: u8) Pixel {
@@ -324,6 +352,21 @@ fn save(io: Io, allocator: Allocator, out: Io.Dir, path: []const u8, format: cas
     defer output.deinit();
     try encode.write(allocator, format, @intCast(canvas.width), @intCast(canvas.height), std.mem.sliceAsBytes(canvas.pixels), &output.writer);
     try out.writeFile(io, .{ .sub_path = path, .data = output.written() });
+}
+
+test "moves must match the drawn block's columns and cover its ink" {
+    const block: MovedBlock = .{ .x = 40, .width = 100, .top = 20, .end = 120, .ink_top = 28, .ink_end = 112 };
+    const shift = 10;
+    const valid: report.Move = .{ .before = .{ .y = 24, .height = 92 }, .after = .{ .y = 24 + shift * cases.scale, .height = 92 }, .x = 40, .width = 100 };
+    try checkMoves(&.{valid}, shift, block);
+    var invalid: [4]report.Move = @splat(valid);
+    invalid[0].x = 41;
+    invalid[1].width = 99;
+    invalid[2].before.y = 29;
+    invalid[2].after.y = 29 + shift * cases.scale;
+    invalid[3].before.height = 97;
+    invalid[3].after.height = 97;
+    for (invalid) |move| try std.testing.expectError(error.UnexpectedMoves, checkMoves(&.{move}, shift, block));
 }
 
 test {
