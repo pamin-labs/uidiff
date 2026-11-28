@@ -288,9 +288,8 @@ fn compareReplacement(collector: *Collector, scope: columns.Scope, band: rows.Ba
         const before = scope.pair.before.rowSegment(first_old + y, left, width);
         const after = scope.pair.after.rowSegment(first_new + y, left, width);
         if (pixel.sameRun(before, after)) continue;
-        const offset = ((first_old + y) * scope.pair.before.width + left) * @sizeOf(Pixel);
         for (before, after, 0..) |old, new, x| {
-            if (!yiq.aboveThreshold(old, new, offset + x * @sizeOf(Pixel))) continue;
+            if (!yiq.aboveThreshold(old, new, yiq.checkerboardIndex(scope.pair.before, left + x, first_old + y))) continue;
             inside = inside or (y >= top and y < top + band.removed);
             pixels_changed += 1;
             min_x = @min(min_x, x);

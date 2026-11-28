@@ -182,6 +182,12 @@ pub inline fn aboveThreshold(a: Pixel, b: Pixel, byte_offset: usize) bool {
     return aboveColourThreshold(a, b, byte_offset);
 }
 
+/// Returns the Pixelmatch checkerboard index of the pixel at (x, y): its RGBA
+/// byte offset in `image`, which picks the backdrop of a translucent sample.
+pub fn checkerboardIndex(image: Image, x: usize, y: usize) usize {
+    return (y * image.width + x) * @sizeOf(Pixel);
+}
+
 noinline fn aboveColourThreshold(a: Pixel, b: Pixel, byte_offset: usize) bool {
     const d = delta(a, b, byte_offset);
     return yiq(f64, d[0], d[1], d[2]) > max_delta;
@@ -390,8 +396,7 @@ fn channel(comptime n: usize, pixels: @Vector(n, u32), comptime index: usize) @V
 fn scalarChange(a: SampledRaster, b: SampledRaster, x: usize, y: usize, policy: EdgePolicy) mask.Cell {
     // The mask loop bounds x and y to both rasters and their validated pixel count.
 
-    const byte_offset = ((a.top + y) * a.image.width + a.left + x) * @sizeOf(Pixel);
-    if (!aboveThreshold(a.at(x, y), b.at(x, y), byte_offset)) return .clear;
+    if (!aboveThreshold(a.at(x, y), b.at(x, y), checkerboardIndex(a.image, a.left + x, a.top + y))) return .clear;
     return markChange(a, b, x, y, policy);
 }
 
@@ -547,7 +552,7 @@ fn antialiased(a: SampledRaster, b: SampledRaster, x: usize, y: usize) bool {
     // centre row first, which is usually flat inside filled components.
     if (x0 != cx and x2 != cx and same(p, a.sample(x0, cy)) and same(p, a.sample(x2, cy)) and
         ((y0 != cy and same(p, a.sample(cx, y0))) or (y2 != cy and same(p, a.sample(cx, y2))))) return false;
-    const k = (cy * a.image.width + cx) * 4;
+    const k = checkerboardIndex(a.image, cx, cy);
     var zeroes: usize = @intFromBool(cx == x0 or cx == x2 or cy == y0 or cy == y2);
     var min: f64 = 0;
     var max: f64 = 0;
