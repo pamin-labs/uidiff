@@ -15,7 +15,7 @@ Follow the public pamin-labs/skills engineering rules in [core](.agents/skills/p
 - Write changes in English and use scoped Conventional Commits.
 - A release archive ships `LICENSE` and `THIRD_PARTY_NOTICES` beside the binary. The notices cover the PNG, JPEG and WebP decoder dependencies and the embedded IBM Plex Sans bitmap glyphs.
 - **Exception to core's "Commits and PRs" section:** this repository takes contributions through the open-source flow in [CONTRIBUTING.md](CONTRIBUTING.md); where core's section asks for more, CONTRIBUTING.md wins.
-- **Exception to core's text and locales rule:** the CLI's usage text and error lines are English only, as developer tools' usually are. Machine output is the versioned JSON report and stable error names (`ImageTooLarge`, `InvalidScale`); callers that show text to end users localize from those.
+- **Exception to core's text and locales rule:** the CLI's usage text and error lines are English only, as developer tools' usually are. Machine output is the versioned JSON report and stable error names: the library's error set (`ImageTooLarge`, `InvalidScale`), which the CLI prints after a file's path and `--batch` writes in a failed line's `error` field. A single run refuses a bad `--scale` value as a usage error, never as `InvalidScale`. Callers that show text to end users localize from those.
 
 ## Layout
 
