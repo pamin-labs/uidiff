@@ -26,9 +26,6 @@ pub const writeRowsWithIo = encoder.writeRowsWithIo;
 /// Probes the dimensions and channel depth.
 pub const probe = stb.probe;
 
-/// Releases decoded pixels through their PNG or fallback allocator.
-pub const release = stb.release;
-
 /// Recognizes the PNG signature.
 pub fn matches(prefix: []const u8) bool {
     return std.mem.startsWith(u8, prefix, png_format.signature);

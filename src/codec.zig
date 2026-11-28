@@ -31,7 +31,7 @@ comptime {
     _ = memory;
     for (@typeInfo(@TypeOf(formats)).@"struct".field_names) |name| {
         const format = @field(formats, name);
-        for (.{ "matches", "probe", "decode", "release" }) |decl| {
+        for (.{ "matches", "probe", "decode" }) |decl| {
             if (!@hasDecl(format, decl)) @compileError(name ++ " codec must declare " ++ decl);
         }
     }
@@ -43,14 +43,12 @@ pub const Decoded = struct {
     image: Image,
     /// Format identified in the encoded input.
     format: Format,
-    /// Allocator retained for releasing the decoder's pixels.
-    allocator: Allocator,
 
-    /// Releases pixels with the decoder that allocated them.
+    /// Releases the pixels. Every decoder returns a codec memory block,
+    /// which records the allocator that owns it.
     pub fn deinit(self: *Decoded) void {
-        switch (self.format) {
-            inline else => |format| @field(formats, @tagName(format)).release(self.allocator, self.image.pixels),
-        }
+        // The const view still owns the mutable decoder allocation.
+        memory.freeBlock(@constCast(self.image.pixels.ptr));
         self.* = undefined;
     }
 };
@@ -112,7 +110,7 @@ pub fn decodeCapped(allocator: Allocator, bytes: []const u8, cap: usize) DecodeE
             const tag: Format = @field(Format, name);
             const probed = try probeFormat(format.probe, allocator, bytes, cap);
             const pixels = try format.decode(allocator, bytes, probed.header, probed.limit);
-            return owned(probed.header.size, pixels, allocator, tag);
+            return owned(probed.header.size, pixels, tag);
         }
     }
     return error.UnsupportedImageFormat;
@@ -177,11 +175,10 @@ noinline fn probeFormat(comptime probe: anytype, allocator: Allocator, bytes: []
     return .{ .header = header, .limit = limit };
 }
 
-fn owned(size: Size, pixels: []const Pixel, allocator: Allocator, format: Format) Decoded {
+fn owned(size: Size, pixels: []const Pixel, format: Format) Decoded {
     return .{
         .image = .{ .width = size.width, .height = size.height, .pixels = pixels },
         .format = format,
-        .allocator = allocator,
     };
 }
 

@@ -83,7 +83,7 @@ pub fn probe(_: Allocator, bytes: []const u8, cap: usize) DecodeError!Header {
 }
 
 /// Decodes RGBA8 with the size and cap validated by the codec registry.
-/// The caller releases the result.
+/// The caller frees the returned codec block with memory.freeBlock.
 pub fn decode(allocator: Allocator, bytes: []const u8, header: Header, cap: usize) DecodeError![]Pixel {
     const count = header.size.width * header.size.height;
     const length = std.math.cast(c_ulong, bytes.len) orelse return error.ImageTooLarge;
@@ -96,11 +96,6 @@ pub fn decode(allocator: Allocator, bytes: []const u8, header: Header, cap: usiz
         return memory.failure();
     }
     return run.pixels orelse error.InvalidImage;
-}
-
-/// Releases the decoded block through the allocator recorded when it was created.
-pub fn release(_: Allocator, pixels: []const Pixel) void {
-    memory.uidiff_codec_free(@constCast(pixels.ptr));
 }
 
 fn decodeRows(pointer: c.j_decompress_ptr, context: ?*anyopaque) callconv(.c) c_int {
@@ -162,7 +157,7 @@ fn convertCmyk(row: []Pixel, inverted: bool) void {
 fn checkGray(allocator: Allocator, encoded: []const u8) !void {
     const header = try probe(allocator, encoded, value.max_decode_bytes);
     const pixels = try decode(allocator, encoded, header, value.max_decode_bytes);
-    defer release(allocator, pixels);
+    defer memory.freeBlock(@constCast(pixels.ptr));
     try std.testing.expectEqualSlices(value.Pixel, &.{.{ 128, 128, 128, 255 }}, pixels);
 }
 
@@ -206,7 +201,7 @@ test "JPEG progressive scan limit accepts the boundary and rejects the next scan
     const at_limit = jpeg.progressive(max_scans);
     const header = try probe(allocator, &at_limit, value.max_decode_bytes);
     const pixels = try decode(allocator, &at_limit, header, value.max_decode_bytes);
-    defer release(allocator, pixels);
+    defer memory.freeBlock(@constCast(pixels.ptr));
     try std.testing.expectEqual(@as(usize, 1), pixels.len);
 
     const past_limit = jpeg.progressive(max_scans + 1);
