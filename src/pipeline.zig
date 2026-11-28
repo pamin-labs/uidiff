@@ -24,7 +24,7 @@ pub const Paths = struct {
     /// Path to the after image.
     after: []const u8,
     /// Where to write the annotated sheet, if requested.
-    annotate: ?[]const u8 = null,
+    sheet: ?[]const u8 = null,
 };
 
 /// Holds the path of the file a failure concerns, borrowed from Paths.
@@ -92,18 +92,18 @@ const SharedAllocator = struct {
 const write_buffer_bytes = 64 * 1024;
 
 /// Checks the options, decodes both files, compares them, and writes the
-/// sheet when paths.annotate is set. On failure, diagnostics names the file
+/// sheet when paths.sheet is set. On failure, diagnostics names the file
 /// concerned, or null when no file is. The caller owns the comparison.
 pub fn compareFiles(io: Io, allocator: Allocator, paths: Paths, options: FileCompareOptions, diagnostics: *Diagnostics) FileCompareError!diff.Comparison {
     diagnostics.path = null;
     const checked = try diff.checkOptions(options.compare);
-    if (paths.annotate) |path| try preflightSheet(io, allocator, paths, path, options.max_decode_bytes, diagnostics);
+    if (paths.sheet) |path| try preflightSheet(io, allocator, paths, path, options.max_decode_bytes, diagnostics);
     var shared: SharedAllocator = .{ .io = io, .backing = allocator };
     var decoded = try loadPair(io, &shared, paths, options.max_decode_bytes, diagnostics);
     defer decoded.before.deinit();
     defer decoded.after.deinit();
     const pair: value.Pair = .{ .before = decoded.before.image, .after = decoded.after.image };
-    if (paths.annotate) |path| {
+    if (paths.sheet) |path| {
         // A file may have changed since its header was checked.
         diagnostics.path = path;
         _ = try annotate.minimumSheetSize(pair.before.size(), pair.after.size());
@@ -111,7 +111,7 @@ pub fn compareFiles(io: Io, allocator: Allocator, paths: Paths, options: FileCom
     diagnostics.path = null;
     const result = try diff.compareChecked(allocator, pair.before, pair.after, checked);
     errdefer result.deinit(allocator);
-    if (paths.annotate) |path| {
+    if (paths.sheet) |path| {
         diagnostics.path = path;
         try writeSheet(io, allocator, path, pair, result);
         diagnostics.path = null;

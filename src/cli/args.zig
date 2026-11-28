@@ -120,7 +120,7 @@ pub fn parse(args: []const [:0]const u8) ParseResult {
             },
             .annotate => {
                 i += 1;
-                parsed.paths.annotate = flagValue(args, i) orelse return invalid(arg, .missing_value);
+                parsed.paths.sheet = flagValue(args, i) orelse return invalid(arg, .missing_value);
             },
         }
         seen.insert(flag);
@@ -181,7 +181,7 @@ test "argument order preserves scale and rejects repeated flags" {
     const args = result.command;
     try std.testing.expectEqual(@as(f64, 2), args.options.compare.scale.factor);
     try std.testing.expect(args.output == .json);
-    try std.testing.expectEqualStrings("sheet.png", args.paths.annotate.?);
+    try std.testing.expectEqualStrings("sheet.png", args.paths.sheet.?);
     const repeated = parse(&.{ "uidiff", "before", "after", "--annotate", "a.png", "--annotate", "b.png" });
     try std.testing.expect(repeated == .issue);
     try std.testing.expectEqual(.repeated_flag, repeated.issue.reason);

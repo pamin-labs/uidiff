@@ -120,7 +120,7 @@ fn parseLine(arena: Allocator, line: []const u8) error{ InvalidInput, InvalidSca
     if (request.annotate) |path| {
         // The single run refuses an empty --annotate value too.
         if (path.len == 0) return error.InvalidInput;
-        command.paths.annotate = path;
+        command.paths.sheet = path;
     }
     if (request.scale) |text| command.options.compare.scale = args.parseScale(text) orelse return error.InvalidScale;
     return command;
@@ -215,13 +215,13 @@ test "a request line becomes the single run's command" {
     );
     try std.testing.expectEqualStrings("a.png", full.paths.before);
     try std.testing.expectEqualStrings("b.png", full.paths.after);
-    try std.testing.expectEqualStrings("sheet.png", full.paths.annotate.?);
+    try std.testing.expectEqualStrings("sheet.png", full.paths.sheet.?);
     try std.testing.expectEqual(@as(f64, 1.5), full.options.compare.scale.factor);
     try std.testing.expect(full.output == .json);
     const plain = try parseLine(arena.allocator(), "{\"before\":\"a\",\"after\":\"b\",\"annotate\":null}\r");
     const defaults: args.Command = .{ .paths = .{ .before = "a", .after = "b" } };
     try std.testing.expectEqual(defaults.options.compare.scale.factor, plain.options.compare.scale.factor);
-    try std.testing.expectEqual(@as(?[]const u8, null), plain.paths.annotate);
+    try std.testing.expectEqual(@as(?[]const u8, null), plain.paths.sheet);
 }
 
 test "malformed lines are refused with a code" {
