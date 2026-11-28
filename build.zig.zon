@@ -1,6 +1,6 @@
 .{
     .name = .uidiff,
-    .version = "0.0.3",
+    .version = "0.0.4",
     .dependencies = .{
         .libjpeg_turbo = .{
             .url = "https://github.com/libjpeg-turbo/libjpeg-turbo/archive/refs/tags/3.2.1.tar.gz",
