@@ -113,17 +113,7 @@ test "module roots expose their API" {
     inline for (.{ value, diff, codec, annotate, report, pipeline }) |module| std.testing.refAllDecls(module);
 }
 
-test "required test selection" {
-    const builtin = @import("builtin");
-    const filter = @import("required_test_options").filter;
-    if (filter.len == 0) return;
-    for (builtin.test_functions) |entry| {
-        if (std.mem.endsWith(u8, entry.name, ".test.required test selection")) continue;
-        if (std.mem.indexOf(u8, entry.name, filter) != null) return;
-    }
-    return error.NoSelectedTests;
-}
-
 test {
     std.testing.refAllDecls(@This());
+    _ = @import("testing/required.zig");
 }

@@ -110,8 +110,6 @@ fn packageVersion(b: *Build) []const u8 {
 
 /// The library module's options, without its C decoders.
 fn libraryOptions(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoders: Decoders) Build.Module.CreateOptions {
-    const defaults = b.addOptions();
-    defaults.addOption([]const u8, "filter", "");
     return .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
@@ -124,7 +122,6 @@ fn libraryOptions(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, d
             .{ .name = "zlib_c", .module = decoders.zlib },
             .{ .name = "codec_memory", .module = decoders.memory },
             .{ .name = "png_format", .module = decoders.png_format },
-            .{ .name = "required_test_options", .module = defaults.createModule() },
         }) catch @panic("OOM"),
     };
 }
@@ -132,6 +129,10 @@ fn libraryOptions(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, d
 fn addCheckedLibrary(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, decoders: Decoders, x86_simd: X86Simd) *Build.Module {
     const module = b.createModule(libraryOptions(b, target, optimize, decoders));
     codecs.addCheckedDecoders(b, module, target, x86_simd);
+    // Only the library's test runners read this; addRequiredTest sets the filter.
+    const defaults = b.addOptions();
+    defaults.addOption([]const u8, "filter", "");
+    module.addImport("required_test_options", defaults.createModule());
     module.addImport("uidiff_test_canvas", b.createModule(.{
         .root_source_file = b.path("src/testing/canvas.zig"),
         .target = target,
