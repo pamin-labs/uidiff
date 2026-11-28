@@ -107,8 +107,8 @@ test "a blank sidebar group keeps a new mark stationary beside inserted cards" {
         try std.testing.expect(expect.hasRegion(result.regions, .after, 560, 150, .inserted));
         try std.testing.expectEqual(@as(usize, 1), result.moves.len);
         try std.testing.expectEqual(@as(usize, 40), result.moves[0].after.y - result.moves[0].before.y);
-        try std.testing.expect(result.moves[0].x.count() >= 180);
-        try std.testing.expect(result.moves[0].width.count() >= 380);
+        try std.testing.expect(result.moves[0].x >= 180);
+        try std.testing.expect(result.moves[0].width >= 380);
     }
 }
 
@@ -305,8 +305,8 @@ test "a moved main column describes its own x span beside a fixed sidebar" {
         defer result.deinit(std.testing.allocator);
         try std.testing.expectEqual(pass + 1, result.regions.len);
         try std.testing.expectEqual(@as(usize, 1), result.moves.len);
-        try std.testing.expectEqual(@as(usize, 96), result.moves[0].x.count());
-        try std.testing.expectEqual(@as(usize, 217), result.moves[0].width.count());
+        try std.testing.expectEqual(@as(usize, 96), result.moves[0].x);
+        try std.testing.expectEqual(@as(usize, 217), result.moves[0].width);
         try std.testing.expectEqual(@as(usize, 40), result.moves[0].after.y - result.moves[0].before.y);
     }
 }

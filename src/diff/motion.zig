@@ -50,8 +50,8 @@ pub fn gatherMoves(allocator: Allocator, moves: *std.ArrayList(value.Move), scop
         try moves.append(allocator, .{
             .before = .{ .y = band.before, .height = height },
             .after = .{ .y = band.after, .height = height },
-            .x = .init(span.left),
-            .width = .init(span.width),
+            .x = span.left,
+            .width = span.width,
         });
     }
     var kept = first;
@@ -61,8 +61,8 @@ pub fn gatherMoves(allocator: Allocator, moves: *std.ArrayList(value.Move), scop
         var full = move;
         const pitch = move.shift();
         if (columns.enclosingCard(scope.pair.before, span, scope.frame orelse scope.bounds, move.before.y, columns.CardSearch.motion(span, pitch))) |card| {
-            full.x = .init(card.x);
-            full.width = .init(card.width);
+            full.x = card.x;
+            full.width = card.width;
         }
         moves.items[kept] = full;
         kept += 1;

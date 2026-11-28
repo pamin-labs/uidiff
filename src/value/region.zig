@@ -63,20 +63,6 @@ pub const Side = enum { before, after };
 pub const RowRange = PixelRows(.device);
 /// One preview row range in sheet pixels.
 pub const SheetRowRange = PixelRows(.sheet);
-/// A horizontal position or extent in source device pixels.
-pub const DevicePx = enum(usize) {
-    _,
-
-    /// Wraps a whole-pixel count in source coordinates.
-    pub fn init(count_: usize) DevicePx {
-        return @fromBackingInt(@intCast(count_));
-    }
-
-    /// Unwraps the whole-pixel count for indexing or transport.
-    pub fn count(self: DevicePx) usize {
-        return @backingInt(self);
-    }
-};
 
 /// A block aligned at different vertical positions, within the given columns.
 pub const Move = struct {
@@ -84,10 +70,10 @@ pub const Move = struct {
     before: RowRange,
     /// Aligned rows on the after image.
     after: RowRange,
-    /// Left edge of the source columns shared by both sides.
-    x: DevicePx,
+    /// Left edge of the source columns shared by both sides, in device pixels.
+    x: usize,
     /// Number of source columns in the block.
-    width: DevicePx,
+    width: usize,
 
     /// Returns the absolute vertical displacement in source pixels.
     pub fn shift(self: Move) usize {

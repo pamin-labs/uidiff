@@ -50,8 +50,8 @@ pub const Move = struct {
         return .{
             .before = .{ .y = move.before.y, .height = move.before.height },
             .after = .{ .y = move.after.y, .height = move.after.height },
-            .x = move.x.count(),
-            .width = move.width.count(),
+            .x = move.x,
+            .width = move.width,
         };
     }
 };

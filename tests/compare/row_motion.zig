@@ -95,7 +95,7 @@ test "exact panel shifts outrank repeated stationary paint" {
     try std.testing.expect(expect.hasRegion(result.regions, .after, 150, 112, .inserted));
     try std.testing.expectEqual(@as(usize, 1), result.moves.len);
     try std.testing.expectEqual(@as(usize, 26), result.moves[0].after.y - result.moves[0].before.y);
-    try std.testing.expect(result.moves[0].width.count() < before.view.width);
+    try std.testing.expect(result.moves[0].width < before.view.width);
 }
 
 test "an inserted row against repeated background is one-sided" {

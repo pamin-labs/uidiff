@@ -27,8 +27,8 @@ fn reciprocalMove(boxes: []candidate.Candidate, move: value.Move, pair: value.Pa
     if (old.after != null or new.before != null) return null;
     const pitch = move.shift();
     if (pitch == 0 or move.before.height != pitch or move.after.height != pitch) return null;
-    const x: usize = @min(move.x.count(), @as(usize, bounds.deviceIndex(@min(removed.x, inserted.x))));
-    const right: usize = @max(move.x.count() + move.width.count(), @as(usize, bounds.deviceIndex(@max(removed.right(), inserted.right()))));
+    const x: usize = @min(move.x, @as(usize, bounds.deviceIndex(@min(removed.x, inserted.x))));
+    const right: usize = @max(move.x + move.width, @as(usize, bounds.deviceIndex(@max(removed.right(), inserted.right()))));
     const upper = @min(move.before.y, move.after.y);
     const cover = Box.fromPixels(x, upper, right - x, 2 * pitch);
     if (cover.overlap(removed) != removed.width * removed.height or cover.overlap(inserted) != inserted.width * inserted.height) return null;
@@ -96,8 +96,8 @@ test "reciprocal row moves are grouped only when both rows exchange intact" {
     const move: value.Move = .{
         .before = .{ .y = upper + pitch, .height = pitch },
         .after = .{ .y = upper, .height = pitch },
-        .x = .init(18),
-        .width = .init(200),
+        .x = 18,
+        .width = 200,
     };
     var copy = candidates;
     try std.testing.expectEqual(@as(?usize, 1), mergeSwap(&copy, &.{move}, .{ .before = before.view, .after = after.view }, .one));

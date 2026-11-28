@@ -251,7 +251,7 @@ test "the streaming gutter connects shifted rows and shows the insertion wedge" 
     const pixels: [32 * 128]Pixel = @splat(white);
     const image: Image = .{ .width = 32, .height = 128, .pixels = &pixels };
     const insert: Region = .{ .number = 1, .kind = .inserted, .after = value.Box.fromPixels(3, 44, 20, 10) };
-    const moved: Move = .{ .before = .{ .y = 40, .height = 60 }, .after = .{ .y = 60, .height = 60 }, .x = .init(0), .width = .init(32) };
+    const moved: Move = .{ .before = .{ .y = 40, .height = 60 }, .after = .{ .y = 60, .height = 60 }, .x = 0, .width = 32 };
     const rows = try Rows.init(allocator, image, image, &.{insert}, &.{moved});
     defer rows.deinit(allocator);
     const storage = try allocator.alloc(Pixel, rows.plan.size.width);
@@ -269,7 +269,7 @@ test "panoramic overviews reserve no alignment strip even when rows move" {
     const allocator = std.testing.allocator;
     const pixels: [360 * 120]Pixel = @splat(white);
     const image: Image = .{ .width = 360, .height = 120, .pixels = &pixels };
-    const move: Move = .{ .before = .{ .y = 10, .height = 30 }, .after = .{ .y = 60, .height = 30 }, .x = .init(0), .width = .init(360) };
+    const move: Move = .{ .before = .{ .y = 10, .height = 30 }, .after = .{ .y = 60, .height = 30 }, .x = 0, .width = 360 };
     const rows = try Rows.init(allocator, image, image, &.{}, &.{move});
     defer rows.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 0), rows.plan.ribbons.len);

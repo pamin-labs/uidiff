@@ -245,9 +245,9 @@ fn planRibbons(allocator: Allocator, moves: []const Move, details: []const Detai
         if (move.before.y > before.height or move.before.height > before.height - move.before.y or
             move.after.y > after.height or move.after.height > after.height - move.after.y or
             move.before.height == 0 or move.before.height != move.after.height or move.before.y == move.after.y or
-            move.x.count() > @min(before.width, after.width) or move.width.count() > @min(before.width, after.width) - move.x.count() or
-            move.width.count() == 0) return error.InvalidImage;
-        const weight = move.width.count() *| move.before.height;
+            move.x > @min(before.width, after.width) or move.width > @min(before.width, after.width) - move.x or
+            move.width == 0) return error.InvalidImage;
+        const weight = move.width *| move.before.height;
         if (weight > area) {
             area = weight;
             column = move;

@@ -25,8 +25,6 @@ pub const SheetRect = region.SheetRect;
 pub const Scale = scale.Scale;
 /// CSS-pixel length.
 pub const CssPx = scale.CssPx;
-/// Source device-pixel position or length.
-pub const DevicePx = region.DevicePx;
 /// Rows in the rendered sheet's coordinate space.
 pub const SheetRowRange = region.SheetRowRange;
 /// The sides affected by a change.

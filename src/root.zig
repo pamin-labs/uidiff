@@ -79,8 +79,6 @@ pub const Sheet = annotate.Sheet;
 pub const RenderError = annotate.RenderError;
 /// A vertically moved row range and its source columns.
 pub const Move = value.Move;
-/// One horizontal position or extent in source device pixels.
-pub const DevicePx = value.DevicePx;
 /// A row range in source device pixels.
 pub const RowRange = value.RowRange;
 /// A length in CSS pixels.
