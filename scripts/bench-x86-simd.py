@@ -22,7 +22,7 @@ def rotated_runs(arms, count):
             yield run, arm
 
 
-def build(step, variant="baseline", *options):
+def build(step, variant="all_levels", *options):
     result = subprocess.run(
         ["zig", "build", step, "-Doptimize=safe", "-Dcpu=baseline", f"-Dx86-simd={variant}", *options],
         check=False,
@@ -96,7 +96,7 @@ def bench_lto():
 
     with tempfile.TemporaryDirectory(prefix="uidiff-lto-") as scratch:
         root = Path(scratch)
-        build("bench-inputs", "baseline", target, "--prefix", str(root))
+        build("bench-inputs", "all_levels", target, "--prefix", str(root))
         workloads = [
             line.split("\t") for line in (root / "bench-inputs.tsv").read_text().splitlines()
         ]

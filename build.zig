@@ -295,7 +295,7 @@ fn addPngTestGates(b: *Build, target: Build.ResolvedTarget, optimize: Optimize, 
     var query = target.query;
     query.cpu_model = .baseline;
     const baseline = b.resolveTargetQuery(query);
-    const fallback = addCheckedLibrary(b, baseline, optimize, codecs.addDecoders(b, baseline), .without_avx2);
+    const fallback = addCheckedLibrary(b, baseline, optimize, codecs.addDecoders(b, baseline), .shipped);
     addRequiredTest(b, fallback, "test-x86-fallback", "Check PNG dictionary wrapping without AVX2", "streaming PNG matches procedural RGBA across dictionary wraps");
 }
 
