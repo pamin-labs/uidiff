@@ -74,8 +74,21 @@ pub const Collector = struct {
         var box = self.absorb(.{ .region = region, .pixels = @min(pixels, self.min_pixels) });
         if (self.len == self.boxes.len) self.discardSparse();
         while (self.len == self.boxes.len) {
+            const widest = self.gap_px >= self.max_gap_px;
             self.expand();
             box = self.absorb(box);
+            // At the widest gap, stored boxes of different kinds that share no
+            // side can still fill the storage, and no further pass would make
+            // room. Stored boxes are never sparse, so a box that is not sparse
+            // joins one of them across kinds, as expand does. A sparse box that
+            // still finds no room is dropped, as growGap would drop it.
+            if (widest and self.len == self.boxes.len) {
+                box = self.absorbAcrossKinds(box);
+                if (self.len == self.boxes.len) {
+                    std.debug.assert(box.pixels < self.min_pixels);
+                    return false;
+                }
+            }
         }
         self.boxes[self.len] = box;
         self.len += 1;
@@ -119,6 +132,12 @@ pub const Collector = struct {
             } else i += 1;
         }
         return box;
+    }
+
+    fn absorbAcrossKinds(self: *Collector, incoming: candidate.Candidate) candidate.Candidate {
+        self.expanding = true;
+        defer self.expanding = false;
+        return self.absorb(incoming);
     }
 
     fn expand(self: *Collector) void {
@@ -392,6 +411,26 @@ test "a full pending buffer expands and accepts another distinct box" {
     collector.growGap();
     try std.testing.expectEqual(@as(usize, 1), collector.len);
     try std.testing.expectEqual(@as(f64, 61_441), collector.boxes[0].region.after.?.width);
+}
+
+test "a full buffer of one-sided boxes takes a paired box at the widest gap" {
+    var storage: [2]candidate.Candidate = undefined;
+    var collector: Collector = .{ .boxes = &storage, .gap_px = 12, .max_gap_px = 13, .min_pixels = 1 };
+    collector.add(.{ .before = Box.fromPixels(0, 0, 2, 2) });
+    collector.add(.{ .after = Box.fromPixels(11, 0, 2, 2) });
+    collector.add(.{ .before = Box.fromPixels(0, 11, 2, 2), .after = Box.fromPixels(0, 11, 2, 2) });
+    // The paired box shares a side with each one-sided box and joins both.
+    try std.testing.expectEqual(@as(usize, 1), collector.len);
+    try std.testing.expectEqualDeep(Box.fromPixels(0, 0, 13, 13), collector.boxes[0].region.after.?);
+}
+
+test "a full buffer of one-sided boxes drops a sparse paired box at the widest gap" {
+    var storage: [2]candidate.Candidate = undefined;
+    var collector: Collector = .{ .boxes = &storage, .gap_px = 12, .max_gap_px = 13, .min_pixels = 4 };
+    collector.add(.{ .before = Box.fromPixels(0, 0, 2, 2) });
+    collector.add(.{ .after = Box.fromPixels(11, 0, 2, 2) });
+    try std.testing.expect(!collector.addPixels(.{ .before = Box.fromPixels(0, 11, 2, 2), .after = Box.fromPixels(0, 11, 2, 2) }, 1));
+    try std.testing.expectEqual(@as(usize, 2), collector.len);
 }
 
 test "a serpentine larger than the seed stack is one component" {
