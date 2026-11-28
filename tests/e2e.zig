@@ -413,19 +413,24 @@ test "malformed arguments and invalid scale return usage errors" {
     }
 }
 
-test "no arguments with stdin not a terminal reads requests until its end" {
+test "no arguments with empty piped stdin prints nothing and exits successfully" {
     const exe = try absolute(options.executable);
     defer allocator.free(exe);
     var child = try std.process.spawn(testing.io, .{ .argv = &.{exe}, .stdin = .pipe, .stdout = .pipe, .stderr = .pipe });
     defer child.kill(testing.io);
     child.stdin.?.close(testing.io);
     child.stdin = null;
-    var buffer: [256]u8 = undefined;
-    var reader = child.stdout.?.readerStreaming(testing.io, &buffer);
-    const output = try reader.interface.allocRemaining(allocator, budget);
+    var out_buffer: [256]u8 = undefined;
+    var out = child.stdout.?.readerStreaming(testing.io, &out_buffer);
+    const output = try out.interface.allocRemaining(allocator, budget);
     defer allocator.free(output);
+    var err_buffer: [256]u8 = undefined;
+    var err = child.stderr.?.readerStreaming(testing.io, &err_buffer);
+    const errors = try err.interface.allocRemaining(allocator, budget);
+    defer allocator.free(errors);
     try testing.expectEqual(std.process.Child.Term{ .exited = 0 }, try child.wait(testing.io));
     try testing.expectEqualStrings("", output);
+    try testing.expectEqualStrings("", errors);
 }
 
 test "help prints usage on stdout and exits successfully" {

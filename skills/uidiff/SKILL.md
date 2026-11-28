@@ -51,7 +51,7 @@ your change:
 uidiff before.png after.png --scale 2 --annotate sheet.png > result.json
 ```
 
-Pass captures as files. `-` does not read stdin, and input pipes are unsupported.
+Pass captures as files. `-` does not read stdin, and a capture cannot come through a pipe.
 It prints one JSON line, `{"status":1,"report":{...}}`, or
 `{"status":2,"error":"FileNotFound","path":"a.png"}` when the comparison fails.
 For many pairs, name them all in one command, each pair followed by its own

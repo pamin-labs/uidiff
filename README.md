@@ -132,7 +132,9 @@ Each comparison prints one line on stdout, in order and flushed as it is written
 
 ### Requests on stdin
 
-With no arguments, uidiff reads requests from stdin, one JSON object per line; when stdin is a terminal it prints usage on stderr and exits 2 instead: `before` and `after` are paths, `scale` is optional and uses the `--scale` grammar as a string such as `"2"`, and `annotate` optionally names a sheet to write. Other fields are ignored. Each request gets one output line, as above:
+With no arguments, uidiff reads requests from stdin, one JSON object per line: `before` and `after` are paths, `scale` is optional and uses the `--scale` grammar as a string such as `"2"`, and `annotate` optionally names a sheet to write. Other fields are ignored. Each request gets one output line, as above. When stdin is a terminal, uidiff prints usage on stderr and exits 2 instead.
+
+A request line:
 
 ```text
 {"before":"a.png","after":"b.png","scale":"2","annotate":"sheet.png"}
@@ -140,7 +142,7 @@ With no arguments, uidiff reads requests from stdin, one JSON object per line; w
 
 A line that is not a valid request gives `InvalidInput`: that includes a blank line and a field given twice, while `null` counts as an absent field. An invalid `scale` gives `InvalidScale`, and a line longer than the request line limit gives `LineTooLong`; requests are a few hundred bytes, far below it. One process for many pairs skips the start-up each run pays, whether the pairs come as arguments or on stdin.
 
-Pass captures as files. `-` does not read stdin, and input pipes are unsupported. A symlink at the sheet path is replaced by the PNG itself, unless it points to an input, which raises `SheetIsInput`.
+Pass captures as files. `-` does not read stdin, and a capture cannot come through a pipe. A symlink at the sheet path is replaced by the PNG itself, unless it points to an input, which raises `SheetIsInput`.
 
 Connected changes smaller than four pixels are treated as noise. If the smaller capture has at most 1024 pixels, single-pixel regions can be reported.
 

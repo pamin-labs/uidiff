@@ -30,8 +30,8 @@ pub const Command = union(enum) {
     /// The comparisons named on the command line, in order, at least one.
     /// Slices borrow the arguments.
     compare: []const Request,
-    /// No arguments: requests come as JSON lines on standard input, unless
-    /// it is a terminal (see no_paths).
+    /// No arguments: requests come as JSON lines on standard input; the
+    /// entry refuses this with no_paths when standard input is a terminal.
     stdin,
     help,
     version,
@@ -39,7 +39,8 @@ pub const Command = union(enum) {
 
 /// The offending argument and why it could not be used.
 pub const Issue = struct {
-    /// Empty only when the offending argument is itself empty.
+    /// Empty when the offending argument is empty or the issue names none
+    /// (no_paths).
     argument: []const u8,
     reason: Reason,
 
