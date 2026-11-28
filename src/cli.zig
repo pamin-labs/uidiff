@@ -130,6 +130,17 @@ noinline fn logPathError(argument: []const u8, reason: []const u8) void {
     log.err("{f}: {s}", .{ std.zig.fmtString(argument), reason });
 }
 
+// The fuzzer runs one fuzz test per test binary, so the CLI's argument and
+// batch request parsers share this target.
+fn fuzzInput(_: void, smith: *std.testing.Smith) !void {
+    if (smith.value(bool)) return args.fuzzParse({}, smith);
+    return batch.fuzzParseLine({}, smith);
+}
+
+test "fuzz command arguments and batch request lines" {
+    try std.testing.fuzz({}, fuzzInput, .{});
+}
+
 test {
     std.testing.refAllDecls(args);
     std.testing.refAllDecls(pages);

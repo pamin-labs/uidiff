@@ -97,6 +97,17 @@ pub fn run(io: Io, allocator: Allocator, input: *Io.Reader, output: *Io.Writer) 
     return worst;
 }
 
+/// Parses a request line the fuzzer builds; the CLI's one fuzz target calls it.
+pub fn fuzzParseLine(_: void, smith: *std.testing.Smith) !void {
+    var storage: [max_fuzz_line_bytes]u8 = undefined;
+    const line = storage[0..smith.slice(&storage)];
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const command = parseLine(arena.allocator(), line) catch return;
+    try std.testing.expect(command.options.compare.scale.isValid());
+    try std.testing.expect(command.output == .json);
+}
+
 /// Parses a line into the command a single run would get. Strings borrow
 /// line or live in arena.
 fn parseLine(arena: Allocator, line: []const u8) error{ InvalidInput, InvalidScale, OutOfMemory }!args.Command {
@@ -192,16 +203,6 @@ noinline fn writeFailed(output: *Io.Writer, err: LineError, path: ?[]const u8) I
     try output.writeByte('\n');
 }
 
-fn fuzzParseLine(_: void, smith: *std.testing.Smith) !void {
-    var storage: [max_fuzz_line_bytes]u8 = undefined;
-    const line = storage[0..smith.slice(&storage)];
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const command = parseLine(arena.allocator(), line) catch return;
-    try std.testing.expect(command.options.compare.scale.isValid());
-    try std.testing.expect(command.output == .json);
-}
-
 fn expectLine(comptime expected: []const u8, line: []const u8) !void {
     try std.testing.expectEqualStrings(expected ++ "\n", line);
 }
@@ -272,10 +273,6 @@ test "a batch answers every line in order and exits with the worst status" {
         \\{"status":2,"error":"InvalidInput"}
         \\{"status":2,"error":"InvalidScale"}
     , output.written());
-}
-
-test "fuzz batch request lines" {
-    try std.testing.fuzz({}, fuzzParseLine, .{});
 }
 
 test {

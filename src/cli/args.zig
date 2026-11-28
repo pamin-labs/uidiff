@@ -131,11 +131,8 @@ pub noinline fn parseScale(text: []const u8) ?uidiff.Scale {
     return if (scale.isValid()) scale else null;
 }
 
-fn invalid(arg: []const u8, reason: Issue.Reason) ParseResult {
-    return .{ .issue = .{ .argument = arg, .reason = reason } };
-}
-
-fn fuzzParse(_: void, smith: *std.testing.Smith) !void {
+/// Parses arguments the fuzzer builds; the CLI's one fuzz target calls it.
+pub fn fuzzParse(_: void, smith: *std.testing.Smith) !void {
     var storage: [max_fuzz_args][max_fuzz_arg_bytes + 1]u8 = undefined;
     var args: [max_fuzz_args][:0]const u8 = undefined;
     const count = smith.valueRangeAtMost(u8, 0, max_fuzz_args);
@@ -155,6 +152,10 @@ fn fuzzParse(_: void, smith: *std.testing.Smith) !void {
     try std.testing.expectEqualStrings(args[1], command.paths.before);
     try std.testing.expectEqualStrings(args[2], command.paths.after);
     try std.testing.expect(command.options.compare.scale.isValid());
+}
+
+fn invalid(arg: []const u8, reason: Issue.Reason) ParseResult {
+    return .{ .issue = .{ .argument = arg, .reason = reason } };
 }
 
 test "usage agrees with every flag spelling" {
@@ -202,10 +203,6 @@ test "a scale that is not a plain decimal is a usage error" {
         try std.testing.expectEqual(.invalid_scale, result.issue.reason);
         try std.testing.expectEqualStrings(text, result.issue.argument);
     }
-}
-
-test "fuzz command arguments" {
-    try std.testing.fuzz({}, fuzzParse, .{});
 }
 
 test {
