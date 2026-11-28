@@ -119,9 +119,9 @@ pub fn lines(io: Io, blocks: *reuse.LargeBlocks, file: *Io.File.Reader, output: 
     var answers: Answers = .init(io, allocator, output);
     defer answers.deinit();
     while (true) {
-        // Request strings without escapes borrow the line; the rest, and the
-        // scanner's nesting stack, live here until the line is answered. A
-        // fresh arena per line costs one allocation and less code than reset.
+        // Request strings and the scanner's nesting stack live here until the
+        // line is answered. A fresh arena per line costs one allocation and
+        // less code than reset.
         var strings: std.heap.ArenaAllocator = .init(allocator);
         defer strings.deinit();
         const parsed: RequestError!Request = if (input.takeDelimiter('\n')) |taken| parsed: {
@@ -135,8 +135,8 @@ pub fn lines(io: Io, blocks: *reuse.LargeBlocks, file: *Io.File.Reader, output: 
                 break :parsed error.LineTooLong;
             },
         };
-        // The request no longer borrows the line, so probing may refill the buffer.
-        if (try atEnd(file)) blocks.startLast();
+        // The request does not borrow the line, so probing may refill the buffer.
+        if (atEnd(file)) blocks.startLast();
         try answers.answer(parsed);
     }
     return answers.worst;
@@ -145,13 +145,11 @@ pub fn lines(io: Io, blocks: *reuse.LargeBlocks, file: *Io.File.Reader, output: 
 /// Whether input has no line left, known without waiting: nothing is
 /// buffered, the file is ready to read, and reading it gives its end. A pipe
 /// still open with nothing written counts as more to come, as does Windows,
-/// where no readiness check is made here.
-fn atEnd(file: *Io.File.Reader) error{ReadFailed}!bool {
+/// where no readiness check is made here. A failed read counts as more to
+/// come too: the next line's read meets the failure and reports it.
+fn atEnd(file: *Io.File.Reader) bool {
     if (file.interface.bufferedLen() != 0 or !readable(file.file)) return false;
-    file.interface.fillMore() catch |err| switch (err) {
-        error.EndOfStream => return true,
-        error.ReadFailed => return error.ReadFailed,
-    };
+    file.interface.fillMore() catch |err| return err == error.EndOfStream;
     return false;
 }
 
@@ -160,8 +158,10 @@ fn readable(file: Io.File) bool {
     if (builtin.os.tag == .windows) return false;
     var fds = [_]std.posix.pollfd{.{ .fd = file.handle, .events = std.posix.POLL.IN, .revents = 0 }};
     // A failed check cannot say the input ended, so more may come.
-    const ready = std.posix.poll(&fds, 0) catch return false;
-    return ready != 0;
+    _ = std.posix.poll(&fds, 0) catch return false;
+    // Only data or a hang-up promises a read that returns at once; a device
+    // poll cannot check reports POLLNVAL, and reading it may wait.
+    return fds[0].revents & (std.posix.POLL.IN | std.posix.POLL.HUP) != 0;
 }
 
 /// Discards the rest of an over-long line.
@@ -205,7 +205,9 @@ test "answer lines carry the status, the raw report or the error and path" {
 test "input lines are answered in order, the worst status wins and the last line is marked" {
     const io = std.testing.io;
     const long: [max_line_bytes + 1]u8 = @splat('x');
-    const text = "{\"before\":\"missing-before.png\",\"after\":\"b.png\"}\n" ++ long ++ "\nnot json\n{\"before\":\"a\",\"after\":\"b\",\"scale\":\"0\"}";
+    // The first long line and its newline overflow the buffer; the last one,
+    // with no newline, fills it exactly and is refused by its length.
+    const text = "{\"before\":\"missing-before.png\",\"after\":\"b.png\"}\n" ++ long ++ "\nnot json\n{\"before\":\"a\",\"after\":\"b\",\"scale\":\"0\"}\n" ++ long;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(io, .{ .sub_path = "lines", .data = text });
@@ -225,7 +227,23 @@ test "input lines are answered in order, the worst status wins and the last line
         \\{"status":2,"error":"LineTooLong"}
         \\{"status":2,"error":"InvalidInput"}
         \\{"status":2,"error":"InvalidScale"}
+        \\{"status":2,"error":"LineTooLong"}
     , output.written());
+}
+
+test "input is at its end only once the last line is taken" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "lines", .data = "a\nb" });
+    const file = try tmp.dir.openFile(io, "lines", .{});
+    defer file.close(io);
+    var buffer: [16]u8 = undefined;
+    var input = file.readerStreaming(io, &buffer);
+    try std.testing.expectEqualStrings("a", (try input.interface.takeDelimiter('\n')).?);
+    try std.testing.expect(!atEnd(&input));
+    try std.testing.expectEqualStrings("b", (try input.interface.takeDelimiter('\n')).?);
+    try std.testing.expect(atEnd(&input));
 }
 
 test "command line requests are answered in order and the last is marked" {
