@@ -4,6 +4,7 @@ const uidiff = @import("uidiff");
 const args = @import("cli/args.zig");
 const pages = @import("cli/pages.zig");
 const batch = @import("cli/batch.zig");
+const reuse = @import("cli/reuse.zig");
 const Status = @import("cli/status.zig").Status;
 const cli_options = @import("cli_options");
 const Io = std.Io;
@@ -87,11 +88,13 @@ fn run(io: Io, allocator: Allocator, input: std.process.Args, arena: Allocator, 
 }
 
 fn runBatch(io: Io, allocator: Allocator, arena: Allocator, diagnostics: *uidiff.Diagnostics) RunError!Status {
+    var blocks: reuse.LargeBlocks = .{ .io = io, .backing = allocator };
+    defer blocks.deinit();
     const input_buffer = try arena.alloc(u8, batch.max_line_bytes + 1);
     var stdin = Io.File.stdin().readerStreaming(io, input_buffer);
     var output_buffer: [4096]u8 = undefined;
     var stdout = Io.File.stdout().writerStreaming(io, &output_buffer);
-    return batch.run(io, allocator, &stdin.interface, &stdout.interface) catch |err| switch (err) {
+    return batch.run(io, blocks.allocator(), &stdin.interface, &stdout.interface) catch |err| switch (err) {
         error.ReadFailed => {
             diagnostics.path = stdin_name;
             return stdin.err orelse err;
@@ -131,6 +134,7 @@ test {
     std.testing.refAllDecls(args);
     std.testing.refAllDecls(pages);
     std.testing.refAllDecls(batch);
+    std.testing.refAllDecls(reuse);
     std.testing.refAllDecls(@import("cli/status.zig"));
 }
 
