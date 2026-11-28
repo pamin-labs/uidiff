@@ -19,12 +19,12 @@ const Scratch = mask.Scratch;
 
 const CompareBuffers = struct {
     mask: []mask.Cell = &.{},
-    seeds: std.ArrayList(u32) = .empty,
+    seeds: []u32 = &.{},
     alignment: rows.Workspace = .{},
 
     fn deinit(self: *CompareBuffers, allocator: Allocator) void {
         self.alignment.deinit(allocator);
-        self.seeds.deinit(allocator);
+        value.freeUnfilled(u32, allocator, self.seeds);
         value.freeUnfilled(mask.Cell, allocator, self.mask);
     }
 
@@ -39,9 +39,8 @@ const CompareBuffers = struct {
                 break :grow try value.allocUnfilled(mask.Cell, allocator, area);
             };
         }
-        try self.seeds.ensureTotalCapacityPrecise(allocator, seed_rows);
-        self.seeds.items.len = seed_rows;
-        return .{ .cells = self.mask[0..area], .seeds = self.seeds.items };
+        const seeds = try value.reserveUnfilled(u32, allocator, &self.seeds, seed_rows);
+        return .{ .cells = self.mask[0..area], .seeds = seeds };
     }
 };
 
@@ -55,12 +54,14 @@ pub fn collect(allocator: Allocator, collector: *Collector, moves: *std.ArrayLis
     const before = scope.pair.before;
     const after = scope.pair.after;
     const row_count = before.height + after.height;
-    const storage = try allocator.alloc(u64, 2 * row_count);
-    defer allocator.free(storage);
+    // alignSpan writes each row key and filtered key before reading it, and the
+    // band builder writes each band it returns.
+    const storage = try value.allocUnfilled(u64, allocator, 2 * row_count);
+    defer value.freeUnfilled(u64, allocator, storage);
     const keys = storage[0..row_count];
     const filtered = storage[row_count..];
-    const bands = try allocator.alloc(rows.Band, row_count + 1);
-    defer allocator.free(bands);
+    const bands = try value.allocUnfilled(rows.Band, allocator, row_count + 1);
+    defer value.freeUnfilled(rows.Band, allocator, bands);
 
     var buffers: CompareBuffers = .{};
     defer buffers.deinit(allocator);
@@ -68,8 +69,9 @@ pub fn collect(allocator: Allocator, collector: *Collector, moves: *std.ArrayLis
     var aligned = try alignSpan(allocator, scope, scroll_limit_px, local_limit_px, keys, bands, filtered, &buffers.alignment);
     const ambiguous = if (aligned) |whole| mixedShifts(whole) else true;
     if (scope.span.width > columns.min_gutter and (ambiguous or hasFlatEdge(scope))) {
-        const stationary = try allocator.alloc(bool, scope.span.width);
-        defer allocator.free(stationary);
+        // columns.partition sets every column first.
+        const stationary = try value.allocUnfilled(bool, allocator, scope.span.width);
+        defer value.freeUnfilled(bool, allocator, stationary);
         var parts = columns.partition(scope.pair, scope.span, stationary);
         if (parts.next()) |first| if (first.span.width != scope.span.width and
             (ambiguous or hasFlatColumn(scope.pair, first, parts)))
@@ -339,7 +341,7 @@ test "mask growth avoids having both sizes live on a remapping allocator" {
     {
         defer buffers.deinit(allocator);
         // Reserve the seeds first so the mask is eligible for in-place growth.
-        try buffers.seeds.ensureTotalCapacityPrecise(allocator, large_area);
+        _ = try value.reserveUnfilled(u32, allocator, &buffers.seeds, large_area);
         const small = try buffers.prepare(allocator, small_area);
         @memset(small.cells, .clear);
         const large = try buffers.prepare(allocator, large_area);

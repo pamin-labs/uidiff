@@ -81,8 +81,9 @@ pub fn compareChecked(allocator: Allocator, before: Image, after: Image, options
     }
     // The integer gap and scroll tolerance are clamped to validated image dimensions.
     const capacity = if (changed.width == 0) 1 else Collector.capacity(before.size(), after.size(), @intFromFloat(gap_px));
-    const storage = try allocator.alloc(regions.Candidate, capacity);
-    defer allocator.free(storage);
+    // The collector reads only the boxes it has stored.
+    const storage = try value.allocUnfilled(regions.Candidate, allocator, capacity);
+    defer value.freeUnfilled(regions.Candidate, allocator, storage);
     var collector = Collector.init(storage, before.size(), after.size(), gap_px, max_gap_px);
     var moves: std.ArrayList(value.Move) = .empty;
     defer moves.deinit(allocator);

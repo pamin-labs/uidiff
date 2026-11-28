@@ -55,6 +55,8 @@ pub const reversePair = image.reversePair;
 pub const allocUnfilled = unfilled.allocUnfilled;
 /// Releases storage obtained from allocUnfilled.
 pub const freeUnfilled = unfilled.freeUnfilled;
+/// Grows allocUnfilled storage without keeping its contents.
+pub const reserveUnfilled = unfilled.reserveUnfilled;
 
 test {
     std.testing.refAllDecls(image);

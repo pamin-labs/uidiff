@@ -180,8 +180,9 @@ fn preflightSheet(io: Io, allocator: Allocator, paths: Paths, sheet_path: []cons
 fn writeSheet(io: Io, allocator: Allocator, path: []const u8, pair: value.Pair, result: diff.Comparison) WriteError!void {
     var file = try Io.Dir.cwd().createFileAtomic(io, path, .{ .replace = true });
     defer file.deinit(io);
-    const buffer = try allocator.alloc(u8, write_buffer_bytes);
-    defer allocator.free(buffer);
+    // The file writer reads only bytes it has buffered.
+    const buffer = try value.allocUnfilled(u8, allocator, write_buffer_bytes);
+    defer value.freeUnfilled(u8, allocator, buffer);
     var writer = file.file.writer(io, buffer);
     encodeSheetWithIo(io, allocator, pair, result.regions, result.moves, &writer.interface) catch |err| switch (err) {
         error.WriteFailed => return writer.err orelse err,

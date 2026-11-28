@@ -31,7 +31,7 @@ Zig source files use snake_case identifiers as basenames. `tests/source/order.zi
 - `src/annotate/drawing/` owns row painting, sheet copy, palette, bitmap text and the font atlas behind `src/annotate/drawing.zig`.
 - `src/annotate/badges/` owns badge placement, routing and painting behind `src/annotate/badges.zig`.
 - `src/pipeline.zig` is the file pipeline: it checks the options once, decodes both files, compares them and writes the sheet atomically. The CLI calls it and only translates.
-- `src/cli.zig` is the CLI entry and `src/cli/` its argument syntax and usage text.
+- `src/cli.zig` is the CLI entry and `src/cli/` its argument syntax, usage text and the CLI's huge-page allocator (`src/cli/pages.zig`).
 - `bench/` measures the public API. `tools/fixtures/` generates the committed fixtures and `tools/size.zig` checks the CLI binary size.
 - `npm/` contains the JavaScript launcher. The release tooling stages its manifest and the scoped launcher and its native platform packages from the build version and target list.
 - `skills/uidiff/` documents screenshot capture, comparison and report interpretation for agents.

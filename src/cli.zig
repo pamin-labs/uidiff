@@ -2,6 +2,7 @@
 const std = @import("std");
 const uidiff = @import("uidiff");
 const args = @import("cli/args.zig");
+const pages = @import("cli/pages.zig");
 const cli_options = @import("cli_options");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
@@ -29,8 +30,10 @@ const log = std.log.scoped(.uidiff);
 pub fn main(init: std.process.Init.Minimal) MainError!u8 {
     // The decoders' many short-lived blocks go through this allocator. libc
     // is linked for the decoders already, and its malloc reuses freed blocks;
-    // tests use std.testing.allocator to check for leaks.
-    const allocator = std.heap.c_allocator;
+    // tests use std.testing.allocator to check for leaks. On Linux, large
+    // blocks go on huge pages instead.
+    var huge_pages: pages.HugePages = .{ .backing = std.heap.c_allocator };
+    const allocator = huge_pages.allocator();
     var threaded: Io.Threaded = .init(allocator, .{ .argv0 = .init(init.args), .environ = init.environ });
     defer threaded.deinit();
     const io = threaded.io();
@@ -104,6 +107,7 @@ noinline fn logPathError(argument: []const u8, reason: []const u8) void {
 
 test {
     std.testing.refAllDecls(args);
+    std.testing.refAllDecls(pages);
 }
 
 test {
