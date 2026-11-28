@@ -21,11 +21,11 @@ fn fuzzCompare(_: void, smith: *testing.Smith) !void {
         }
     }
     const scale: f64 = @as(f64, @floatFromInt(smith.valueRangeAtMost(u8, 1, max_scale_quarters))) / 4;
-    const result = try uidiff.compare(testing.allocator, .{ .before = before, .after = after }, .{ .scale = .{ .factor = scale } });
+    const pair: uidiff.Pair = .{ .before = before, .after = after };
+    const result = try uidiff.compare(testing.allocator, pair, .{ .scale = .{ .factor = scale } });
     defer result.deinit(testing.allocator);
     try testing.expect(result.regions.len <= uidiff.max_regions);
-    try testing.expectEqual(@max(before.width, after.width), result.width);
-    try testing.expectEqual(@max(before.height, after.height), result.height);
+    try testing.expectEqual(pair.canvas(), result.canvas());
     for (result.regions, 1..) |region, number| {
         try testing.expectEqual(number, region.number);
         try testing.expect(region.before != null or region.after != null);

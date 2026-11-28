@@ -69,12 +69,13 @@ pub fn compare(allocator: Allocator, before: Image, after: Image, options: Optio
 /// owns the returned comparison.
 pub fn compareChecked(allocator: Allocator, before: Image, after: Image, options: Checked) CompareError!Comparison {
     if (!before.valid() or !after.valid()) return error.InvalidImage;
-    const width = @max(before.width, after.width);
-    const height = @max(before.height, after.height);
+    const pair: value.Pair = .{ .before = before, .after = after };
+    const combined = pair.canvas();
+    const width = combined.width;
+    const height = combined.height;
     const max_gap_px: f64 = @floatFromInt(@max(width, height));
     const gap_px = @min(options.scale.devicePixels(regions.merge_gap), max_gap_px);
     const overlap_width = @min(before.width, after.width);
-    const pair: value.Pair = .{ .before = before, .after = after };
     const changed = columns.span(pair, overlap_width);
     if (changed.width == 0 and before.width == after.width) {
         return .{ .regions = &.{}, .width = width, .height = height };

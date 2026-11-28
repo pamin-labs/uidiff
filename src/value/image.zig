@@ -88,6 +88,11 @@ pub const Pair = struct {
             .after => self.after,
         };
     }
+
+    /// Returns the combined canvas: the larger width and height of the two images.
+    pub fn canvas(self: Pair) Size {
+        return .{ .width = @max(self.before.width, self.after.width), .height = @max(self.before.height, self.after.height) };
+    }
 };
 
 /// Packed RGBA8 lanes are 4 on SSE2 and NEON, and 8 on AVX2. Without SIMD the compiler splits the 4-lane fallback into scalars.

@@ -23,11 +23,8 @@ fn fuzzSheet(_: void, smith: *testing.Smith) !void {
             .after = if (sides & 2 != 0) box(smith, after.size()) else null,
         };
     }
-    const comparison: uidiff.Comparison = .{
-        .regions = regions,
-        .width = @max(before.width, after.width),
-        .height = @max(before.height, after.height),
-    };
+    const canvas = (uidiff.Pair{ .before = before, .after = after }).canvas();
+    const comparison: uidiff.Comparison = .{ .regions = regions, .width = canvas.width, .height = canvas.height };
     var encoded: std.Io.Writer.Allocating = .init(testing.allocator);
     defer encoded.deinit();
     try uidiff.encodeSheet(testing.allocator, .{ .before = before, .after = after }, comparison.regions, comparison.moves, &encoded.writer);
