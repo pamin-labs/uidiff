@@ -66,6 +66,8 @@ const export_row = "export";
 const testing_root = "src/testing.zig";
 /// Files in `src/testing/` that belong to `uidiff`, path-imported by its test declarations.
 const library_test_files = [_][]const u8{ "src/testing/jpeg.zig", "src/testing/required.zig" };
+/// Files in a production layer that only its test declarations import.
+const test_only_files = [_][]const u8{"src/codec/png/streams.zig"};
 const diff_directory = "src/diff/";
 const annotate_directory = "src/annotate/";
 
@@ -255,6 +257,10 @@ fn allowedImport(allocator: Allocator, rules: Rules, source: *const Source, node
     const resolved = try std.fs.path.resolvePosix(allocator, &.{ std.fs.path.dirnamePosix(from_path) orelse ".", target });
     defer allocator.free(resolved);
     const to = rules.layerOf(resolved) orelse return false;
+    if (contains(&test_only_files, resolved)) {
+        const decl = enclosingDeclaration(&source.tree, node) orelse return false;
+        if (source.tree.nodeTag(decl) != .test_decl) return false;
+    }
     if (std.mem.eql(u8, to.paths[0], testing_root) and from != to) {
         if (!std.mem.startsWith(u8, from_path, "src/") or !contains(&library_test_files, resolved)) return false;
         const tree = &source.tree;
@@ -426,6 +432,8 @@ test "diff units only import lower tiers and fixtures stay in test scope" {
     try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/regions/moves.zig", "test { _ = @import(\"../span.zig\"); }"));
     try testing.expectError(error.ForbiddenImport, checkWithText("src/codec.zig", "const sample = @import(\"testing/jpeg.zig\");"));
     try checkWithText("src/codec.zig", "test { _ = @import(\"testing/jpeg.zig\"); }");
+    try testing.expectError(error.ForbiddenImport, checkWithText("src/codec/png/decoder.zig", "const streams = @import(\"streams.zig\");"));
+    try checkWithText("src/codec/png/decoder.zig", "test { _ = @import(\"streams.zig\"); }");
     try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/rows/assembly.zig", "test { _ = @import(\"../../testing.zig\"); }"));
     try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/rows/assembly.zig", "test { _ = @import(\"../../testing/canvas.zig\"); }"));
     try testing.expectError(error.ForbiddenImport, checkWithText("src/diff/rows/assembly.zig", "test { _ = @import(\"../../testing/expect.zig\"); }"));
