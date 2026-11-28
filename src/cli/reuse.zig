@@ -12,12 +12,15 @@ const Alignment = std.mem.Alignment;
 pub const LargeBlocks = struct {
     io: Io,
     backing: Allocator,
-    /// Guards lent and idle.
+    /// Guards lent, idle and last.
     mutex: Io.Mutex = .init,
     /// Blocks handed out, found again by address on free.
     lent: [slots]Block = @splat(.{}),
     /// Freed blocks kept for reuse.
     idle: [slots]Block = @splat(.{}),
+    /// Set once the caller has started its last request; from then on a kept
+    /// block has no later request to serve.
+    last: bool = false,
 
     const Block = struct { ptr: ?[*]u8 = null, capacity: usize = 0 };
 
@@ -27,6 +30,13 @@ pub const LargeBlocks = struct {
     pub fn deinit(self: *LargeBlocks) void {
         for (self.idle) |block| if (block.ptr) |ptr| self.backing.rawFree(ptr[0..block.capacity], max_alignment, @returnAddress());
         self.* = undefined;
+    }
+
+    /// Marks the start of the caller's last request.
+    pub fn startLast(self: *LargeBlocks) void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        self.last = true;
     }
 
     /// Returns the allocator over self.
@@ -58,10 +68,19 @@ pub const LargeBlocks = struct {
             block.* = .{};
             return slot.ptr;
         }
-        // ponytail: dropping the smallest idle block on a miss keeps the
-        // retained count at most the most blocks one pair held at once; a byte
-        // cap would bound mixed sizes more tightly if a caller ever needs it.
-        if (smallest) |block| {
+        if (self.last) {
+            // In the last request a miss releases every idle block before the
+            // new one is taken, so backing can reuse their pages and the
+            // request peaks no higher than backing alone would hold.
+            for (&self.idle) |*block| {
+                const ptr = block.ptr orelse continue;
+                self.backing.rawFree(ptr[0..block.capacity], max_alignment, ra);
+                block.* = .{};
+            }
+        } else if (smallest) |block| {
+            // ponytail: dropping the smallest idle block on a miss keeps the
+            // retained count at most the most blocks one pair held at once; a
+            // byte cap would bound mixed sizes more tightly if ever needed.
             self.backing.rawFree(block.ptr.?[0..block.capacity], max_alignment, ra);
             block.* = .{};
         }
@@ -106,6 +125,17 @@ const slots = 32;
 const min_bytes = 256 * 1024;
 /// Every kept block is allocated at this alignment so any request up to it fits.
 const max_alignment: Alignment = .@"16";
+
+test "in the last request a miss releases every idle block" {
+    var blocks: LargeBlocks = .{ .io = std.testing.io, .backing = std.testing.allocator };
+    defer blocks.deinit();
+    const allocator = blocks.allocator();
+    allocator.free(try allocator.alloc(u8, min_bytes));
+    blocks.startLast();
+    const larger = try allocator.alloc(u8, min_bytes * 2);
+    defer allocator.free(larger);
+    for (blocks.idle) |block| try std.testing.expectEqual(@as(?[*]u8, null), block.ptr);
+}
 
 test "a freed large block serves the next request and small ones pass through" {
     var blocks: LargeBlocks = .{ .io = std.testing.io, .backing = std.testing.allocator };

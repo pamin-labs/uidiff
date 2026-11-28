@@ -75,17 +75,17 @@ fn start(io: Io, allocator: Allocator, arena: Allocator, input: std.process.Args
     // Given a buffer only when requests come on standard input.
     var stdin = Io.File.stdin().readerStreaming(io, &.{});
     // Keeps freed large blocks for the next request, holding the process near
-    // one request's memory; it allocates nothing until a comparison does.
+    // one request's memory; it allocates nothing until a comparison does, and
+    // the run marks its last request.
     var blocks: reuse.LargeBlocks = .{ .io = io, .backing = allocator };
     defer blocks.deinit();
     const result = switch (command) {
         .help => writeMessage(&stdout.interface, args.usage),
         .version => writeMessage(&stdout.interface, cli_options.version ++ "\n"),
-        // With no later request, a kept block would only add to the peak.
-        .compare => |list| run.requests(io, if (list.len == 1) allocator else blocks.allocator(), list, &stdout.interface),
+        .compare => |list| run.requests(io, &blocks, list, &stdout.interface),
         .stdin => lines: {
             stdin = Io.File.stdin().readerStreaming(io, try arena.alloc(u8, run.max_line_bytes + 1));
-            break :lines run.lines(io, blocks.allocator(), &stdin.interface, &stdout.interface);
+            break :lines run.lines(io, &blocks, &stdin, &stdout.interface);
         },
     };
     return result catch |err| switch (err) {

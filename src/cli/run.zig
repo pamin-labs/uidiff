@@ -2,8 +2,10 @@
 //! writes one JSON line per request, in order, each flushed so a caller can
 //! pipeline.
 const std = @import("std");
+const builtin = @import("builtin");
 const uidiff = @import("uidiff");
 const request = @import("request.zig");
+const reuse = @import("reuse.zig");
 const Status = @import("status.zig").Status;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
@@ -95,18 +97,25 @@ pub const max_line_bytes = 64 * 1024;
 
 const output_options: std.json.Stringify.Options = .{ .emit_null_optional_fields = false };
 
-/// Answers every request on output and returns the worst status.
-pub fn requests(io: Io, allocator: Allocator, list: []const Request, output: *Io.Writer) Io.Writer.Error!Status {
-    var answers: Answers = .init(io, allocator, output);
+/// Answers every request on output, comparing through blocks, and returns
+/// the worst status.
+pub fn requests(io: Io, blocks: *reuse.LargeBlocks, list: []const Request, output: *Io.Writer) Io.Writer.Error!Status {
+    var answers: Answers = .init(io, blocks.allocator(), output);
     defer answers.deinit();
-    for (list) |item| try answers.answer(item);
+    for (list, 0..) |item, index| {
+        if (index == list.len - 1) blocks.startLast();
+        try answers.answer(item);
+    }
     return answers.worst;
 }
 
-/// Answers every line of input on output and returns the worst status.
-/// input's buffer must hold a line of max_line_bytes and its newline.
-pub fn lines(io: Io, allocator: Allocator, input: *Io.Reader, output: *Io.Writer) Error!Status {
+/// Answers every line of input on output, comparing through blocks, and
+/// returns the worst status. input's buffer must hold a line of
+/// max_line_bytes and its newline.
+pub fn lines(io: Io, blocks: *reuse.LargeBlocks, file: *Io.File.Reader, output: *Io.Writer) Error!Status {
+    const input = &file.interface;
     std.debug.assert(input.buffer.len > max_line_bytes);
+    const allocator = blocks.allocator();
     var answers: Answers = .init(io, allocator, output);
     defer answers.deinit();
     while (true) {
@@ -126,9 +135,33 @@ pub fn lines(io: Io, allocator: Allocator, input: *Io.Reader, output: *Io.Writer
                 break :parsed error.LineTooLong;
             },
         };
+        // The request no longer borrows the line, so probing may refill the buffer.
+        if (try atEnd(file)) blocks.startLast();
         try answers.answer(parsed);
     }
     return answers.worst;
+}
+
+/// Whether input has no line left, known without waiting: nothing is
+/// buffered, the file is ready to read, and reading it gives its end. A pipe
+/// still open with nothing written counts as more to come, as does Windows,
+/// where no readiness check is made here.
+fn atEnd(file: *Io.File.Reader) error{ReadFailed}!bool {
+    if (file.interface.bufferedLen() != 0 or !readable(file.file)) return false;
+    file.interface.fillMore() catch |err| switch (err) {
+        error.EndOfStream => return true,
+        error.ReadFailed => return error.ReadFailed,
+    };
+    return false;
+}
+
+/// Whether reading the file would return at once, with data or its end.
+fn readable(file: Io.File) bool {
+    if (builtin.os.tag == .windows) return false;
+    var fds = [_]std.posix.pollfd{.{ .fd = file.handle, .events = std.posix.POLL.IN, .revents = 0 }};
+    // A failed check cannot say the input ended, so more may come.
+    const ready = std.posix.poll(&fds, 0) catch return false;
+    return ready != 0;
 }
 
 /// Discards the rest of an over-long line.
@@ -169,16 +202,24 @@ test "answer lines carry the status, the raw report or the error and path" {
     try expectLine("{\"status\":2,\"error\":\"InvalidInput\"}", output.written());
 }
 
-test "input lines are answered in order and the worst status wins" {
+test "input lines are answered in order, the worst status wins and the last line is marked" {
+    const io = std.testing.io;
     const long: [max_line_bytes + 1]u8 = @splat('x');
     const text = "{\"before\":\"missing-before.png\",\"after\":\"b.png\"}\n" ++ long ++ "\nnot json\n{\"before\":\"a\",\"after\":\"b\",\"scale\":\"0\"}";
-    // A fixed reader buffers all of text, so the long line arrives whole and
-    // is refused by its length; the e2e test sends one longer than the buffer.
-    var input: Io.Reader = .fixed(text);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "lines", .data = text });
+    const file = try tmp.dir.openFile(io, "lines", .{});
+    defer file.close(io);
+    var buffer: [max_line_bytes + 1]u8 = undefined;
+    var input = file.readerStreaming(io, &buffer);
+    var blocks: reuse.LargeBlocks = .{ .io = io, .backing = std.testing.allocator };
+    defer blocks.deinit();
     var output: Io.Writer.Allocating = .init(std.testing.allocator);
     defer output.deinit();
-    const status = try lines(std.testing.io, std.testing.allocator, &input, &output.writer);
+    const status = try lines(io, &blocks, &input, &output.writer);
     try std.testing.expectEqual(Status.failed, status);
+    try std.testing.expect(blocks.last);
     try expectLine(
         \\{"status":2,"error":"FileNotFound","path":"missing-before.png"}
         \\{"status":2,"error":"LineTooLong"}
@@ -187,15 +228,18 @@ test "input lines are answered in order and the worst status wins" {
     , output.written());
 }
 
-test "command line requests are answered in order" {
+test "command line requests are answered in order and the last is marked" {
+    var blocks: reuse.LargeBlocks = .{ .io = std.testing.io, .backing = std.testing.allocator };
+    defer blocks.deinit();
     var output: Io.Writer.Allocating = .init(std.testing.allocator);
     defer output.deinit();
     const list = [_]Request{
         .{ .paths = .{ .before = "missing-a.png", .after = "b.png" } },
         .{ .paths = .{ .before = "missing-c.png", .after = "d.png" } },
     };
-    const status = try requests(std.testing.io, std.testing.allocator, &list, &output.writer);
+    const status = try requests(std.testing.io, &blocks, &list, &output.writer);
     try std.testing.expectEqual(Status.failed, status);
+    try std.testing.expect(blocks.last);
     try expectLine(
         \\{"status":2,"error":"FileNotFound","path":"missing-a.png"}
         \\{"status":2,"error":"FileNotFound","path":"missing-c.png"}
