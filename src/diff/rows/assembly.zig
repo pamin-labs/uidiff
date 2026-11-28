@@ -101,7 +101,7 @@ pub fn assembleBands(before: band.Keys, after: band.Keys, limits: band.Limits, a
         } else {
             const first_band = len;
             const problem = search.Problem.init(before[old_y..m.before], after[new_y..m.after]);
-            const edits = problem.distance(@min(search.max_edits, problem.a.len + problem.b.len), frontier);
+            const edits = problem.distance(search.editBudget(problem.a.len + problem.b.len), frontier);
             const gap = if (edits) |found| problem.matches(found, frontier, raw) orelse &.{} else &.{};
             for (gap) |row| {
                 const a = m.before - removed + row.before;
@@ -187,7 +187,7 @@ test "fixed-header scroll reveals content and skips flat paint" {
         .{ .before = body, .after = body - scroll, .length = height - body },
     };
     var bands: [2 * height + 1]band.Band = undefined;
-    var frontier: [2 * height + 3]search.Diagonal = undefined;
+    var frontier: [search.frontierLen(height)]search.Diagonal = undefined;
     var raw: [height]band.Match = undefined;
     for ([_]bool{ false, true }) |has_content| {
         if (has_content) for (new[height - scroll ..]) |*row| {

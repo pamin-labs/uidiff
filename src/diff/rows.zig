@@ -19,10 +19,6 @@ const Allocator = std.mem.Allocator;
 pub const Band = band.Band;
 /// Device-pixel limits for identifying small scrolls and replacements.
 pub const Limits = band.Limits;
-/// The most row insertions plus deletions the alignment searches for. Myers'
-/// search costs O((rows + max_edits) * max_edits) time, so this bounds a tall
-/// unrelated pair; past it, rows are compared by position.
-pub const max_edits = search.max_edits;
 /// Matches a compact insertion when the rest of the column shifts exactly.
 pub const compactInsertion = insertion.compactInsertion;
 /// Places a one-sided element at the best boundary among equivalent row matches.
@@ -79,7 +75,7 @@ pub fn matchBands(allocator: Allocator, before: band.Keys, after: band.Keys, lim
     const overlap = @min(before.len, after.len);
     const raw = try value.reserveUnfilled(band.Match, allocator, &scratch.raw, overlap);
     // Both key slices come from validated image heights, which fit u32.
-    const budget: usize = @min(search.max_edits, @max(before.len, after.len));
+    const budget = search.editBudget(@max(before.len, after.len));
     const counts = &scratch.frequencies;
     counts.clearRetainingCapacity();
     try counts.ensureTotalCapacity(allocator, @intCast(@max(before.len, after.len)));
@@ -95,8 +91,8 @@ pub fn matchBands(allocator: Allocator, before: band.Keys, after: band.Keys, lim
     counts.clearRetainingCapacity();
     const new_background = anchors.background(counts, after);
 
-    const frontier_budget: usize = @min(search.max_edits, before.len + after.len);
-    const frontier = try value.reserveUnfilled(search.Diagonal, allocator, &scratch.frontier, 2 * frontier_budget + 3);
+    const frontier_len = search.frontierLen(search.editBudget(before.len + after.len));
+    const frontier = try value.reserveUnfilled(search.Diagonal, allocator, &scratch.frontier, frontier_len);
     const distance = main.distance(budget, frontier) orelse return null;
     // A local edit's two-sided cost competes with a motion path plus the
     // penalty for leaving the alignment and returning to it.

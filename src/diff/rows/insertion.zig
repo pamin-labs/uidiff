@@ -77,7 +77,7 @@ pub fn clippedInsertion(problem: search.Problem, limit: usize, bands: []band.Ban
     } else return null;
     const at = std.mem.indexOfScalarPos(u64, new, marker + 1, old[marker]) orelse return null;
     const shift = at - marker;
-    const budget = @min(search.max_edits, old.len + problem.prefix);
+    const budget = search.editBudget(old.len + problem.prefix);
     if (shift <= limit or shift > budget / 2 or !std.mem.eql(u64, old[0 .. old.len - shift], new[shift..])) return null;
     const prefix = problem.prefix;
     bands[0] = .{ .before = 0, .after = 0, .removed = prefix, .added = prefix, .mode = .hash_match };
