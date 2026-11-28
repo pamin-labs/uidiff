@@ -144,19 +144,24 @@ pub fn lines(io: Io, blocks: *reuse.LargeBlocks, file: *Io.File.Reader, output: 
 
 /// Whether input has no line left, known without waiting: nothing is
 /// buffered, the file is ready to read, and reading it gives its end. A pipe
-/// still open with nothing written counts as more to come, as does Windows,
-/// where no readiness check is made here. A failed read counts as more to
+/// still open with nothing written counts as more to come, as does a pipe on
+/// Windows, where readiness is not checked. A failed read counts as more to
 /// come too: the next line's read meets the failure and reports it.
 fn atEnd(file: *Io.File.Reader) bool {
-    if (file.interface.bufferedLen() != 0 or !readable(file.file)) return false;
+    if (file.interface.bufferedLen() != 0 or !readable(file)) return false;
     file.interface.fillMore() catch |err| return err == error.EndOfStream;
     return false;
 }
 
 /// Whether reading the file would return at once, with data or its end.
-fn readable(file: Io.File) bool {
-    if (builtin.os.tag == .windows) return false;
-    var fds = [_]std.posix.pollfd{.{ .fd = file.handle, .events = std.posix.POLL.IN, .revents = 0 }};
+fn readable(file: *Io.File.Reader) bool {
+    if (builtin.os.tag == .windows) {
+        // A disk file's read returns at once; anything else may wait, and
+        // Windows has no poll to ask.
+        const stat = file.file.stat(file.io) catch return false;
+        return stat.kind == .file;
+    }
+    var fds = [_]std.posix.pollfd{.{ .fd = file.file.handle, .events = std.posix.POLL.IN, .revents = 0 }};
     // A failed check cannot say the input ended, so more may come.
     _ = std.posix.poll(&fds, 0) catch return false;
     // Only data or a hang-up promises a read that returns at once; a device
