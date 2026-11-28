@@ -181,7 +181,11 @@ fn writeStrips(io: ?Io, allocator: Allocator, size: value.Size, source: anytype,
         const input = workspace[zlib.history_bytes..][0 .. (end - first) * encoded_row_bytes];
         for (first..end) |y| {
             const scratch = rows[(y % 2) * size.width ..][0..size.width];
-            const row = std.mem.sliceAsBytes(source.row(y, scratch));
+            const produced = source.row(y, scratch);
+            // A staged source may return a row it reuses on its next call;
+            // the copy keeps it readable as the predictor's row above.
+            if (@TypeOf(source).staged and produced.ptr != scratch.ptr) @memcpy(scratch, produced);
+            const row = std.mem.sliceAsBytes(if (@TypeOf(source).staged) scratch else produced);
             const encoded = filterRow(row, above, filtered, rgb_only);
             const encoded_row = input[(y - first) * encoded_row_bytes ..][0..encoded_row_bytes];
             encoded_row[0] = @backingInt(encoded.method);
@@ -497,6 +501,40 @@ test "overlapped strip compression reconstructs RGBA and RGB rows across worker 
         defer stb.release(allocator, decoded);
         try std.testing.expectEqualSlices(value.Pixel, pixels, decoded);
     }
+}
+
+test "strips copy a staged row that its source reuses" {
+    const Source = struct {
+        image: Image,
+        reused: []value.Pixel,
+
+        pub const staged = true;
+
+        pub fn isOpaque(_: @This()) bool {
+            return false;
+        }
+
+        pub fn row(self: @This(), y: usize, _: []value.Pixel) []const value.Pixel {
+            @memcpy(self.reused, self.image.row(y));
+            return self.reused;
+        }
+    };
+    const allocator = std.testing.allocator;
+    const width = 5;
+    const height = 7;
+    var pixels: [width * height]value.Pixel = undefined;
+    for (&pixels, 0..) |*pixel, i| pixel.* = .{ @intCast(i * 7), @intCast(i * 5), @intCast(i), 200 };
+    var reused: [width]value.Pixel = undefined;
+    const image: Image = .{ .width = width, .height = height, .pixels = &pixels };
+    var out: Writer.Allocating = .init(allocator);
+    defer out.deinit();
+    try png_format.writeHeader(zlib.chunk, &out.writer, width, height, .rgba);
+    try writeStrips(null, allocator, image.size(), Source{ .image = image, .reused = &reused }, &out.writer, false, 1 + width * @sizeOf(value.Pixel), 1);
+    try zlib.chunk(&out.writer, png_format.iend_type, "");
+    const header = try stb.probe(allocator, out.written(), value.max_decode_bytes);
+    const decoded = try decoder.decode(allocator, out.written(), header, value.max_decode_bytes);
+    defer stb.release(allocator, decoded);
+    try std.testing.expectEqualSlices(value.Pixel, image.pixels, decoded);
 }
 
 test {
