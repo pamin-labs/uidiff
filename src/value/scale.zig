@@ -58,8 +58,8 @@ pub const Scale = struct {
             if (significant > max_significant_digits) return null;
             mantissa = mantissa * 10 + (c - '0');
         };
-        if (mantissa == 0) return null;
-        return .{ .factor = @as(f64, @floatFromInt(mantissa)) / powers_of_ten[kept.len] };
+        const scale: Scale = .{ .factor = @as(f64, @floatFromInt(mantissa)) / powers_of_ten[kept.len] };
+        return if (scale.isValid()) scale else null;
     }
 };
 
