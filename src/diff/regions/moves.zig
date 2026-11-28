@@ -53,7 +53,7 @@ fn containsMove(box: Box, rows: value.RowRange, move: value.Move, slack: f64, sh
 
 test {
     const box = Box.fromPixels(6, 16, 58, 42);
-    const edits = [_]Region{.{ .number = 1, .kind = .changed, .before = box, .after = box }};
+    const edits = [_]Region{.{ .number = 1, .before = box, .after = box }};
     var moves = [_]value.Move{
         .{ .before = .{ .y = 27, .height = 10 }, .after = .{ .y = 34, .height = 10 }, .x = 10, .width = 50 },
         .{ .before = .{ .y = 61, .height = 3 }, .after = .{ .y = 70, .height = 3 }, .x = 10, .width = 50 },

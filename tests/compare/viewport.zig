@@ -35,7 +35,7 @@ fn checkTallInsertion(height: usize, inserted: usize, viewport: enum { fixed, gr
     );
     defer result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 1), result.regions.len);
-    try std.testing.expectEqual(uidiff.Kind.inserted, result.regions[0].kind);
+    try std.testing.expectEqual(uidiff.Kind.inserted, result.regions[0].kind());
     try std.testing.expectEqual(Box.fromPixels(0, at - region_padding, 1, inserted + 2 * region_padding), result.regions[0].after.?);
 }
 
@@ -71,7 +71,7 @@ test "an interior divider does not hide a shortened spacer" {
         const result = try expect.compareCanvases(before, after, 1);
         defer result.deinit(std.testing.allocator);
         try std.testing.expectEqual(@as(usize, 1), result.regions.len);
-        try std.testing.expectEqual(Kind.removed, result.regions[0].kind);
+        try std.testing.expectEqual(Kind.removed, result.regions[0].kind());
         try std.testing.expect(result.moves.len != 0);
     }
 }
@@ -209,7 +209,7 @@ test "a fixed footer hides clipped cards with either palette" {
         const result = try expect.compareCanvases(before, after, 1);
         defer result.deinit(std.testing.allocator);
         try std.testing.expectEqual(@as(usize, 1), result.regions.len);
-        try std.testing.expectEqual(Kind.inserted, result.regions[0].kind);
+        try std.testing.expectEqual(Kind.inserted, result.regions[0].kind());
         try std.testing.expect(expect.hasRegion(result.regions, .after, 82, 135, .inserted));
         try std.testing.expect(expect.hasRegion(result.regions, .after, 82, 169, .inserted));
     }
@@ -282,7 +282,7 @@ test "large viewport insertion still aligns" {
     const result = try expect.compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 1), result.regions.len);
-    try std.testing.expectEqual(Kind.inserted, result.regions[0].kind);
+    try std.testing.expectEqual(Kind.inserted, result.regions[0].kind());
     const found = result.regions[0].after.?;
     try std.testing.expect(found.y <= 100 and found.y + found.height >= 660 and found.height < 560 + 4 * region_padding);
 }
@@ -473,7 +473,7 @@ test "a clipped list shifts by one row without reporting the obscured tail" {
     const result = try expect.compareCanvases(before, after, 1);
     defer result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 1), result.regions.len);
-    try std.testing.expectEqual(Kind.inserted, result.regions[0].kind);
+    try std.testing.expectEqual(Kind.inserted, result.regions[0].kind());
     try std.testing.expectEqual(@as(usize, 1), result.moves.len);
     try std.testing.expectEqual(@as(usize, 48), result.moves[0].shift());
 }

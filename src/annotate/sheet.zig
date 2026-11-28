@@ -135,7 +135,7 @@ pub const Rows = struct {
         if (y + badge_reach >= a.y and y < sheet_plan.pane_end + badge_reach) {
             for (sheet_plan.details) |*detail| {
                 for (&detail.marks.values, &detail.badges.values) |mark, location| {
-                    drawMark(line, mark, location, detail.region.kind, &detail.number, pane_layout);
+                    drawMark(line, mark, location, detail.region.kind(), &detail.number, pane_layout);
                 }
             }
         }
@@ -152,10 +152,10 @@ pub const Rows = struct {
             for (sheet_plan.details) |*detail| {
                 if (y < detail.top or y >= detail.top + detail.height) continue;
                 const diameter = labels.detail_badge;
-                badge(line, .{ .x = left_x, .y = detail.top, .width = diameter, .height = diameter }, detail.region.kind, detail.number.bytes(), pane_layout);
-                line.text(labels.detail_kind_x, detail.top + labels.detail_kind_offset, kindName(detail.region.kind), .regular, labels.body_size, secondary);
+                badge(line, .{ .x = left_x, .y = detail.top, .width = diameter, .height = diameter }, detail.region.kind(), detail.number.bytes(), pane_layout);
+                line.text(labels.detail_kind_x, detail.top + labels.detail_kind_offset, kindName(detail.region.kind()), .regular, labels.body_size, secondary);
                 for (&detail.crops.values, &sheet_plan.sources.values, &sheet_plan.detail_x.values) |patch, *source, x| {
-                    drawDetail(line, patch, source.image, x, sheet_plan.detail_slot_width, detail.top, detail.height, detail.region.kind, pane_layout);
+                    drawDetail(line, patch, source.image, x, sheet_plan.detail_slot_width, detail.top, detail.height, detail.region.kind(), pane_layout);
                 }
                 break;
             }
@@ -184,7 +184,7 @@ pub const Rows = struct {
             for (sheet_plan.details) |*detail| {
                 if (detail.focus != index) continue;
                 for (detail.focus_marks.values, detail.focus_badges.values) |mark, location| {
-                    drawMark(line, mark, location, detail.region.kind, &detail.number, sheet_plan.pane_layout);
+                    drawMark(line, mark, location, detail.region.kind(), &detail.number, sheet_plan.pane_layout);
                 }
             }
             return;
@@ -250,7 +250,7 @@ test "the streaming gutter connects shifted rows and shows the insertion wedge" 
     const allocator = std.testing.allocator;
     const pixels: [32 * 128]Pixel = @splat(white);
     const image: Image = .{ .width = 32, .height = 128, .pixels = &pixels };
-    const insert: Region = .{ .number = 1, .kind = .inserted, .after = value.Box.fromPixels(3, 44, 20, 10) };
+    const insert: Region = .{ .number = 1, .after = value.Box.fromPixels(3, 44, 20, 10) };
     const moved: Move = .{ .before = .{ .y = 40, .height = 60 }, .after = .{ .y = 60, .height = 60 }, .x = 0, .width = 32 };
     const rows = try Rows.init(allocator, image, image, &.{insert}, &.{moved});
     defer rows.deinit(allocator);

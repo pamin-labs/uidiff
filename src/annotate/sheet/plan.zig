@@ -211,7 +211,7 @@ fn planDetails(allocator: Allocator, pair: value.Pair, regions: []const Region, 
         const new = imageRect(pair.after, region.after);
         if ((region.before != null and old == null) or (region.after != null and new == null)) return error.InvalidRegionBox;
         if (region.number == 0 and (old != null or new != null)) return error.InvalidRegionNumber;
-        kinds |= kindBit(region.kind);
+        kinds |= kindBit(region.kind());
         const patches = if (pane_layout.panoramic) std.EnumArray(value.Side, ?crops.Crop).initFill(null) else cropPair(pair, .init(.{ .before = old, .after = new }), placement.x, top, slot, pane_layout);
         const height = @max(pane_layout.px(min_slot_h), if (patches.get(.before)) |p| p.framedHeight(pane_layout) else 0, if (patches.get(.after)) |p| p.framedHeight(pane_layout) else 0);
         const before_mark = offsetMark(old, panes.get(.before), pair.before.size());
@@ -430,7 +430,7 @@ test {
     const allocator = std.testing.allocator;
     const pixels: [80 * 80]Pixel = @splat(page);
     const image: Image = .{ .width = 80, .height = 80, .pixels = &pixels };
-    const insert: Region = .{ .number = 1, .kind = .inserted, .after = value.Box.fromPixels(0, 0, 4, 4) };
+    const insert: Region = .{ .number = 1, .after = value.Box.fromPixels(0, 0, 4, 4) };
     const plan = try Plan.init(allocator, .{ .before = image, .after = image }, &.{insert}, &.{});
     defer plan.deinit(allocator);
     const bounds = plan.details[0].badges.get(.after).position().?;
@@ -444,7 +444,7 @@ test {
     const allocator = std.testing.allocator;
     const pixels: [900 * 12]Pixel = @splat(page);
     const image: Image = .{ .width = 900, .height = 12, .pixels = &pixels };
-    const region: Region = .{ .number = 1, .kind = .changed, .after = value.Box.fromPixels(400, 0, 12, 12) };
+    const region: Region = .{ .number = 1, .after = value.Box.fromPixels(400, 0, 12, 12) };
     const plan = try Plan.init(allocator, .{ .before = image, .after = image }, &.{region}, &.{});
     defer plan.deinit(allocator);
     const detail = plan.details[0];
@@ -470,7 +470,7 @@ test "edge badges stay near their numbered boxes and avoid all other marks" {
         .fromPixels(0, 296, 4, 4), .fromPixels(396, 296, 4, 4),
     };
     var regions: [boxes.len]Region = undefined;
-    for (&regions, boxes, 1..) |*r, box, i| r.* = .{ .number = i, .kind = .changed, .before = box, .after = box };
+    for (&regions, boxes, 1..) |*r, box, i| r.* = .{ .number = i, .before = box, .after = box };
     const plan = try Plan.init(allocator, .{ .before = image, .after = image }, &regions, &.{});
     defer plan.deinit(allocator);
     for (plan.details, 0..) |detail, i| {
@@ -490,7 +490,7 @@ test "whole-image wide changes have a badge in both overviews" {
     const pixels: [900 * 12]Pixel = @splat(page);
     const image: Image = .{ .width = 900, .height = 12, .pixels = &pixels };
     const box = value.Box.fromPixels(0, 0, 900, 12);
-    const plan = try Plan.init(allocator, .{ .before = image, .after = image }, &.{.{ .number = 1, .kind = .changed, .before = box, .after = box }}, &.{});
+    const plan = try Plan.init(allocator, .{ .before = image, .after = image }, &.{.{ .number = 1, .before = box, .after = box }}, &.{});
     defer plan.deinit(allocator);
     try std.testing.expect(plan.details[0].badges.get(.before).position().?.bottom() <= plan.panes.get(.before).y);
     try std.testing.expect(plan.details[0].badges.get(.after).position().?.bottom() <= plan.panes.get(.after).y);
@@ -504,10 +504,10 @@ test "edge badges use the gutter margins and the space above the caption" {
     @memset(pixels, .{ 45, 67, 85, 255 });
     const image: Image = .{ .width = 400, .height = 300, .pixels = pixels };
     const regions = [_]Region{
-        .{ .number = 1, .kind = .removed, .before = .fromPixels(0, 145, 5, 10) },
-        .{ .number = 2, .kind = .changed, .before = .fromPixels(395, 130, 5, 10), .after = .fromPixels(395, 130, 5, 10) },
-        .{ .number = 3, .kind = .inserted, .after = .fromPixels(220, 0, 10, 8) },
-        .{ .number = 4, .kind = .changed, .before = .fromPixels(195, 145, 10, 10) },
+        .{ .number = 1, .before = .fromPixels(0, 145, 5, 10) },
+        .{ .number = 2, .before = .fromPixels(395, 130, 5, 10), .after = .fromPixels(395, 130, 5, 10) },
+        .{ .number = 3, .after = .fromPixels(220, 0, 10, 8) },
+        .{ .number = 4, .before = .fromPixels(195, 145, 10, 10) },
     };
     const plan = try Plan.init(allocator, .{ .before = image, .after = image }, &regions, &.{});
     defer plan.deinit(allocator);
@@ -539,9 +539,9 @@ test "panoramic sheets use bounded overviews and merge overlapping focus crops" 
     @memset(pixels, canvas.white);
     const image: Image = .{ .width = 3600, .height = 300, .pixels = pixels };
     const regions = [_]Region{
-        .{ .number = 1, .kind = .changed, .before = value.Box.fromPixels(450, 30, 80, 20), .after = value.Box.fromPixels(450, 30, 80, 20) },
-        .{ .number = 2, .kind = .changed, .before = value.Box.fromPixels(900, 185, 80, 20), .after = value.Box.fromPixels(900, 185, 80, 20) },
-        .{ .number = 3, .kind = .inserted, .after = value.Box.fromPixels(1600, 40, 1950, 18) },
+        .{ .number = 1, .before = value.Box.fromPixels(450, 30, 80, 20), .after = value.Box.fromPixels(450, 30, 80, 20) },
+        .{ .number = 2, .before = value.Box.fromPixels(900, 185, 80, 20), .after = value.Box.fromPixels(900, 185, 80, 20) },
+        .{ .number = 3, .after = value.Box.fromPixels(1600, 40, 1950, 18) },
     };
     const plan = try Plan.init(allocator, .{ .before = image, .after = image }, &regions, &.{});
     defer plan.deinit(allocator);
@@ -577,8 +577,8 @@ test "wide removed strips get distinct focus badges and a scaled caption" {
     @memset(pixels, page);
     const image: Image = .{ .width = 3800, .height = 120, .pixels = pixels };
     const regions = [_]Region{
-        .{ .number = 1, .kind = .removed, .before = value.Box.fromPixels(100, 4, 3100, 14) },
-        .{ .number = 2, .kind = .removed, .before = value.Box.fromPixels(100, 44, 3100, 14) },
+        .{ .number = 1, .before = value.Box.fromPixels(100, 4, 3100, 14) },
+        .{ .number = 2, .before = value.Box.fromPixels(100, 44, 3100, 14) },
     };
     const plan = try Plan.init(allocator, .{ .before = image, .after = image }, &regions, &.{});
     defer plan.deinit(allocator);
@@ -599,7 +599,7 @@ test "focus badges use space outside a crop when available" {
     @memset(pixels, page);
     const image: Image = .{ .width = 1600, .height = 530, .pixels = pixels };
     const box = value.Box.fromPixels(1588, 460, 8, 6);
-    const plan = try Plan.init(allocator, .{ .before = image, .after = image }, &.{.{ .number = 1, .kind = .changed, .before = box, .after = box }}, &.{});
+    const plan = try Plan.init(allocator, .{ .before = image, .after = image }, &.{.{ .number = 1, .before = box, .after = box }}, &.{});
     defer plan.deinit(allocator);
     try std.testing.expect(!plan.details[0].focus_badges.get(.before).position().?.overlaps(plan.focuses[0].crops.get(.before).?.to));
 }

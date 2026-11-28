@@ -62,7 +62,7 @@ pub fn wedgeTop(details: []const Detail, move: Move, down: bool) ?usize {
     const y0: f64 = @floatFromInt(low -| (high - low));
     const y1: f64 = @floatFromInt(high);
     for (details) |detail| {
-        if (detail.region.kind != kind) continue;
+        if (detail.region.kind() != kind) continue;
         if (detail.region.boxOn(if (down) .after else .before)) |b| {
             if (b.y >= 0 and b.y <= y1 and b.bottom() >= y0) {
                 return @max(low -| (high - low), @min(low, @as(usize, @intFromFloat(b.y))));

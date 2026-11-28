@@ -11,7 +11,7 @@ pub fn hasRegion(found: []const uidiff.Region, side: uidiff.Side, x: usize, y: u
     const px: f64 = @floatFromInt(x);
     const py: f64 = @floatFromInt(y);
     for (found) |region| {
-        if (kind != null and kind != region.kind) continue;
+        if (kind != null and kind != region.kind()) continue;
         const box = (if (side == .before) region.before else region.after) orelse continue;
         if (box.x <= px and box.right() > px and box.y <= py and box.bottom() > py) return true;
     }
@@ -24,14 +24,13 @@ pub fn paddedBox(x: usize, y: usize, w: usize, h: usize) uidiff.Box {
     return uidiff.Box.fromPixels(x - region_padding, y - region_padding, w + 2 * region_padding, h + 2 * region_padding);
 }
 
-/// Checks region geometry, kind and report numbering in order.
+/// Checks region geometry, and so kind, and report numbering in order.
 pub fn checkRegions(actual: []const uidiff.Region, expected: []const uidiff.Region) error{TestExpectedEqual}!void {
     try std.testing.expectEqual(expected.len, actual.len);
     for (actual, expected, 1..) |got, want, number| {
         try std.testing.expectEqual(want.before, got.before);
         try std.testing.expectEqual(want.after, got.after);
         try std.testing.expectEqual(number, got.number);
-        try std.testing.expectEqual(if (want.before == null) uidiff.Kind.inserted else if (want.after == null) uidiff.Kind.removed else uidiff.Kind.changed, got.kind);
     }
 }
 

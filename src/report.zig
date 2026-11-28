@@ -117,7 +117,7 @@ pub fn writeWholePixels(output: *std.Io.Writer, regions: []const value.Region, c
                 try json.beginArray();
                 for (regions) |region| try json.write(PixelRegion{
                     .number = region.number,
-                    .kind = region.kind,
+                    .kind = region.kind(),
                     .before = PixelBox.fromValidated(region.before),
                     .after = PixelBox.fromValidated(region.after),
                 });
@@ -139,7 +139,7 @@ test "version one writes inserted geometry and a null before box" {
     const after = value.Box.fromPixels(11, 20, 28, 14);
     var output = std.Io.Writer.Allocating.init(allocator);
     defer output.deinit();
-    try writeWholePixels(&output.writer, &.{.{ .number = 1, .kind = .inserted, .after = after }}, .{ .width = 64, .height = 64 }, &.{});
+    try writeWholePixels(&output.writer, &.{.{ .number = 1, .after = after }}, .{ .width = 64, .height = 64 }, &.{});
     const parsed = try std.json.parseFromSlice(Report, allocator, output.written(), .{ .ignore_unknown_fields = true });
     defer parsed.deinit();
     try std.testing.expectEqual(version, parsed.value.version);
@@ -156,7 +156,7 @@ test "whole-pixel reports reject fractional geometry before writing" {
     defer rounded.deinit();
     var box = value.Box.fromPixels(15, 28, 41, 6);
     box.x += 0.5;
-    const edits = [_]value.Region{.{ .number = 1, .kind = .inserted, .after = box }};
+    const edits = [_]value.Region{.{ .number = 1, .after = box }};
     const canvas: value.Size = .{ .width = 90, .height = 60 };
     try std.testing.expectError(error.InvalidRegionBox, writeWholePixels(&rounded.writer, &edits, canvas, &.{}));
     try std.testing.expectEqual(@as(usize, 0), rounded.written().len);

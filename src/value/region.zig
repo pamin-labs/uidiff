@@ -85,11 +85,19 @@ pub const Move = struct {
 pub const Region = struct {
     /// One-based position in the comparison's reading order; zero until numbered.
     number: usize = 0,
-    kind: Kind = .changed,
     /// The box on the before image, or null when the change is only on the after side.
     before: ?Box = null,
     /// The box on the after image, or null when the change is only on the before side.
     after: ?Box = null,
+
+    /// Classifies the region by the sides that hold a box: after only is
+    /// inserted, before only is removed, both is changed. A region without
+    /// a box is invalid and reads as inserted.
+    pub fn kind(self: Region) Kind {
+        if (self.before == null) return .inserted;
+        if (self.after == null) return .removed;
+        return .changed;
+    }
 
     /// Gets this region's rectangle for the requested side, if present.
     pub fn boxOn(self: Region, side: Side) ?Box {
@@ -160,12 +168,15 @@ fn PixelRectFor(comptime _: PixelSpace) type {
     };
 }
 
-test "region selects its side and edge-touching boxes do not overlap" {
+test "region selects its side, derives its kind, and edge-touching boxes do not overlap" {
     const here = Box.fromPixels(1, 2, 3, 4);
     const next = Box.fromPixels(4, 2, 2, 4);
     const region: Region = .{ .after = here };
     try std.testing.expectEqual(@as(?Box, null), region.boxOn(.before));
     try std.testing.expectEqual(@as(?Box, here), region.boxOn(.after));
+    try std.testing.expectEqual(Kind.inserted, region.kind());
+    try std.testing.expectEqual(Kind.removed, (Region{ .before = here }).kind());
+    try std.testing.expectEqual(Kind.changed, (Region{ .before = here, .after = next }).kind());
     try std.testing.expectEqual(@as(f64, 0), here.overlap(next));
 }
 

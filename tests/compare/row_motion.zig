@@ -242,7 +242,7 @@ test "overpainting repeated lines does not create a row movement" {
                 defer result.deinit(std.testing.allocator);
                 errdefer std.debug.print("overpaint y={d} width={d} height={d}\n", .{ top, width, height });
                 try std.testing.expectEqual(@as(usize, 1), result.regions.len);
-                try std.testing.expectEqual(Kind.changed, result.regions[0].kind);
+                try std.testing.expectEqual(Kind.changed, result.regions[0].kind());
                 try std.testing.expectEqual(@as(usize, 0), result.moves.len);
             }
         }
@@ -274,7 +274,7 @@ test "distant overpaints on repeated lines stay positional" {
             try std.testing.expectEqual(@as(usize, 3), result.regions.len);
             try std.testing.expectEqual(@as(usize, 0), result.moves.len);
             for (result.regions) |region| {
-                try std.testing.expectEqual(Kind.changed, region.kind);
+                try std.testing.expectEqual(Kind.changed, region.kind());
                 try std.testing.expectEqual(region.before, region.after);
             }
         }
@@ -298,7 +298,7 @@ test "an exact periodic repeat chooses the stationary reading" {
     try std.testing.expectEqual(@as(usize, 0), result.moves.len);
     try std.testing.expect(expect.hasRegion(result.regions, .after, 29, 178, .changed));
     for (result.regions) |region| {
-        try std.testing.expectEqual(Kind.changed, region.kind);
+        try std.testing.expectEqual(Kind.changed, region.kind());
         try std.testing.expectEqual(region.before, region.after);
     }
 }
@@ -333,7 +333,7 @@ test "balanced insertion and deletion detect every visible loss in both directio
                         const side: uidiff.Side = if (reverse) .after else .before;
                         var visible = false;
                         for (result.regions) |r| {
-                            if (r.kind != kind) continue;
+                            if (r.kind() != kind) continue;
                             const box = r.boxOn(side).?;
                             if (box.y < @as(f64, @floatFromInt(y + 18 * rows_count)) and box.bottom() > @as(f64, @floatFromInt(y))) visible = true;
                         }
@@ -364,7 +364,7 @@ test "exchanging separated cards preserves the removed card height" {
     try std.testing.expectEqual(@as(usize, 2), result.regions.len);
     try std.testing.expect(expect.hasRegion(result.regions, .after, 60, new_y + 15, .inserted));
     try std.testing.expect(expect.hasRegion(result.regions, .before, 60, old_y + 15, .removed));
-    for (result.regions) |r| if (r.kind == .removed) {
+    for (result.regions) |r| if (r.kind() == .removed) {
         try std.testing.expectEqual(@as(f64, 38), r.before.?.height);
     };
 }
