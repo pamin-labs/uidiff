@@ -42,7 +42,7 @@ const filter_sample_pixels = 6;
 
 const filter_switch_margin = 4;
 
-/// Encodes a valid image. Allocates the compressor's window and one filtered row.
+/// Encodes a valid image. Allocates the compressor and its row buffers.
 pub fn write(allocator: Allocator, image: Image, output: *Writer) zlib.EncodeError!void {
     if (!image.valid()) return error.InvalidImage;
     return writeRows(allocator, image.size(), BorrowedRows{ .image = image }, output);
@@ -73,13 +73,14 @@ pub fn writeRowsWithIo(io: ?Io, allocator: Allocator, size: value.Size, source: 
     try png_format.writeHeader(zlib.chunk, output, @intCast(size.width), @intCast(size.height), if (rgb_only) .rgb else .rgba);
 
     const encoded_row_bytes = 1 + size.width * @as(usize, if (rgb_only) 3 else @sizeOf(value.Pixel));
-    const workers = if (io != null and encoded_row_bytes * size.height >= parallel_min_bytes)
-        // std.Io exposes no CPU count; on one CPU, strips would only cost memory.
-        @min(max_strip_workers, std.Thread.getCpuCount() catch 1)
-    else
-        1;
-    if (workers > 1) {
-        try writeStrips(io.?, allocator, size, source, output, rgb_only, encoded_row_bytes, workers);
+    // The image's size alone picks the encoder, so a sheet's bytes do not
+    // depend on the machine or on whether the caller passed an Io.
+    if (encoded_row_bytes * size.height >= parallel_min_bytes) {
+        // std.Io exposes no CPU count. Without an Io, one worker compresses
+        // each strip in turn.
+        const workers = if (io != null) @min(max_strip_workers, std.Thread.getCpuCount() catch 1) else 1;
+        // One worker gains nothing from handing each strip to a thread.
+        try writeStrips(if (workers > 1) io else null, allocator, size, source, output, rgb_only, encoded_row_bytes, workers);
     } else {
         try writeSerial(allocator, size, source, output, rgb_only);
     }
@@ -120,7 +121,7 @@ fn writeSerial(allocator: Allocator, size: value.Size, source: anytype, output: 
     try compress.finish();
 }
 
-fn writeStrips(io: Io, allocator: Allocator, size: value.Size, source: anytype, output: *Writer, rgb_only: bool, encoded_row_bytes: usize, workers: usize) zlib.EncodeError!void {
+fn writeStrips(io: ?Io, allocator: Allocator, size: value.Size, source: anytype, output: *Writer, rgb_only: bool, encoded_row_bytes: usize, workers: usize) zlib.EncodeError!void {
     const rows_per_strip = @max(1, target_strip_bytes / encoded_row_bytes);
     const strip_bytes = rows_per_strip * encoded_row_bytes;
     const compressed_bytes = zlib.Strip.outputBound(strip_bytes);
@@ -145,7 +146,7 @@ fn writeStrips(io: Io, allocator: Allocator, size: value.Size, source: anytype, 
         if (slot.*) |*task| {
             // The primary operation already returned its error. Wait before
             // releasing buffers the other workers may still use.
-            _ = task.await(io) catch {};
+            _ = task.await(io.?) catch {};
         }
     };
 
@@ -158,13 +159,15 @@ fn writeStrips(io: Io, allocator: Allocator, size: value.Size, source: anytype, 
     while (first < size.height) : (index += 1) {
         const slot = index % workers;
         if (pending[slot]) |*task| {
-            try stream.write(try task.await(io));
+            try stream.write(try task.await(io.?));
             pending[slot] = null;
         }
         const workspace = slots[slot * slot_bytes ..][0..slot_bytes];
         const history = workspace[0..@min(zlib.history_bytes, previous.len)];
-        // Different slots own consecutive strips, so the previous input
-        // remains available even while its worker is compressing it.
+        // With several slots, consecutive strips live in different slots, so
+        // the previous input stays intact while its worker compresses it.
+        // With one slot, that strip is already compressed, and its tail lies
+        // past the history region it is copied into.
         @memcpy(history, previous[previous.len - history.len ..]);
         const end = @min(size.height, first + rows_per_strip);
         const input = workspace[zlib.history_bytes..][0 .. (end - first) * encoded_row_bytes];
@@ -179,14 +182,20 @@ fn writeStrips(io: Io, allocator: Allocator, size: value.Size, source: anytype, 
         }
         const out = workspace[zlib.history_bytes + strip_bytes ..];
         const flush: zlib.Strip.Flush = if (end == size.height) .finish else .sync;
-        pending[slot] = io.async(zlib.Strip.compress, .{ &streams[slot], history, input, out, flush });
+        if (io) |threads| {
+            pending[slot] = threads.async(zlib.Strip.compress, .{ &streams[slot], history, input, out, flush });
+        } else {
+            try stream.write(try zlib.Strip.compress(&streams[slot], history, input, out, flush));
+        }
         previous = input;
         first = end;
     }
     for (index -| workers..index) |i| {
         const slot = &pending[i % workers];
-        try stream.write(try slot.*.?.await(io));
-        slot.* = null;
+        if (slot.*) |*task| {
+            try stream.write(try task.await(io.?));
+            slot.* = null;
+        }
     }
     try stream.finish();
 }
@@ -424,6 +433,21 @@ test "sheets below the parallel threshold use the serial encoder" {
     try writeRowsWithIo(std.testing.io, allocator, image.size(), Source{ .image = image }, &streamed.writer);
     try write(allocator, image, &serial.writer);
     try std.testing.expectEqualSlices(u8, serial.written(), streamed.written());
+}
+
+test "a sheet above the strip threshold has the same bytes with or without an Io" {
+    const allocator = std.testing.allocator;
+    const width = 1291;
+    const height = 1633;
+    const pixels = try allocator.alloc(value.Pixel, width * height);
+    defer allocator.free(pixels);
+    for (pixels, 0..) |*pixel, i| pixel.* = .{ @intCast(i % 251), @intCast(i / width % 199), @intCast(i % 149), 255 };
+    const image: Image = .{ .width = width, .height = height, .pixels = pixels };
+    var outputs: [2]Writer.Allocating = .{ .init(allocator), .init(allocator) };
+    defer for (&outputs) |*output| output.deinit();
+    try writeRowsWithIo(std.testing.io, allocator, image.size(), BorrowedRows{ .image = image }, &outputs[0].writer);
+    try writeRowsWithIo(null, allocator, image.size(), BorrowedRows{ .image = image }, &outputs[1].writer);
+    try std.testing.expectEqualSlices(u8, outputs[0].written(), outputs[1].written());
 }
 
 test "a failing writer stops parallel strips and releases every buffer" {

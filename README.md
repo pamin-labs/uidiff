@@ -105,7 +105,7 @@ uidiff --version
 | `<before>`, `<after>` | The two captures: PNG, JPEG or WebP. Different heights are fine; a different width is reported as added or removed columns. |
 | `--scale N` | Device pixels per logical pixel (CSS px, points or dp), as a plain decimal such as `2` or `1.5`, with at most 15 digits after leading zeros and 22 decimal places after trailing zeros. Default `1`. It sets padding and merge distances in logical pixels; boxes stay in device pixels. |
 | `--json` | Print the report as one JSON object instead of the region count. |
-| `--annotate <out.png>` | Also write the sheet to this PNG. The file is replaced only once the sheet is complete. Large sheets are compressed on several cores, so the PNG bytes can differ between machines while the pixels stay the same. |
+| `--annotate <out.png>` | Also write the sheet to this PNG. The file is replaced only once the sheet is complete. Large sheets are compressed on several cores; for a given uidiff version the PNG bytes are the same on every machine. |
 | `--help` | Print usage and exit 0. |
 | `--version` | Print the installed version and exit 0. |
 
