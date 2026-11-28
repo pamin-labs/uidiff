@@ -141,7 +141,7 @@ fn writeStrips(io: ?Io, allocator: Allocator, size: value.Size, source: anytype,
     defer value.freeUnfilled(u32, allocator, words);
     const buffer = std.mem.sliceAsBytes(words)[0..buffer_bytes];
     const rows = std.mem.bytesAsSlice(value.Pixel, buffer[0 .. 2 * row_bytes]);
-    const filtered = buffer[2 * row_bytes ..][0..row_bytes];
+    const paeth_scratch = buffer[2 * row_bytes ..][0..row_bytes];
     const slots = buffer[3 * row_bytes ..];
 
     var backing = allocator;
@@ -190,7 +190,7 @@ fn writeStrips(io: ?Io, allocator: Allocator, size: value.Size, source: anytype,
             if (@TypeOf(source).staged and produced.ptr != scratch.ptr) @memcpy(scratch, produced);
             const row = std.mem.sliceAsBytes(if (@TypeOf(source).staged) scratch else produced);
             const encoded_row = input[(y - first) * encoded_row_bytes ..][0..encoded_row_bytes];
-            encoded_row[0] = @backingInt(filterRow(row, above, encoded_row[1..], filtered, rgb_only));
+            encoded_row[0] = @backingInt(filterRow(row, above, encoded_row[1..], paeth_scratch, rgb_only));
             above = row;
         }
         const out = workspace[zlib.history_bytes + strip_bytes ..];
@@ -219,7 +219,7 @@ fn unfilledWords(bytes: usize) usize {
 
 /// Writes row's filtered bytes, 3 or 4 per pixel, into out and returns the
 /// filter used. Paeth works in scratch, which holds 4 bytes per pixel and
-/// may be out itself.
+/// either shares its start with out or does not overlap it.
 fn filterRow(row: []const u8, above: []const u8, out: []u8, scratch: []u8, rgb_only: bool) png_format.Filter {
     const pixel = @sizeOf(value.Pixel);
     if (above.len == 0) {
